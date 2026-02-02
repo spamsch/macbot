@@ -102,4 +102,8 @@ def create_default_registry() -> TaskRegistry:
     # Register macOS automation tasks (Mail, Calendar, Reminders, Notes, Safari)
     register_macos_tasks(registry)
 
+    # Register agent memory tasks
+    from macbot.tasks.memory import register_memory_tasks
+    register_memory_tasks(registry)
+
     return registry
