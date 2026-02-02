@@ -1,6 +1,11 @@
 """MacBot - A modular agent loop with scheduled LLM-powered tasks."""
 
-__version__ = "0.1.0"
+from importlib.metadata import version, PackageNotFoundError
+
+try:
+    __version__ = version("macbot")
+except PackageNotFoundError:
+    __version__ = "0.0.0-dev"
 
 from macbot.core.agent import Agent
 from macbot.core.scheduler import TaskScheduler
