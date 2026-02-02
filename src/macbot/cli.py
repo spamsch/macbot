@@ -55,8 +55,8 @@ PID_FILE = MACBOT_DIR / "scheduler.pid"
 LOG_FILE = MACBOT_DIR / "scheduler.log"
 
 # Help text shown when no command is given
-WELCOME_TEXT = """
-# MacBot
+WELCOME_TEXT = f"""
+# MacBot v{__version__}
 
 An LLM-powered agent for macOS automation.
 
@@ -539,6 +539,158 @@ def cmd_version(args: argparse.Namespace) -> None:
 
     registry = create_default_registry()
     console.print(f"Tasks available: {len(registry)}")
+
+
+def cmd_doctor(args: argparse.Namespace) -> None:
+    """Check system prerequisites and configuration."""
+    import platform
+    import shutil
+
+    console.print(f"\n[bold]MacBot Doctor[/bold] v{__version__}\n")
+
+    all_ok = True
+
+    def check(name: str, ok: bool, message: str, hint: str | None = None) -> bool:
+        nonlocal all_ok
+        if ok:
+            console.print(f"  [green]✓[/green] {name}: {message}")
+        else:
+            console.print(f"  [red]✗[/red] {name}: {message}")
+            if hint:
+                console.print(f"    [dim]→ {hint}[/dim]")
+            all_ok = False
+        return ok
+
+    def warn(name: str, message: str, hint: str | None = None) -> None:
+        console.print(f"  [yellow]![/yellow] {name}: {message}")
+        if hint:
+            console.print(f"    [dim]→ {hint}[/dim]")
+
+    # System checks
+    console.print("[bold]System[/bold]")
+
+    # Python version
+    py_version = platform.python_version()
+    py_ok = tuple(map(int, py_version.split(".")[:2])) >= (3, 10)
+    check("Python", py_ok, py_version, "Requires Python 3.10+")
+
+    # Platform
+    system = platform.system()
+    if system == "Darwin":
+        check("Platform", True, f"macOS ({platform.mac_ver()[0]})")
+    else:
+        warn("Platform", f"{system} (macOS recommended)",
+             "macOS automation tasks require macOS")
+
+    # Configuration checks
+    console.print("\n[bold]Configuration[/bold]")
+
+    # LLM Provider
+    provider = settings.llm_provider.value
+    check("LLM Provider", True, provider)
+
+    # API Key
+    if settings.llm_provider.value == "anthropic":
+        api_key = settings.anthropic_api_key
+        key_name = "MACBOT_ANTHROPIC_API_KEY"
+        model = settings.anthropic_model
+    else:
+        api_key = settings.openai_api_key
+        key_name = "MACBOT_OPENAI_API_KEY"
+        model = settings.openai_model
+
+    if api_key:
+        masked = api_key[:8] + "..." + api_key[-4:] if len(api_key) > 12 else "***"
+        check("API Key", True, f"{masked}")
+    else:
+        check("API Key", False, "Not set",
+              f"Set {key_name} in environment or .env file")
+
+    check("Model", True, model)
+
+    # Data directory
+    data_dir = Path.home() / ".macbot"
+    if data_dir.exists():
+        check("Data Directory", True, str(data_dir))
+    else:
+        warn("Data Directory", f"{data_dir} (will be created on first use)")
+
+    # macOS Automation Scripts
+    console.print("\n[bold]macOS Automation[/bold]")
+
+    # Find scripts directory
+    script_locations = [
+        Path(__file__).parent.parent.parent.parent / "macos-automation",
+        Path.cwd() / "macos-automation",
+        Path.home() / "macos-automation",
+    ]
+
+    scripts_dir = None
+    for loc in script_locations:
+        if loc.exists() and (loc / "mail").exists():
+            scripts_dir = loc
+            break
+
+    if scripts_dir:
+        check("Scripts Directory", True, str(scripts_dir))
+
+        # Check key scripts exist
+        key_scripts = [
+            "mail/get-unread-summary.sh",
+            "calendar/get-today-events.sh",
+            "reminders/get-due-today.sh",
+            "notes/list-notes.sh",
+            "safari/get-current-page.sh",
+        ]
+
+        missing = []
+        for script in key_scripts:
+            script_path = scripts_dir / script
+            if not script_path.exists():
+                missing.append(script)
+            elif not os.access(script_path, os.X_OK):
+                missing.append(f"{script} (not executable)")
+
+        if not missing:
+            check("Scripts", True, f"{len(key_scripts)} key scripts found")
+        else:
+            check("Scripts", False, f"Missing: {', '.join(missing)}",
+                  "Run: chmod +x macos-automation/**/*.sh")
+    else:
+        check("Scripts Directory", False, "Not found",
+              "Clone macos-automation to project directory")
+
+    # osascript (AppleScript)
+    osascript = shutil.which("osascript")
+    if osascript:
+        check("osascript", True, osascript)
+    else:
+        check("osascript", False, "Not found",
+              "osascript is required for macOS automation (macOS only)")
+
+    # Tasks
+    console.print("\n[bold]Tasks[/bold]")
+
+    registry = create_default_registry()
+    task_count = len(registry)
+    check("Registered Tasks", task_count > 0, f"{task_count} tasks")
+
+    # Categorize tasks
+    macos_tasks = [t for t in registry.list_tasks() if any(
+        x in t.name for x in ["email", "mail", "calendar", "event", "reminder", "note", "safari", "url", "tab", "link"]
+    )]
+    system_tasks = [t for t in registry.list_tasks() if t not in macos_tasks]
+
+    console.print(f"    [dim]System tasks: {len(system_tasks)}[/dim]")
+    console.print(f"    [dim]macOS tasks: {len(macos_tasks)}[/dim]")
+
+    # Summary
+    console.print()
+    if all_ok:
+        console.print("[green]All checks passed![/green] MacBot is ready to use.\n")
+    else:
+        console.print("[yellow]Some checks failed.[/yellow] Please fix the issues above.\n")
+        sys.exit(1)
 
 
 # Cron commands
@@ -1147,6 +1299,15 @@ EXAMPLES:
         help="Show version information"
     )
     version_parser.set_defaults(func=cmd_version)
+
+    # Doctor command
+    doctor_parser = subparsers.add_parser(
+        "doctor",
+        help="Check system prerequisites and configuration",
+        description="Verify that MacBot is properly configured and all "
+                    "prerequisites are met."
+    )
+    doctor_parser.set_defaults(func=cmd_doctor)
 
     # Cron command group
     cron_parser = subparsers.add_parser(
