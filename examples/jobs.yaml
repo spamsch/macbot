@@ -1,0 +1,64 @@
+# MacBot Jobs Configuration
+#
+# This file defines scheduled jobs that MacBot can run automatically.
+# Import with: macbot cron import jobs.yaml
+# Start scheduler: macbot cron start -b
+#
+# Each job has:
+#   - name: Human-readable job name (required)
+#   - goal: The natural language goal for the agent (required)
+#   - Schedule (one of):
+#     - interval: Run every N seconds
+#     - cron: Cron expression (e.g., "0 9 * * *" = 9am daily)
+#     - at: One-time execution at ISO datetime
+#   - Optional:
+#     - description: Job description
+#     - timezone: Timezone for cron expressions (default: UTC)
+#     - enabled: Whether job is active (default: true)
+
+jobs:
+  # Check emails every 5 minutes
+  - name: "Email Monitor"
+    goal: "Check my emails and alert me if there are any urgent messages from my boss or about meetings."
+    interval: 300
+
+  # Daily morning briefing at 9am
+  - name: "Morning Briefing"
+    goal: |
+      Give me a morning briefing with:
+      - Summary of unread emails (count and any urgent ones)
+      - Today's calendar events
+      - Reminders due today or overdue
+      Keep it concise but informative.
+    cron: "0 9 * * *"
+    timezone: "America/New_York"
+    description: "Daily morning summary"
+
+  # End of day wrap-up at 5pm on weekdays
+  - name: "End of Day Summary"
+    goal: |
+      Give me an end-of-day summary:
+      - Any emails that came in today that I might have missed
+      - Tomorrow's calendar preview
+      - Any reminders due tomorrow
+    cron: "0 17 * * 1-5"
+    timezone: "America/New_York"
+    description: "Weekday end of day wrap-up"
+
+  # Weekly calendar review on Sunday evening
+  - name: "Weekly Calendar Review"
+    goal: |
+      Review my calendar for the upcoming week:
+      - List all events for the next 7 days
+      - Highlight any conflicts or busy periods
+      - Note any days that are relatively free
+    cron: "0 18 * * 0"
+    timezone: "America/New_York"
+    description: "Sunday evening week preview"
+
+  # Example: One-time reminder (disabled by default)
+  - name: "Project Deadline Reminder"
+    goal: "Remind me that the Q1 report is due today. Create a high-priority reminder if I don't have one already."
+    at: "2026-03-31T09:00:00"
+    enabled: false
+    description: "One-time deadline reminder"
