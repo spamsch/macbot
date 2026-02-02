@@ -48,66 +48,104 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-osascript <<EOF
-tell application "Calendar"
-    set startDate to current date
-    set time of startDate to 0
-    set endDate to startDate + ($DAYS * 24 * 60 * 60)
+# Use Swift with EventKit for efficient date-based queries
+swift -e '
+import EventKit
+import Foundation
 
-    set output to "=== NEXT $DAYS DAYS ===" & return & return
+let daysAhead = '"$DAYS"'
+let calendarFilter = "'"$CALENDAR_NAME"'"
+let store = EKEventStore()
+let semaphore = DispatchSemaphore(value: 0)
 
-    set calList to {}
-    if "$CALENDAR_NAME" is not "" then
-        try
-            set calList to {calendar "$CALENDAR_NAME"}
-        on error
-            return "Calendar '$CALENDAR_NAME' not found."
-        end try
-    else
-        set calList to calendars
-    end if
+store.requestFullAccessToEvents { granted, error in
+    defer { semaphore.signal() }
 
-    set foundAny to false
+    guard granted else {
+        print("Error: Calendar access denied. Please grant access in System Settings > Privacy & Security > Calendars.")
+        return
+    }
 
-    repeat with c in calList
-        set periodEvents to (events of c whose start date >= startDate and start date < endDate)
+    let calendar = Calendar.current
+    let now = Date()
+    let startDate = calendar.startOfDay(for: now)
+    let endDate = calendar.date(byAdding: .day, value: daysAhead, to: startDate)!
 
-        if (count of periodEvents) > 0 then
-            set foundAny to true
-            set output to output & "📅 " & name of c & return
+    // Filter calendars if specified
+    var calendars: [EKCalendar]? = nil
+    if !calendarFilter.isEmpty {
+        let allCalendars = store.calendars(for: .event)
+        let matchingCalendars = allCalendars.filter { $0.title == calendarFilter }
+        if matchingCalendars.isEmpty {
+            print("Error: Calendar \"\(calendarFilter)\" not found.")
+            return
+        }
+        calendars = matchingCalendars
+    }
 
-            repeat with evt in periodEvents
-                set evtDate to start date of evt
-                set dateStr to (weekday of evtDate as string) & ", " & (month of evtDate as string) & " " & (day of evtDate)
+    let predicate = store.predicateForEvents(withStart: startDate, end: endDate, calendars: calendars)
+    let events = store.events(matching: predicate).sorted { $0.startDate < $1.startDate }
 
-                if allday event of evt then
-                    set timeStr to "All Day"
-                else
-                    set h to hours of evtDate
-                    set m to minutes of evtDate
-                    if m < 10 then set m to "0" & m
-                    set ampm to "AM"
-                    if h >= 12 then set ampm to "PM"
-                    if h > 12 then set h to h - 12
-                    if h is 0 then set h to 12
-                    set timeStr to h & ":" & m & " " & ampm
-                end if
+    if events.isEmpty {
+        print("No events scheduled for the next \(daysAhead) days.")
+        return
+    }
 
-                set output to output & "  " & dateStr & return
-                set output to output & "    " & timeStr & " - " & summary of evt & return
+    print("=== NEXT \(daysAhead) DAYS ===\n")
 
-                if location of evt is not "" then
-                    set output to output & "    Location: " & location of evt & return
-                end if
-            end repeat
-            set output to output & return
-        end if
-    end repeat
+    // Group events by day, then by calendar
+    let dayFormatter = DateFormatter()
+    dayFormatter.dateFormat = "EEEE, MMMM d"
 
-    if not foundAny then
-        return "No events scheduled for the next $DAYS days."
-    end if
+    let timeFormatter = DateFormatter()
+    timeFormatter.dateFormat = "h:mm a"
 
-    return output
-end tell
-EOF
+    var eventsByDay: [String: [EKEvent]] = [:]
+    var dayOrder: [String] = []
+
+    for event in events {
+        let dayKey = dayFormatter.string(from: event.startDate)
+        if eventsByDay[dayKey] == nil {
+            eventsByDay[dayKey] = []
+            dayOrder.append(dayKey)
+        }
+        eventsByDay[dayKey]!.append(event)
+    }
+
+    for dayKey in dayOrder {
+        print("\u{1F4C6} \(dayKey)")
+
+        guard let dayEvents = eventsByDay[dayKey] else { continue }
+
+        // Group by calendar within each day
+        var eventsByCalendar: [String: [EKEvent]] = [:]
+        for event in dayEvents {
+            let calName = event.calendar.title
+            if eventsByCalendar[calName] == nil {
+                eventsByCalendar[calName] = []
+            }
+            eventsByCalendar[calName]!.append(event)
+        }
+
+        for (calName, calEvents) in eventsByCalendar.sorted(by: { $0.key < $1.key }) {
+            print("  \u{1F4C5} \(calName)")
+            for event in calEvents {
+                let timeStr: String
+                if event.isAllDay {
+                    timeStr = "All Day"
+                } else {
+                    timeStr = timeFormatter.string(from: event.startDate)
+                }
+
+                print("    \(timeStr) - \(event.title ?? "No title")")
+                if let location = event.location, !location.isEmpty {
+                    print("             Location: \(location)")
+                }
+            }
+        }
+        print("")
+    }
+}
+
+semaphore.wait()
+' 2>&1

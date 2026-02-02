@@ -44,97 +44,89 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-if [[ -n "$CALENDAR_NAME" ]]; then
-    osascript <<EOF
-tell application "Calendar"
-    set todayStart to current date
-    set time of todayStart to 0
-    set todayEnd to todayStart + (24 * 60 * 60)
+# Use Swift with EventKit for efficient date-based queries
+swift -e '
+import EventKit
+import Foundation
 
-    set output to "=== TODAY'S EVENTS: $CALENDAR_NAME ===" & return & return
+let calendarFilter = "'"$CALENDAR_NAME"'"
+let store = EKEventStore()
+let semaphore = DispatchSemaphore(value: 0)
 
-    try
-        set targetCal to calendar "$CALENDAR_NAME"
-    on error
-        return "Calendar '$CALENDAR_NAME' not found."
-    end try
+store.requestFullAccessToEvents { granted, error in
+    defer { semaphore.signal() }
 
-    set todayEvents to (events of targetCal whose start date >= todayStart and start date < todayEnd)
+    guard granted else {
+        print("Error: Calendar access denied. Please grant access in System Settings > Privacy & Security > Calendars.")
+        return
+    }
 
-    if (count of todayEvents) is 0 then
-        return "No events scheduled for today in '$CALENDAR_NAME'."
-    end if
+    let calendar = Calendar.current
+    let now = Date()
+    let startOfDay = calendar.startOfDay(for: now)
+    let endOfDay = calendar.date(byAdding: .day, value: 1, to: startOfDay)!
 
-    repeat with evt in todayEvents
-        if allday event of evt then
-            set timeStr to "All Day"
-        else
-            set startTime to start date of evt
-            set h to hours of startTime
-            set m to minutes of startTime
-            if m < 10 then set m to "0" & m
-            set ampm to "AM"
-            if h >= 12 then set ampm to "PM"
-            if h > 12 then set h to h - 12
-            if h is 0 then set h to 12
-            set timeStr to h & ":" & m & " " & ampm
-        end if
+    // Filter calendars if specified
+    var calendars: [EKCalendar]? = nil
+    if !calendarFilter.isEmpty {
+        let allCalendars = store.calendars(for: .event)
+        let matchingCalendars = allCalendars.filter { $0.title == calendarFilter }
+        if matchingCalendars.isEmpty {
+            print("Error: Calendar \"\(calendarFilter)\" not found.")
+            return
+        }
+        calendars = matchingCalendars
+    }
 
-        set output to output & timeStr & " - " & summary of evt & return
-        if location of evt is not "" then
-            set output to output & "         Location: " & location of evt & return
-        end if
-    end repeat
+    let predicate = store.predicateForEvents(withStart: startOfDay, end: endOfDay, calendars: calendars)
+    let events = store.events(matching: predicate).sorted { $0.startDate < $1.startDate }
 
-    return output
-end tell
-EOF
-else
-    osascript <<'EOF'
-tell application "Calendar"
-    set todayStart to current date
-    set time of todayStart to 0
-    set todayEnd to todayStart + (24 * 60 * 60)
+    if events.isEmpty {
+        if calendarFilter.isEmpty {
+            print("No events scheduled for today.")
+        } else {
+            print("No events scheduled for today in \"\(calendarFilter)\".")
+        }
+        return
+    }
 
-    set output to "=== TODAY'S EVENTS ===" & return & return
-    set foundAny to false
+    if calendarFilter.isEmpty {
+        print("=== TODAYS EVENTS ===\n")
+    } else {
+        print("=== TODAYS EVENTS: \(calendarFilter) ===\n")
+    }
 
-    repeat with c in calendars
-        set todayEvents to (events of c whose start date >= todayStart and start date < todayEnd)
+    // Group events by calendar
+    var eventsByCalendar: [String: [EKEvent]] = [:]
+    for event in events {
+        let calName = event.calendar.title
+        if eventsByCalendar[calName] == nil {
+            eventsByCalendar[calName] = []
+        }
+        eventsByCalendar[calName]!.append(event)
+    }
 
-        if (count of todayEvents) > 0 then
-            set foundAny to true
-            set output to output & "📅 " & name of c & return
+    let timeFormatter = DateFormatter()
+    timeFormatter.dateFormat = "h:mm a"
 
-            repeat with evt in todayEvents
-                if allday event of evt then
-                    set timeStr to "All Day"
-                else
-                    set startTime to start date of evt
-                    set h to hours of startTime
-                    set m to minutes of startTime
-                    if m < 10 then set m to "0" & m
-                    set ampm to "AM"
-                    if h >= 12 then set ampm to "PM"
-                    if h > 12 then set h to h - 12
-                    if h is 0 then set h to 12
-                    set timeStr to h & ":" & m & " " & ampm
-                end if
+    for (calName, calEvents) in eventsByCalendar.sorted(by: { $0.key < $1.key }) {
+        print("\u{1F4C5} \(calName)")
+        for event in calEvents {
+            let timeStr: String
+            if event.isAllDay {
+                timeStr = "All Day"
+            } else {
+                timeStr = timeFormatter.string(from: event.startDate)
+            }
 
-                set output to output & "  " & timeStr & " - " & summary of evt & return
-                if location of evt is not "" then
-                    set output to output & "           Location: " & location of evt & return
-                end if
-            end repeat
-            set output to output & return
-        end if
-    end repeat
+            print("  \(timeStr) - \(event.title ?? "No title")")
+            if let location = event.location, !location.isEmpty {
+                print("           Location: \(location)")
+            }
+        }
+        print("")
+    }
+}
 
-    if not foundAny then
-        return "No events scheduled for today."
-    end if
-
-    return output
-end tell
-EOF
-fi
+semaphore.wait()
+' 2>&1
