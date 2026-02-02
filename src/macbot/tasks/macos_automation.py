@@ -29,9 +29,26 @@ async def run_script(script_path: str, args: list[str] | None = None, timeout: i
     Returns:
         Dictionary with return_code, stdout, stderr
     """
+    import logging
+    logger = logging.getLogger(__name__)
+
     full_path = os.path.join(SCRIPTS_BASE, script_path)
     cmd_parts = [full_path] + (args or [])
     cmd = " ".join(f'"{p}"' if " " in p else p for p in cmd_parts)
+
+    logger.debug(f"Running script: {cmd}")
+    logger.debug(f"Script path exists: {os.path.exists(full_path)}")
+
+    if not os.path.exists(full_path):
+        return {
+            "success": False,
+            "error": f"Script not found: {full_path}",
+            "debug": {
+                "scripts_base": SCRIPTS_BASE,
+                "script_path": script_path,
+                "full_path": full_path,
+            },
+        }
 
     try:
         process = await asyncio.create_subprocess_shell(
@@ -43,26 +60,41 @@ async def run_script(script_path: str, args: list[str] | None = None, timeout: i
             process.communicate(), timeout=timeout
         )
 
+        stdout_str = stdout.decode().strip()
+        stderr_str = stderr.decode().strip()
+
+        logger.debug(f"Script return code: {process.returncode}")
+        logger.debug(f"Script stdout: {stdout_str[:200] if stdout_str else '(empty)'}")
+        logger.debug(f"Script stderr: {stderr_str[:200] if stderr_str else '(empty)'}")
+
         if process.returncode != 0:
             return {
                 "success": False,
-                "error": stderr.decode().strip() or f"Script exited with code {process.returncode}",
-                "output": stdout.decode().strip(),
+                "error": stderr_str or f"Script exited with code {process.returncode}",
+                "output": stdout_str,
+                "debug": {
+                    "command": cmd,
+                    "return_code": process.returncode,
+                    "stderr": stderr_str,
+                },
             }
 
         return {
             "success": True,
-            "output": stdout.decode().strip(),
+            "output": stdout_str,
         }
     except asyncio.TimeoutError:
         return {
             "success": False,
             "error": f"Script timed out after {timeout} seconds",
+            "debug": {"command": cmd},
         }
     except Exception as e:
+        logger.exception(f"Script execution failed: {e}")
         return {
             "success": False,
             "error": str(e),
+            "debug": {"command": cmd, "exception": type(e).__name__},
         }
 
 
@@ -95,7 +127,7 @@ class GetUnreadEmailsTask(Task):
 
 
 class SearchEmailsTask(Task):
-    """Search emails by sender or subject."""
+    """Search emails by sender, subject, or account."""
 
     @property
     def name(self) -> str:
@@ -103,12 +135,22 @@ class SearchEmailsTask(Task):
 
     @property
     def description(self) -> str:
-        return "Search emails in the inbox by sender email/name or subject text. Returns matching messages."
+        return (
+            "Search emails in Mail.app. Can search by sender, subject, or list all emails in an account. "
+            "IMPORTANT: 'emails from X account' means emails RECEIVED BY that account (use account parameter), "
+            "not emails FROM that sender. Use account='waas.rent' to get all emails in that account, "
+            "optionally filtered by today_only or days parameter."
+        )
 
     async def execute(
         self,
         sender: str | None = None,
         subject: str | None = None,
+        account: str | None = None,
+        mailbox: str | None = None,
+        today_only: bool = False,
+        days: int | None = None,
+        all_mailboxes: bool = False,
         limit: int = 20
     ) -> dict[str, Any]:
         """Search emails.
@@ -116,19 +158,34 @@ class SearchEmailsTask(Task):
         Args:
             sender: Search for emails from sender containing this pattern.
             subject: Search for emails with subject containing this pattern.
+            account: Search in specified account (e.g., "waas.rent" for all emails in that account).
+            mailbox: Search specific mailbox (e.g., "Archive", "Sent Items").
+            today_only: Only return emails from today.
+            days: Only return emails from the last N days.
+            all_mailboxes: Search all mailboxes including Sent, Trash, etc.
             limit: Maximum number of results to return.
 
         Returns:
             Dictionary with matching emails.
         """
-        if not sender and not subject:
-            return {"success": False, "error": "Must specify sender or subject"}
+        if not sender and not subject and not account:
+            return {"success": False, "error": "Must specify sender, subject, or account"}
 
         args = []
         if sender:
             args.extend(["--sender", sender])
         if subject:
             args.extend(["--subject", subject])
+        if account:
+            args.extend(["--account", account])
+        if mailbox:
+            args.extend(["--mailbox", mailbox])
+        if today_only:
+            args.append("--today")
+        if days:
+            args.extend(["--days", str(days)])
+        if all_mailboxes:
+            args.append("--all-mailboxes")
         args.extend(["--limit", str(limit)])
 
         return await run_script("mail/search-emails.sh", args)

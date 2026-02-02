@@ -70,15 +70,18 @@ done
 # Escape user input for AppleScript
 FOLDER_ESCAPED=$(escape_for_applescript "$FOLDER")
 
+# Default RECENT to 0 to avoid AppleScript syntax errors
+RECENT_DAYS=${RECENT:-0}
+
 osascript <<EOF
 tell application "Notes"
     set output to "=== NOTES ===" & return & return
     set noteCount to 0
     set cutoffDate to missing value
 
-    if "$RECENT" is not "" then
-        set cutoffDate to (current date) - ($RECENT * 24 * 60 * 60)
-        set output to "=== NOTES (last $RECENT days) ===" & return & return
+    if $RECENT_DAYS > 0 then
+        set cutoffDate to (current date) - ($RECENT_DAYS * 24 * 60 * 60)
+        set output to "=== NOTES (last $RECENT_DAYS days) ===" & return & return
     end if
 
     set folderList to {}
@@ -135,7 +138,7 @@ tell application "Notes"
                     set folderOutput to folderOutput & noteLine & return
 
                     -- Show modification date for recent filter
-                    if "$RECENT" is not "" then
+                    if $RECENT_DAYS > 0 then
                         set folderOutput to folderOutput & "     Modified: " & (modification date of n as string) & return
                     end if
                 end if
