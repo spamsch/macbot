@@ -99,118 +99,93 @@ ACCOUNT_ESCAPED=$(escape_for_applescript "$ACCOUNT")
 MAILBOX_ESCAPED=$(escape_for_applescript "$MAILBOX")
 DESTINATION_ESCAPED=$(escape_for_applescript "$DESTINATION")
 
-osascript <<EOF
+# Use different strategy based on search criteria
+if [[ -n "$MESSAGE_ID" ]]; then
+    # Message-ID search: use whose clause for direct, reliable lookup
+    osascript <<EOF
 tell application "Mail"
-    set matchingMsgs to {}
-    set mailboxesToSearch to {}
-    set sourceAccount to missing value
+    set movedCount to 0
+    set destType to "$DEST_LOWER"
+    set targetId to "$MESSAGE_ID_ESCAPED"
+    set foundMsgs to {}
 
-    -- Determine which mailboxes to search
+    -- Search in specified mailbox or inbox
     if "$ACCOUNT_ESCAPED" is not "" then
         try
-            set sourceAccount to account "$ACCOUNT_ESCAPED"
+            set acct to account "$ACCOUNT_ESCAPED"
             if "$MAILBOX_ESCAPED" is not "" then
-                set mailboxesToSearch to {mailbox "$MAILBOX_ESCAPED" of sourceAccount}
+                set mbToSearch to mailbox "$MAILBOX_ESCAPED" of acct
             else
-                -- Search inbox by default for the account
-                set mailboxesToSearch to {inbox of sourceAccount}
+                set mbToSearch to inbox of acct
             end if
+            set foundMsgs to (messages of mbToSearch whose message id is targetId)
         on error
             return "Error: Account '$ACCOUNT_ESCAPED' not found."
         end try
+    else if "$MAILBOX_ESCAPED" is not "" then
+        -- Search specified mailbox across all accounts
+        repeat with acct in accounts
+            try
+                set mbToSearch to mailbox "$MAILBOX_ESCAPED" of acct
+                set acctMsgs to (messages of mbToSearch whose message id is targetId)
+                if (count of acctMsgs) > 0 then
+                    set foundMsgs to acctMsgs
+                    exit repeat
+                end if
+            end try
+        end repeat
     else
-        -- Search all inboxes if no account specified
-        if "$MAILBOX_ESCAPED" is not "" then
-            repeat with acct in accounts
-                try
-                    set end of mailboxesToSearch to mailbox "$MAILBOX_ESCAPED" of acct
-                end try
-            end repeat
-        else
-            set mailboxesToSearch to {inbox}
-        end if
+        -- Search unified inbox
+        set foundMsgs to (messages of inbox whose message id is targetId)
     end if
 
-    -- Search for matching messages
-    repeat with mb in mailboxesToSearch
-        try
-            set msgAccount to account of mb
-            repeat with msg in messages of mb
-                set includeMsg to true
-
-                -- Check message ID (most specific)
-                if "$MESSAGE_ID_ESCAPED" is not "" then
-                    if message id of msg is not "$MESSAGE_ID_ESCAPED" then
-                        set includeMsg to false
-                    end if
-                else
-                    -- Check sender filter
-                    if "$SENDER_ESCAPED" is not "" then
-                        if sender of msg does not contain "$SENDER_ESCAPED" then
-                            set includeMsg to false
-                        end if
-                    end if
-
-                    -- Check subject filter
-                    if includeMsg and "$SUBJECT_ESCAPED" is not "" then
-                        if subject of msg does not contain "$SUBJECT_ESCAPED" then
-                            set includeMsg to false
-                        end if
-                    end if
-                end if
-
-                if includeMsg then
-                    set end of matchingMsgs to {theMsg:msg, theAccount:msgAccount}
-                    if (count of matchingMsgs) >= $LIMIT then
-                        exit repeat
-                    end if
-                end if
-            end repeat
-            if (count of matchingMsgs) >= $LIMIT then
-                exit repeat
-            end if
-        end try
-    end repeat
-
-    set msgCount to count of matchingMsgs
-    if msgCount is 0 then
+    if (count of foundMsgs) is 0 then
         return "No matching messages found."
     end if
 
-    -- Move messages to destination
-    set movedCount to 0
-    set destType to "$DEST_LOWER"
+    repeat with msg in foundMsgs
+        set msgAcct to account of mailbox of msg
+        set moved to false
 
-    repeat with msgInfo in matchingMsgs
-        set msg to theMsg of msgInfo
-        set msgAcct to theAccount of msgInfo
-
-        try
-            if destType is "archive" then
-                -- Move to account's Archive mailbox
-                set destMailbox to mailbox "Archive" of msgAcct
-                move msg to destMailbox
-            else if destType is "trash" then
-                -- Move to account's Trash
-                set destMailbox to trash mailbox of msgAcct
-                move msg to destMailbox
-            else
-                -- Move to named mailbox in same account
-                set destMailbox to mailbox "$DESTINATION_ESCAPED" of msgAcct
-                move msg to destMailbox
-            end if
-            set movedCount to movedCount + 1
-        on error errMsg
-            -- Try without account context for special mailboxes
-            try
-                if destType is "archive" then
-                    -- Some accounts use "All Mail" instead
-                    set destMailbox to mailbox "All Mail" of msgAcct
+        if destType is "archive" then
+            -- Try Archive, then All Mail (Gmail)
+            repeat with archiveName in {"Archive", "All Mail"}
+                try
+                    set destMailbox to mailbox archiveName of msgAcct
                     move msg to destMailbox
                     set movedCount to movedCount + 1
-                end if
+                    set moved to true
+                    exit repeat
+                end try
+            end repeat
+        else if destType is "trash" then
+            -- Try trash mailbox property, then common trash names
+            try
+                set destMailbox to trash mailbox of msgAcct
+                move msg to destMailbox
+                set movedCount to movedCount + 1
+                set moved to true
+            on error
+                repeat with trashName in {"Deleted Items", "Trash", "Bin"}
+                    try
+                        set destMailbox to mailbox trashName of msgAcct
+                        move msg to destMailbox
+                        set movedCount to movedCount + 1
+                        set moved to true
+                        exit repeat
+                    end try
+                end repeat
             end try
-        end try
+        else
+            try
+                set destMailbox to mailbox "$DESTINATION_ESCAPED" of msgAcct
+                move msg to destMailbox
+                set movedCount to movedCount + 1
+                set moved to true
+            end try
+        end if
+
+        if movedCount >= $LIMIT then exit repeat
     end repeat
 
     if movedCount is 0 then
@@ -224,3 +199,129 @@ tell application "Mail"
     end if
 end tell
 EOF
+else
+    # Sender/Subject search: collect IDs first, then move by ID
+    osascript <<EOF
+tell application "Mail"
+    set matchingIds to {}
+    set mailboxesToSearch to {}
+
+    -- Determine which mailboxes to search
+    if "$ACCOUNT_ESCAPED" is not "" then
+        try
+            set acct to account "$ACCOUNT_ESCAPED"
+            if "$MAILBOX_ESCAPED" is not "" then
+                set mailboxesToSearch to {mailbox "$MAILBOX_ESCAPED" of acct}
+            else
+                set mailboxesToSearch to {inbox of acct}
+            end if
+        on error
+            return "Error: Account '$ACCOUNT_ESCAPED' not found."
+        end try
+    else
+        if "$MAILBOX_ESCAPED" is not "" then
+            repeat with acct in accounts
+                try
+                    set end of mailboxesToSearch to mailbox "$MAILBOX_ESCAPED" of acct
+                end try
+            end repeat
+        else
+            set mailboxesToSearch to {inbox}
+        end if
+    end if
+
+    -- Collect matching message IDs and their mailboxes
+    repeat with mb in mailboxesToSearch
+        try
+            repeat with msg in messages of mb
+                set includeMsg to true
+
+                if "$SENDER_ESCAPED" is not "" then
+                    if sender of msg does not contain "$SENDER_ESCAPED" then
+                        set includeMsg to false
+                    end if
+                end if
+
+                if includeMsg and "$SUBJECT_ESCAPED" is not "" then
+                    if subject of msg does not contain "$SUBJECT_ESCAPED" then
+                        set includeMsg to false
+                    end if
+                end if
+
+                if includeMsg then
+                    set end of matchingIds to {msgId:message id of msg, msgMailbox:mb}
+                    if (count of matchingIds) >= $LIMIT then exit repeat
+                end if
+            end repeat
+            if (count of matchingIds) >= $LIMIT then exit repeat
+        end try
+    end repeat
+
+    if (count of matchingIds) is 0 then
+        return "No matching messages found."
+    end if
+
+    -- Move messages by ID (fresh lookup for each)
+    set movedCount to 0
+    set destType to "$DEST_LOWER"
+
+    repeat with msgInfo in matchingIds
+        set targetId to msgId of msgInfo
+        set srcMailbox to msgMailbox of msgInfo
+
+        set foundMsgs to (messages of srcMailbox whose message id is targetId)
+        if (count of foundMsgs) > 0 then
+            set msg to item 1 of foundMsgs
+            set msgAcct to account of srcMailbox
+            set moved to false
+
+            if destType is "archive" then
+                repeat with archiveName in {"Archive", "All Mail"}
+                    try
+                        set destMailbox to mailbox archiveName of msgAcct
+                        move msg to destMailbox
+                        set movedCount to movedCount + 1
+                        set moved to true
+                        exit repeat
+                    end try
+                end repeat
+            else if destType is "trash" then
+                try
+                    set destMailbox to trash mailbox of msgAcct
+                    move msg to destMailbox
+                    set movedCount to movedCount + 1
+                    set moved to true
+                on error
+                    repeat with trashName in {"Deleted Items", "Trash", "Bin"}
+                        try
+                            set destMailbox to mailbox trashName of msgAcct
+                            move msg to destMailbox
+                            set movedCount to movedCount + 1
+                            set moved to true
+                            exit repeat
+                        end try
+                    end repeat
+                end try
+            else
+                try
+                    set destMailbox to mailbox "$DESTINATION_ESCAPED" of msgAcct
+                    move msg to destMailbox
+                    set movedCount to movedCount + 1
+                    set moved to true
+                end try
+            end if
+        end if
+    end repeat
+
+    if movedCount is 0 then
+        return "Error: Could not move messages. Destination mailbox may not exist."
+    else if destType is "archive" then
+        return "Moved " & movedCount & " message(s) to Archive."
+    else if destType is "trash" then
+        return "Moved " & movedCount & " message(s) to Trash."
+    else
+        return "Moved " & movedCount & " message(s) to '$DESTINATION_ESCAPED'."
+    end if
+end tell
+EOF
+fi
