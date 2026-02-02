@@ -110,8 +110,10 @@ class Agent:
                             params = []
                             for k, v in tc.arguments.items():
                                 v_str = str(v)
-                                if len(v_str) > 30:
-                                    v_str = v_str[:27] + "..."
+                                # Longer limit for command/script parameters
+                                max_len = 100 if k in ("command", "script", "body", "notes") else 40
+                                if len(v_str) > max_len:
+                                    v_str = v_str[:max_len - 3] + "..."
                                 params.append(f"{k}={v_str}")
                             tool_strs.append(f"{tc.name}({', '.join(params)})")
                         else:
@@ -227,11 +229,18 @@ You have a persistent memory to track what you've done. USE IT to avoid duplicat
    - Take action (reply, create reminder, etc.)
    - Mark as processed with action_taken (e.g., 'replied', 'reminder_created', 'reviewed', 'no_action_needed')
 
-## Important
+## Important Rules
 
 - Always try the most likely interpretation first
 - If a search returns no results, mention what you searched for and suggest alternatives
 - Use tool parameters to filter results (today, days, mailbox, etc.) rather than asking users for them
+- **NEVER use run_shell_command for tasks that have dedicated tools.** Use:
+  - `create_reminder` NOT osascript for reminders
+  - `send_email` NOT osascript for emails
+  - `create_calendar_event` NOT osascript for events
+  - `move_email` NOT osascript for moving emails
+  - `download_attachments` NOT osascript for attachments
+- If a dedicated tool fails, report the error. Do NOT work around it with run_shell_command.
 """
 
         return base_prompt + system_info + tool_text + guidance
