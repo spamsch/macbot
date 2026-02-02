@@ -94,10 +94,11 @@ Use `macbot <command> --help` for detailed help.
 def setup_logging(verbose: bool = False) -> None:
     """Configure logging."""
     level = logging.DEBUG if verbose else logging.WARNING
+    fmt = "%(name)s: %(message)s" if verbose else "%(message)s"
     logging.basicConfig(
         level=level,
-        format="%(message)s",
-        handlers=[RichHandler(rich_tracebacks=True, console=console)],
+        format=fmt,
+        handlers=[RichHandler(rich_tracebacks=True, console=console, show_path=verbose)],
     )
 
 
@@ -190,26 +191,32 @@ def cmd_chat(args: argparse.Namespace) -> None:
 
 def cmd_run(args: argparse.Namespace) -> None:
     """Run a goal, optionally continuing to interactive mode."""
+    # Enable debug logging if --debug flag is set
+    if getattr(args, "debug", False):
+        setup_logging(verbose=True)
+        console.print("[dim]Debug mode enabled[/dim]\n")
+
     registry = create_default_registry()
     agent = Agent(registry)
 
     async def _run() -> None:
         # Execute the initial goal
         stream = not getattr(args, "no_stream", False)
+        verbose = args.verbose or getattr(args, "debug", False)
 
-        if args.verbose and not stream:
+        if verbose and not stream:
             console.print(Panel(f"[bold]Goal:[/bold] {args.goal}", title="Running"))
 
-        result = await agent.run(args.goal, verbose=args.verbose, stream=stream)
+        result = await agent.run(args.goal, verbose=verbose, stream=stream)
 
-        # When streaming with verbose, text was already printed via stream callback
+        # When streaming, text was already printed via stream callback
         # Otherwise, print the final result
-        if not (stream and args.verbose):
+        if not stream:
             console.print(f"\n[bold green]Agent:[/bold green] {result}")
 
         # Continue to interactive mode if requested
         if args.continue_chat:
-            await interactive_loop(agent, verbose=args.verbose)
+            await interactive_loop(agent, verbose=verbose)
 
     asyncio.run(_run())
 
@@ -673,6 +680,62 @@ def cmd_doctor(args: argparse.Namespace) -> None:
     else:
         check("osascript", False, "Not found",
               "osascript is required for macOS automation (macOS only)")
+
+    # Test AppleScript access to apps
+    console.print("\n[bold]App Access Tests[/bold]")
+
+    def test_app_access(app_name: str, test_script: str) -> tuple[bool, str]:
+        """Test if we can access an app via AppleScript."""
+        import subprocess
+        try:
+            result = subprocess.run(
+                ["osascript", "-e", test_script],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            if result.returncode == 0:
+                return True, result.stdout.strip()[:50] or "OK"
+            else:
+                error = result.stderr.strip()
+                # Parse common error codes
+                if "-1743" in error:
+                    return False, "Permission denied (grant in System Settings > Privacy > Automation)"
+                elif "-2741" in error:
+                    return False, "AppleScript syntax error (special chars in data?)"
+                elif "-1728" in error:
+                    return False, f"{app_name} not found or not responding"
+                else:
+                    return False, error[:80]
+        except subprocess.TimeoutExpired:
+            return False, "Timeout (app not responding)"
+        except Exception as e:
+            return False, str(e)[:80]
+
+    # Test Notes
+    ok, msg = test_app_access("Notes", 'tell application "Notes" to count of notes')
+    check("Notes.app", ok, msg,
+          "Grant access in System Settings > Privacy & Security > Automation" if not ok else None)
+
+    # Test Mail
+    ok, msg = test_app_access("Mail", 'tell application "Mail" to count of accounts')
+    check("Mail.app", ok, msg,
+          "Grant access in System Settings > Privacy & Security > Automation" if not ok else None)
+
+    # Test Calendar
+    ok, msg = test_app_access("Calendar", 'tell application "Calendar" to count of calendars')
+    check("Calendar.app", ok, msg,
+          "Grant access in System Settings > Privacy & Security > Automation" if not ok else None)
+
+    # Test Reminders
+    ok, msg = test_app_access("Reminders", 'tell application "Reminders" to count of lists')
+    check("Reminders.app", ok, msg,
+          "Grant access in System Settings > Privacy & Security > Automation" if not ok else None)
+
+    # Test Safari
+    ok, msg = test_app_access("Safari", 'tell application "Safari" to count of windows')
+    check("Safari.app", ok, msg,
+          "Grant access in System Settings > Privacy & Security > Automation" if not ok else None)
 
     # Tasks
     console.print("\n[bold]Tasks[/bold]")
@@ -1183,6 +1246,10 @@ EXAMPLES:
         description="Start an interactive conversation with the agent. "
                     "Context is preserved between messages."
     )
+    chat_parser.add_argument(
+        "-v", "--verbose", action="store_true",
+        help="Show detailed output including tool calls"
+    )
     chat_parser.set_defaults(func=cmd_chat)
 
     # Run command (single goal)
@@ -1205,6 +1272,14 @@ EXAMPLES:
         "--no-stream", dest="no_stream", action="store_true",
         help="Disable streaming output (wait for complete response)"
     )
+    run_parser.add_argument(
+        "-v", "--verbose", action="store_true",
+        help="Show detailed output including tool calls"
+    )
+    run_parser.add_argument(
+        "--debug", action="store_true",
+        help="Show debug output (script commands, full errors)"
+    )
     run_parser.set_defaults(func=cmd_run)
 
     # Task command (direct execution)
@@ -1222,6 +1297,10 @@ EXAMPLES:
     task_parser.add_argument(
         "args", nargs="*",
         help="Task arguments as key=value pairs"
+    )
+    task_parser.add_argument(
+        "-v", "--verbose", action="store_true",
+        help="Show detailed output"
     )
     task_parser.set_defaults(func=cmd_task)
 
