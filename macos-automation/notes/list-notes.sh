@@ -67,6 +67,9 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+# Escape user input for AppleScript
+FOLDER_ESCAPED=$(escape_for_applescript "$FOLDER")
+
 osascript <<EOF
 tell application "Notes"
     set output to "=== NOTES ===" & return & return
@@ -79,12 +82,12 @@ tell application "Notes"
     end if
 
     set folderList to {}
-    if "$FOLDER" is not "" then
+    if "$FOLDER_ESCAPED" is not "" then
         try
-            set folderList to {folder "$FOLDER"}
-            set output to "=== NOTES: $FOLDER ===" & return & return
+            set folderList to {folder "$FOLDER_ESCAPED"}
+            set output to "=== NOTES: $FOLDER_ESCAPED ===" & return & return
         on error
-            return "Folder '$FOLDER' not found."
+            return "Folder '$FOLDER_ESCAPED' not found."
         end try
     else
         set folderList to folders

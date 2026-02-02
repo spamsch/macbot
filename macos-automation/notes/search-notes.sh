@@ -70,17 +70,21 @@ done
 # Validate
 [[ -z "$QUERY" ]] && error_exit "--query is required"
 
+# Escape user input for AppleScript
+QUERY_ESCAPED=$(escape_for_applescript "$QUERY")
+FOLDER_ESCAPED=$(escape_for_applescript "$FOLDER")
+
 osascript <<EOF
 tell application "Notes"
-    set output to "=== SEARCH: $QUERY ===" & return & return
+    set output to "=== SEARCH: $QUERY_ESCAPED ===" & return & return
     set matchCount to 0
 
     set folderList to {}
-    if "$FOLDER" is not "" then
+    if "$FOLDER_ESCAPED" is not "" then
         try
-            set folderList to {folder "$FOLDER"}
+            set folderList to {folder "$FOLDER_ESCAPED"}
         on error
-            return "Folder '$FOLDER' not found."
+            return "Folder '$FOLDER_ESCAPED' not found."
         end try
     else
         set folderList to folders
@@ -93,11 +97,11 @@ tell application "Notes"
                 set matched to false
 
                 if $TITLE_ONLY then
-                    if name of n contains "$QUERY" then
+                    if name of n contains "$QUERY_ESCAPED" then
                         set matched to true
                     end if
                 else
-                    if name of n contains "$QUERY" or plaintext of n contains "$QUERY" then
+                    if name of n contains "$QUERY_ESCAPED" or plaintext of n contains "$QUERY_ESCAPED" then
                         set matched to true
                     end if
                 end if
@@ -128,7 +132,7 @@ tell application "Notes"
     end repeat
 
     if matchCount is 0 then
-        return "No notes found matching '$QUERY'."
+        return "No notes found matching '$QUERY_ESCAPED'."
     end if
 
     set output to output & "Found " & matchCount & " note(s)"

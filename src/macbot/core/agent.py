@@ -10,6 +10,7 @@ The agent follows a ReAct-style pattern:
 
 import json
 import logging
+import platform
 from typing import Any
 
 from rich.console import Console
@@ -68,12 +69,13 @@ class Agent:
                 model=provider_config["model"],
             )
 
-    async def run(self, goal: str, verbose: bool = False) -> str:
+    async def run(self, goal: str, verbose: bool = False, stream: bool = True) -> str:
         """Run the agent loop to achieve a goal.
 
         Args:
             goal: The objective for the agent to achieve
             verbose: Whether to print detailed output
+            stream: Whether to stream LLM responses
 
         Returns:
             The final response from the agent
@@ -90,10 +92,11 @@ class Agent:
             if verbose:
                 console.print(f"\n[dim]Iteration {self.iteration}/{self.config.max_iterations}[/dim]")
 
-            # Get LLM response
-            response = await self._get_llm_response()
+            # Get LLM response (with streaming if enabled)
+            response = await self._get_llm_response(stream=stream, verbose=verbose)
 
-            if verbose and response.content:
+            # If not streaming and verbose, show the response
+            if not stream and verbose and response.content:
                 console.print(Panel(response.content, title="Assistant"))
 
             # Check if we have tool calls to execute
@@ -105,23 +108,105 @@ class Agent:
 
         return "Reached maximum iterations without completing the goal."
 
-    async def _get_llm_response(self) -> LLMResponse:
+    def _build_system_prompt(self) -> str:
+        """Build a dynamic system prompt with platform and tool context."""
+        # Start with the configured base prompt
+        base_prompt = self.config.agent_system_prompt
+
+        # Add platform context
+        system_info = f"""
+
+## System Context
+- Platform: macOS ({platform.mac_ver()[0]})
+- Architecture: {platform.machine()}
+- Hostname: {platform.node()}
+
+## Available Tools
+
+You have access to the following tools to help accomplish tasks on this macOS system:
+"""
+
+        # Group tools by category based on naming conventions
+        tools = self.task_registry.list_tasks()
+        categories: dict[str, list[tuple[str, str]]] = {
+            "Mail": [],
+            "Calendar": [],
+            "Reminders": [],
+            "Notes": [],
+            "Safari": [],
+            "File Operations": [],
+            "System": [],
+        }
+
+        for task in tools:
+            name = task.name
+            desc = task.description
+
+            if "mail" in name or "email" in name:
+                categories["Mail"].append((name, desc))
+            elif "calendar" in name or "event" in name:
+                categories["Calendar"].append((name, desc))
+            elif "reminder" in name:
+                categories["Reminders"].append((name, desc))
+            elif "note" in name:
+                categories["Notes"].append((name, desc))
+            elif "safari" in name or "url" in name.lower() or "tab" in name:
+                categories["Safari"].append((name, desc))
+            elif "file" in name or "read" in name or "write" in name:
+                categories["File Operations"].append((name, desc))
+            else:
+                categories["System"].append((name, desc))
+
+        # Build tool descriptions
+        tool_text = ""
+        for category, task_list in categories.items():
+            if task_list:
+                tool_text += f"\n### {category}\n"
+                for name, desc in task_list:
+                    tool_text += f"- **{name}**: {desc}\n"
+
+        return base_prompt + system_info + tool_text
+
+    async def _get_llm_response(self, stream: bool = False, verbose: bool = False) -> LLMResponse:
         """Get a response from the LLM."""
         tools = self.task_registry.get_tool_schemas()
+        system_prompt = self._build_system_prompt()
 
-        return await self.provider.chat(
+        stream_callback = None
+        if stream and verbose:
+            # Create a streaming callback that prints text as it arrives
+            first_chunk = [True]  # Use list to allow mutation in closure
+
+            def stream_callback(text: str) -> None:
+                if first_chunk[0]:
+                    console.print("\n[bold cyan]Assistant:[/bold cyan] ", end="")
+                    first_chunk[0] = False
+                console.print(text, end="", highlight=False)
+
+        response = await self.provider.chat(
             messages=self.messages,
             tools=tools if tools else None,
-            system_prompt=self.config.agent_system_prompt,
+            system_prompt=system_prompt,
+            stream_callback=stream_callback,
         )
+
+        # Print newline after streaming completes
+        if stream and verbose and response.content:
+            console.print()  # End the streamed line
+
+        return response
 
     async def _execute_tool_calls(
         self, response: LLMResponse, verbose: bool = False
     ) -> None:
         """Execute tool calls from the LLM response."""
         # Add assistant message with tool calls to history
-        if response.content:
-            self.messages.append(Message(role="assistant", content=response.content))
+        # Must always include the tool_calls for OpenAI API compatibility
+        self.messages.append(Message(
+            role="assistant",
+            content=response.content,
+            tool_calls=response.tool_calls,
+        ))
 
         # Execute each tool call
         for tool_call in response.tool_calls:

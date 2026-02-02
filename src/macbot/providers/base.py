@@ -1,16 +1,23 @@
 """Base LLM provider interface."""
 
 from abc import ABC, abstractmethod
+from collections.abc import AsyncIterator, Callable
 from typing import Any
 
 from pydantic import BaseModel
 
 
+# Type alias for streaming callback
+StreamCallback = Callable[[str], None]
+
+
 class Message(BaseModel):
     """A message in the conversation."""
 
-    role: str  # "user", "assistant", or "system"
-    content: str
+    role: str  # "user", "assistant", "system", or "tool"
+    content: str | None = None
+    tool_calls: list["ToolCall"] | None = None  # For assistant messages with tool calls
+    tool_call_id: str | None = None  # For tool result messages
 
 
 class ToolCall(BaseModel):
@@ -49,6 +56,7 @@ class LLMProvider(ABC):
         messages: list[Message],
         tools: list[dict[str, Any]] | None = None,
         system_prompt: str | None = None,
+        stream_callback: StreamCallback | None = None,
     ) -> LLMResponse:
         """Send a chat completion request.
 
@@ -56,6 +64,7 @@ class LLMProvider(ABC):
             messages: Conversation history
             tools: Tool definitions for function calling
             system_prompt: System prompt to set context
+            stream_callback: Optional callback for streaming text chunks
 
         Returns:
             LLM response with content and/or tool calls

@@ -195,11 +195,17 @@ def cmd_run(args: argparse.Namespace) -> None:
 
     async def _run() -> None:
         # Execute the initial goal
-        if args.verbose:
+        stream = not getattr(args, "no_stream", False)
+
+        if args.verbose and not stream:
             console.print(Panel(f"[bold]Goal:[/bold] {args.goal}", title="Running"))
 
-        result = await agent.run(args.goal, verbose=args.verbose)
-        console.print(f"\n[bold green]Agent:[/bold green] {result}")
+        result = await agent.run(args.goal, verbose=args.verbose, stream=stream)
+
+        # When streaming with verbose, text was already printed via stream callback
+        # Otherwise, print the final result
+        if not (stream and args.verbose):
+            console.print(f"\n[bold green]Agent:[/bold green] {result}")
 
         # Continue to interactive mode if requested
         if args.continue_chat:
@@ -1194,6 +1200,10 @@ EXAMPLES:
     run_parser.add_argument(
         "-c", "--continue", dest="continue_chat", action="store_true",
         help="Continue to interactive chat after completing the goal"
+    )
+    run_parser.add_argument(
+        "--no-stream", dest="no_stream", action="store_true",
+        help="Disable streaming output (wait for complete response)"
     )
     run_parser.set_defaults(func=cmd_run)
 

@@ -156,19 +156,36 @@ class Task(ABC):
         properties: dict[str, Any] = {}
         required: list[str] = []
 
+        # Map Python types to JSON Schema types
+        type_mapping = {
+            "str": "string",
+            "int": "integer",
+            "float": "number",
+            "bool": "boolean",
+            "list": "array",
+            "dict": "object",
+        }
+
         for param in self.get_parameters():
             prop: dict[str, Any] = {"description": param.description}
 
-            # Map Python types to JSON Schema types
-            type_mapping = {
-                "str": "string",
-                "int": "integer",
-                "float": "number",
-                "bool": "boolean",
-                "list": "array",
-                "dict": "object",
-            }
-            prop["type"] = type_mapping.get(param.type.lower(), "string")
+            param_type = param.type.lower()
+
+            # Handle generic types like list[float], dict[str, Any]
+            if param_type.startswith("list"):
+                prop["type"] = "array"
+                # Extract inner type if present (e.g., "list[float]" -> "float")
+                if "[" in param_type and "]" in param_type:
+                    inner_type = param_type[param_type.index("[") + 1 : param_type.index("]")]
+                    inner_json_type = type_mapping.get(inner_type, "string")
+                    prop["items"] = {"type": inner_json_type}
+                else:
+                    # Default to string items if no inner type specified
+                    prop["items"] = {"type": "string"}
+            elif param_type.startswith("dict"):
+                prop["type"] = "object"
+            else:
+                prop["type"] = type_mapping.get(param_type, "string")
 
             if param.default is not None:
                 prop["default"] = param.default

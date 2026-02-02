@@ -13,7 +13,9 @@ from typing import Any
 from macbot.tasks.base import Task
 
 # Base path to the automation scripts
-SCRIPTS_BASE = "/workspace/macos-automation"
+# Compute relative to the package location (src/macbot -> project_root/macos-automation)
+_PACKAGE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+SCRIPTS_BASE = os.path.join(_PACKAGE_DIR, "macos-automation")
 
 
 async def run_script(script_path: str, args: list[str] | None = None, timeout: int = 30) -> dict[str, Any]:
