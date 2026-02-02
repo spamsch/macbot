@@ -140,7 +140,13 @@ Then run this script again."
 
         try
             set result to do JavaScript jsCode in current tab of front window
-            return "=== HACKER NEWS TOP " & storyCount & " ===" & linefeed & linefeed & result
+            set output to "=== HACKER NEWS TOP " & storyCount & " ===" & linefeed & linefeed & result
+
+            -- Close the tab we opened (with small delay to ensure data is captured)
+            delay 0.3
+            close current tab of front window
+
+            return output
         on error errMsg
             return "Error extracting stories: " & errMsg
         end try

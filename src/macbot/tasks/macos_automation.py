@@ -1011,6 +1011,67 @@ class ListSafariTabsTask(Task):
 
 
 # =============================================================================
+# WEB TASKS
+# =============================================================================
+
+class GetHackerNewsTask(Task):
+    """Get top stories from Hacker News."""
+
+    @property
+    def name(self) -> str:
+        return "get_hacker_news"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Get top stories from Hacker News (news.ycombinator.com) using Safari. "
+            "Returns title, score, age, and URL for each story. "
+            "Requires Safari's 'Allow JavaScript from Apple Events' to be enabled."
+        )
+
+    async def execute(self, count: int = 5) -> dict[str, Any]:
+        """Get top Hacker News stories.
+
+        Args:
+            count: Number of stories to retrieve (default: 5, max: 30).
+
+        Returns:
+            Dictionary with top stories.
+        """
+        args = ["--count", str(count)]
+        return await run_script("web/get-hn-top-stories.sh", args, timeout=30)
+
+
+class GoogleSearchTask(Task):
+    """Perform a Google search using Safari."""
+
+    @property
+    def name(self) -> str:
+        return "google_search"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Perform a Google search using Safari and extract the top results. "
+            "Returns title, URL, and snippet for each result. "
+            "Requires Safari's 'Allow JavaScript from Apple Events' to be enabled."
+        )
+
+    async def execute(self, query: str, count: int = 5) -> dict[str, Any]:
+        """Perform a Google search.
+
+        Args:
+            query: The search query.
+            count: Number of results to retrieve (default: 5, max: 20).
+
+        Returns:
+            Dictionary with search results.
+        """
+        args = ["--count", str(count), query]
+        return await run_script("web/google-search.sh", args, timeout=30)
+
+
+# =============================================================================
 # REGISTRATION HELPER
 # =============================================================================
 
@@ -1050,3 +1111,7 @@ def register_macos_tasks(registry) -> None:
     registry.register(OpenUrlTask())
     registry.register(ExtractLinksTask())
     registry.register(ListSafariTabsTask())
+
+    # Web tasks
+    registry.register(GetHackerNewsTask())
+    registry.register(GoogleSearchTask())
