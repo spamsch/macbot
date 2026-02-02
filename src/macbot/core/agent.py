@@ -101,6 +101,10 @@ class Agent:
 
             # Check if we have tool calls to execute
             if response.tool_calls:
+                # Show brief status when not in verbose mode
+                if not verbose:
+                    tool_names = [tc.name for tc in response.tool_calls]
+                    console.print(f"[dim]→ {', '.join(tool_names)}...[/dim]")
                 await self._execute_tool_calls(response, verbose)
             else:
                 # No tool calls means the agent has finished
@@ -165,7 +169,43 @@ You have access to the following tools to help accomplish tasks on this macOS sy
                 for name, desc in task_list:
                     tool_text += f"- **{name}**: {desc}\n"
 
-        return base_prompt + system_info + tool_text
+        # Add guidance for common scenarios
+        guidance = """
+
+## How to Handle Common Requests
+
+- **"emails from X account"** or **"emails in X account"** → search_emails with account=X (searches ALL emails received by that account)
+- **"emails from X sender/person"** → search_emails with sender=X (filters by who sent the email)
+- **"today's emails"** → use today_only=true parameter
+- **"recent emails"** → use days parameter (e.g., days=7 for last week)
+- **"all emails" or "read and unread"** → the search includes both by default
+- **"check my calendar"** → get_today_events or get_week_events
+- **"remind me to..."** → create_reminder
+- **"search notes for..."** → search_notes with the query
+
+IMPORTANT: "from X account" usually means emails RECEIVED BY that account (any sender), not FROM that sender. Use the account parameter for this.
+
+## Agent Memory - Tracking Processed Work
+
+You have a persistent memory to track what you've done. USE IT to avoid duplicate work:
+
+1. **Before processing emails**: Use `get_agent_memory` to see what's already been handled
+2. **After processing each email**: Use `mark_email_processed` with the Message-ID from search results
+3. **After creating reminders**: Use `record_reminder_created` to track it
+4. **The workflow for processing emails should be**:
+   - Search for emails
+   - For each email, check if already processed (via Message-ID)
+   - Take action (reply, create reminder, etc.)
+   - Mark as processed with action_taken (e.g., 'replied', 'reminder_created', 'reviewed', 'no_action_needed')
+
+## Important
+
+- Always try the most likely interpretation first
+- If a search returns no results, mention what you searched for and suggest alternatives
+- Use tool parameters to filter results (today, days, mailbox, etc.) rather than asking users for them
+"""
+
+        return base_prompt + system_info + tool_text + guidance
 
     async def _get_llm_response(self, stream: bool = False, verbose: bool = False) -> LLMResponse:
         """Get a response from the LLM."""
@@ -173,7 +213,7 @@ You have access to the following tools to help accomplish tasks on this macOS sy
         system_prompt = self._build_system_prompt()
 
         stream_callback = None
-        if stream and verbose:
+        if stream:
             # Create a streaming callback that prints text as it arrives
             first_chunk = [True]  # Use list to allow mutation in closure
 
@@ -191,7 +231,7 @@ You have access to the following tools to help accomplish tasks on this macOS sy
         )
 
         # Print newline after streaming completes
-        if stream and verbose and response.content:
+        if stream and response.content:
             console.print()  # End the streamed line
 
         return response
@@ -212,16 +252,33 @@ You have access to the following tools to help accomplish tasks on this macOS sy
         for tool_call in response.tool_calls:
             if verbose:
                 console.print(
-                    f"[yellow]Executing:[/yellow] {tool_call.name}({json.dumps(tool_call.arguments)})"
+                    f"\n[yellow]→ Executing tool:[/yellow] [bold]{tool_call.name}[/bold]"
                 )
+                if tool_call.arguments:
+                    console.print(f"  [dim]Arguments:[/dim]")
+                    for k, v in tool_call.arguments.items():
+                        val_str = str(v)
+                        if len(val_str) > 60:
+                            val_str = val_str[:60] + "..."
+                        console.print(f"    {k}: {val_str}")
 
             result = await self.task_registry.execute(
                 tool_call.name, **tool_call.arguments
             )
 
             if verbose:
-                status = "[green]Success[/green]" if result.success else "[red]Failed[/red]"
-                console.print(f"  {status}: {result.output or result.error}")
+                if result.success:
+                    console.print(f"  [green]✓ Success[/green]")
+                    output_str = str(result.output) if result.output else "(no output)"
+                    # Show truncated output
+                    if len(output_str) > 500:
+                        console.print(f"  [dim]Output (truncated):[/dim]")
+                        console.print(f"    {output_str[:500]}...")
+                    else:
+                        console.print(f"  [dim]Output:[/dim] {output_str}")
+                else:
+                    console.print(f"  [red]✗ Failed[/red]")
+                    console.print(f"  [red]Error:[/red] {result.error}")
 
             # Format and add tool result to messages
             result_str = self._format_tool_result(result)
