@@ -243,6 +243,120 @@ class SendEmailTask(Task):
         return await run_script("mail/send-email.sh", args)
 
 
+class MoveEmailTask(Task):
+    """Move emails to Archive, Trash, or another mailbox."""
+
+    @property
+    def name(self) -> str:
+        return "move_email"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Move emails to Archive, Trash, or a custom mailbox. Best used with message_id "
+            "from search_emails for precise matching. Use this to archive processed emails."
+        )
+
+    async def execute(
+        self,
+        to: str,
+        message_id: str | None = None,
+        sender: str | None = None,
+        subject: str | None = None,
+        account: str | None = None,
+        mailbox: str | None = None,
+        limit: int = 10
+    ) -> dict[str, Any]:
+        """Move emails to a destination.
+
+        Args:
+            to: Destination - "archive", "trash", or mailbox name.
+            message_id: Match specific email by Message-ID (recommended).
+            sender: Match emails from sender containing this pattern.
+            subject: Match emails with subject containing this pattern.
+            account: Only search in specified account.
+            mailbox: Only search in specified mailbox (default: Inbox).
+            limit: Maximum number of emails to move.
+
+        Returns:
+            Dictionary with move result.
+        """
+        if not message_id and not sender and not subject:
+            return {"success": False, "error": "Must specify message_id, sender, or subject"}
+
+        args = ["--to", to]
+        if message_id:
+            args.extend(["--message-id", message_id])
+        if sender:
+            args.extend(["--sender", sender])
+        if subject:
+            args.extend(["--subject", subject])
+        if account:
+            args.extend(["--account", account])
+        if mailbox:
+            args.extend(["--mailbox", mailbox])
+        args.extend(["--limit", str(limit)])
+
+        return await run_script("mail/move-email.sh", args)
+
+
+class DownloadAttachmentsTask(Task):
+    """Download email attachments to a folder."""
+
+    @property
+    def name(self) -> str:
+        return "download_attachments"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Download attachments from emails to a specified folder. Best used with message_id "
+            "from search_emails for precise matching."
+        )
+
+    async def execute(
+        self,
+        output: str,
+        message_id: str | None = None,
+        sender: str | None = None,
+        subject: str | None = None,
+        account: str | None = None,
+        mailbox: str | None = None,
+        limit: int = 5
+    ) -> dict[str, Any]:
+        """Download attachments from matching emails.
+
+        Args:
+            output: Destination folder for attachments.
+            message_id: Match specific email by Message-ID (recommended).
+            sender: Match emails from sender containing this pattern.
+            subject: Match emails with subject containing this pattern.
+            account: Only search in specified account.
+            mailbox: Only search in specified mailbox (default: Inbox).
+            limit: Maximum number of emails to process.
+
+        Returns:
+            Dictionary with download result.
+        """
+        if not message_id and not sender and not subject:
+            return {"success": False, "error": "Must specify message_id, sender, or subject"}
+
+        args = ["--output", output]
+        if message_id:
+            args.extend(["--message-id", message_id])
+        if sender:
+            args.extend(["--sender", sender])
+        if subject:
+            args.extend(["--subject", subject])
+        if account:
+            args.extend(["--account", account])
+        if mailbox:
+            args.extend(["--mailbox", mailbox])
+        args.extend(["--limit", str(limit)])
+
+        return await run_script("mail/download-attachments.sh", args)
+
+
 class MarkEmailsReadTask(Task):
     """Mark emails as read."""
 
@@ -910,6 +1024,8 @@ def register_macos_tasks(registry) -> None:
     registry.register(GetUnreadEmailsTask())
     registry.register(SearchEmailsTask())
     registry.register(SendEmailTask())
+    registry.register(MoveEmailTask())
+    registry.register(DownloadAttachmentsTask())
     registry.register(MarkEmailsReadTask())
 
     # Calendar tasks
