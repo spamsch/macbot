@@ -681,6 +681,380 @@ def cmd_status(args: argparse.Namespace) -> None:
             console.print(f"  [dim]{line}[/dim]")
 
 
+def cmd_onboard(args: argparse.Namespace) -> None:
+    """Interactive setup wizard for new users."""
+    import platform
+    import shutil
+    import subprocess
+
+    console.print(f"\n[bold]Welcome to MacBot![/bold] v{__version__}")
+    console.print("Let's get you set up.\n")
+
+    env_file = MACBOT_DIR / ".env"
+    env_vars: dict[str, str] = {}
+
+    def step_header(num: int, total: int, title: str) -> None:
+        console.print(f"\n[bold cyan]Step {num}/{total}: {title}[/bold cyan]")
+        console.print("─" * 40)
+
+    def prompt_choice(question: str, options: list[str], default: int = 1) -> int:
+        """Prompt user to choose from options."""
+        console.print(f"\n{question}")
+        for i, opt in enumerate(options, 1):
+            marker = "[bold green]>[/bold green]" if i == default else " "
+            console.print(f"  {marker} [{i}] {opt}")
+        while True:
+            response = console.input(f"\nChoice [{default}]: ").strip()
+            if not response:
+                return default
+            try:
+                choice = int(response)
+                if 1 <= choice <= len(options):
+                    return choice
+            except ValueError:
+                pass
+            console.print("[red]Invalid choice[/red]")
+
+    def prompt_yes_no(question: str, default: bool = True) -> bool:
+        """Prompt for yes/no."""
+        hint = "[Y/n]" if default else "[y/N]"
+        response = console.input(f"{question} {hint}: ").strip().lower()
+        if not response:
+            return default
+        return response in ("y", "yes")
+
+    def prompt_secret(question: str) -> str:
+        """Prompt for a secret value (like API key)."""
+        import getpass
+        return getpass.getpass(f"{question}: ")
+
+    def open_system_settings(pane: str) -> None:
+        """Open System Settings to a specific pane."""
+        # macOS Ventura+ uses different URL scheme
+        subprocess.run(
+            ["open", f"x-apple.systempreferences:com.apple.preference.security?{pane}"],
+            capture_output=True,
+        )
+
+    def test_applescript_access(app: str, script: str) -> bool:
+        """Test if we have AppleScript access to an app."""
+        try:
+            result = subprocess.run(
+                ["osascript", "-e", script],
+                capture_output=True,
+                timeout=10,
+            )
+            return result.returncode == 0
+        except Exception:
+            return False
+
+    total_steps = 5
+
+    # =========================================================================
+    # Step 1: LLM Provider
+    # =========================================================================
+    step_header(1, total_steps, "LLM Provider")
+
+    # Check if already configured
+    has_anthropic = bool(settings.anthropic_api_key)
+    has_openai = bool(settings.openai_api_key)
+
+    if has_anthropic or has_openai:
+        current = "Anthropic" if settings.llm_provider.value == "anthropic" else "OpenAI"
+        console.print(f"[green]✓[/green] Already configured: {current}")
+        if not prompt_yes_no("Reconfigure?", default=False):
+            pass  # Keep existing config
+        else:
+            has_anthropic = False
+            has_openai = False
+
+    if not has_anthropic and not has_openai:
+        choice = prompt_choice(
+            "Which LLM provider would you like to use?",
+            ["Anthropic (Claude) - Recommended", "OpenAI (GPT-4)"],
+            default=1,
+        )
+
+        if choice == 1:
+            console.print("\nGet your API key from: [link]https://console.anthropic.com/[/link]")
+            api_key = prompt_secret("Enter your Anthropic API key")
+            if api_key:
+                env_vars["MACBOT_LLM_PROVIDER"] = "anthropic"
+                env_vars["MACBOT_ANTHROPIC_API_KEY"] = api_key
+
+                # Validate the key
+                console.print("Validating API key...", end=" ")
+                try:
+                    from anthropic import Anthropic
+                    client = Anthropic(api_key=api_key)
+                    # Simple validation - just check if we can create a client
+                    console.print("[green]✓ Valid[/green]")
+                except Exception as e:
+                    console.print(f"[yellow]Warning: {e}[/yellow]")
+        else:
+            console.print("\nGet your API key from: [link]https://platform.openai.com/api-keys[/link]")
+            api_key = prompt_secret("Enter your OpenAI API key")
+            if api_key:
+                env_vars["MACBOT_LLM_PROVIDER"] = "openai"
+                env_vars["MACBOT_OPENAI_API_KEY"] = api_key
+                console.print("[green]✓ API key saved[/green]")
+
+    # =========================================================================
+    # Step 2: macOS Permissions
+    # =========================================================================
+    step_header(2, total_steps, "macOS Permissions")
+
+    if platform.system() != "Darwin":
+        console.print("[yellow]Skipping - not on macOS[/yellow]")
+    else:
+        console.print("MacBot needs permission to control apps via AppleScript.")
+        console.print("We'll open System Settings for you to grant access.\n")
+
+        apps_to_test = [
+            ("Mail", 'tell application "Mail" to count of accounts'),
+            ("Calendar", 'tell application "Calendar" to count of calendars'),
+            ("Reminders", 'tell application "Reminders" to count of lists'),
+            ("Notes", 'tell application "Notes" to count of notes'),
+            ("Safari", 'tell application "Safari" to count of windows'),
+        ]
+
+        # Check current permissions
+        missing_perms = []
+        for app_name, script in apps_to_test:
+            if not test_applescript_access(app_name, script):
+                missing_perms.append(app_name)
+
+        if not missing_perms:
+            console.print("[green]✓[/green] All app permissions already granted!")
+        else:
+            console.print(f"Missing permissions for: {', '.join(missing_perms)}")
+            console.print("\nOpening System Settings > Privacy & Security > Automation...")
+            open_system_settings("Privacy_Automation")
+
+            console.print("\n[bold]Grant Terminal (or your terminal app) access to:[/bold]")
+            for app in missing_perms:
+                console.print(f"  • {app}")
+
+            console.input("\nPress [bold]Enter[/bold] when done...")
+
+            # Re-check
+            still_missing = []
+            for app_name, script in apps_to_test:
+                if not test_applescript_access(app_name, script):
+                    still_missing.append(app_name)
+
+            if not still_missing:
+                console.print("[green]✓[/green] All permissions granted!")
+            else:
+                console.print(f"[yellow]![/yellow] Still missing: {', '.join(still_missing)}")
+                console.print("    You can grant these later and run 'macbot doctor' to verify.")
+
+    # =========================================================================
+    # Step 3: Browser Automation (Optional)
+    # =========================================================================
+    step_header(3, total_steps, "Browser Automation (Optional)")
+
+    console.print("For advanced browser automation, MacBot can use physical clicks.")
+    console.print("This requires 'cliclick' and Accessibility permissions.\n")
+
+    if not prompt_yes_no("Set up browser automation?", default=True):
+        console.print("[dim]Skipped[/dim]")
+    else:
+        # Check for cliclick
+        cliclick_path = shutil.which("cliclick")
+        if cliclick_path:
+            console.print(f"[green]✓[/green] cliclick already installed: {cliclick_path}")
+        else:
+            # Check for Homebrew
+            brew_path = shutil.which("brew")
+            if brew_path:
+                if prompt_yes_no("Install cliclick via Homebrew?", default=True):
+                    console.print("Installing cliclick...")
+                    result = subprocess.run(
+                        ["brew", "install", "cliclick"],
+                        capture_output=True,
+                        text=True,
+                    )
+                    if result.returncode == 0:
+                        console.print("[green]✓[/green] cliclick installed")
+                    else:
+                        console.print(f"[red]✗[/red] Installation failed: {result.stderr[:100]}")
+            else:
+                console.print("[yellow]![/yellow] Homebrew not found")
+                console.print("    Install manually: https://github.com/BlueM/cliclick")
+
+        # Check Accessibility permissions
+        cliclick_path = shutil.which("cliclick")
+        if cliclick_path:
+            console.print("\nTesting Accessibility permissions...")
+            try:
+                result = subprocess.run(
+                    ["cliclick", "p:."],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                )
+                if result.returncode == 0:
+                    console.print("[green]✓[/green] Accessibility permissions OK")
+                else:
+                    console.print("[yellow]![/yellow] Accessibility permission needed")
+                    console.print("\nOpening System Settings > Privacy & Security > Accessibility...")
+                    open_system_settings("Privacy_Accessibility")
+                    console.print("\n[bold]Grant access to Terminal (or your terminal app)[/bold]")
+                    console.input("\nPress [bold]Enter[/bold] when done...")
+            except Exception as e:
+                console.print(f"[yellow]![/yellow] Could not test: {e}")
+
+        # Check Safari JavaScript
+        console.print("\nFor Safari automation, enable JavaScript from Apple Events:")
+        console.print("  Safari > Settings > Advanced > 'Allow JavaScript from Apple Events'")
+        console.input("\nPress [bold]Enter[/bold] when done...")
+
+    # =========================================================================
+    # Step 4: Telegram (Optional)
+    # =========================================================================
+    step_header(4, total_steps, "Telegram Integration (Optional)")
+
+    console.print("Receive tasks and get results via Telegram.\n")
+
+    has_telegram = bool(settings.telegram_bot_token)
+    if has_telegram:
+        console.print("[green]✓[/green] Telegram already configured")
+        if not prompt_yes_no("Reconfigure?", default=False):
+            pass
+        else:
+            has_telegram = False
+
+    if not has_telegram:
+        if not prompt_yes_no("Set up Telegram?", default=False):
+            console.print("[dim]Skipped[/dim]")
+        else:
+            console.print("\n[bold]To create a Telegram bot:[/bold]")
+            console.print("  1. Open Telegram and message @BotFather")
+            console.print("  2. Send /newbot and follow the prompts")
+            console.print("  3. Copy the bot token\n")
+
+            token = prompt_secret("Enter your bot token")
+            if token:
+                # Validate token
+                console.print("Validating token...", end=" ")
+                try:
+                    async def _validate():
+                        from macbot.telegram.bot import validate_token
+                        return await validate_token(token)
+                    ok, msg = asyncio.run(_validate())
+                    if ok:
+                        console.print(f"[green]✓ Connected as {msg}[/green]")
+                        env_vars["MACBOT_TELEGRAM_BOT_TOKEN"] = token
+
+                        # Get chat ID
+                        console.print("\n[bold]Now let's get your chat ID:[/bold]")
+                        console.print("  Send any message to your new bot in Telegram...")
+
+                        async def _get_chat_id():
+                            from macbot.telegram import TelegramBot
+                            bot = TelegramBot(token)
+                            offset = None
+                            for _ in range(30):  # Wait up to 30 seconds
+                                updates = await bot.get_updates(offset=offset, timeout=1)
+                                for update in updates:
+                                    offset = update.update_id + 1
+                                    if update.message:
+                                        await bot.close()
+                                        return str(update.message.chat_id)
+                            await bot.close()
+                            return None
+
+                        console.print("[dim]Waiting for message...[/dim]")
+                        chat_id = asyncio.run(_get_chat_id())
+                        if chat_id:
+                            console.print(f"[green]✓[/green] Your chat ID: {chat_id}")
+                            env_vars["MACBOT_TELEGRAM_CHAT_ID"] = chat_id
+                        else:
+                            console.print("[yellow]![/yellow] Timeout - no message received")
+                            console.print("    Run 'macbot telegram whoami' later to get your chat ID")
+                    else:
+                        console.print(f"[red]✗ Invalid: {msg}[/red]")
+                except Exception as e:
+                    console.print(f"[red]✗ Error: {e}[/red]")
+
+    # =========================================================================
+    # Step 5: Save & Test
+    # =========================================================================
+    step_header(5, total_steps, "Save & Test")
+
+    # Save environment variables
+    if env_vars:
+        console.print("Saving configuration...")
+        MACBOT_DIR.mkdir(parents=True, exist_ok=True)
+
+        # Read existing env file if present
+        existing_env = {}
+        if env_file.exists():
+            for line in env_file.read_text().splitlines():
+                if "=" in line and not line.startswith("#"):
+                    key, value = line.split("=", 1)
+                    existing_env[key.strip()] = value.strip()
+
+        # Merge with new values
+        existing_env.update(env_vars)
+
+        # Write back
+        with open(env_file, "w") as f:
+            f.write("# MacBot Configuration\n")
+            f.write("# Generated by 'macbot onboard'\n\n")
+            for key, value in sorted(existing_env.items()):
+                f.write(f"{key}={value}\n")
+
+        console.print(f"[green]✓[/green] Saved to {env_file}")
+        console.print("\n[yellow]Note:[/yellow] To use the new configuration, either:")
+        console.print(f"  • Run: [bold]source {env_file}[/bold]")
+        console.print(f"  • Or add to your shell profile: [bold]source {env_file}[/bold]")
+
+        # Source the env file for this session
+        for key, value in env_vars.items():
+            os.environ[key] = value
+
+    # Run a test
+    console.print("\n[bold]Running a quick test...[/bold]")
+
+    try:
+        # Reload settings with new env vars
+        from macbot.config import Settings
+        test_settings = Settings()
+
+        if test_settings.anthropic_api_key or test_settings.openai_api_key:
+            registry = create_default_registry()
+            agent = Agent(registry, config=test_settings)
+
+            async def _test():
+                return await agent.run("What time is it?", stream=False)
+
+            result = asyncio.run(_test())
+            console.print(f"[green]✓[/green] Test successful!")
+            console.print(f"  Response: {result[:100]}{'...' if len(result) > 100 else ''}")
+        else:
+            console.print("[yellow]![/yellow] No API key configured - skipping test")
+    except Exception as e:
+        console.print(f"[red]✗[/red] Test failed: {e}")
+        console.print("    Run 'macbot doctor' to diagnose issues")
+
+    # Final summary
+    console.print("\n" + "═" * 40)
+    console.print("[bold green]Setup complete![/bold green]")
+    console.print("═" * 40)
+
+    console.print("\n[bold]Quick start:[/bold]")
+    console.print("  macbot run \"Check my emails\"     # Run a goal")
+    console.print("  macbot doctor                    # Verify setup")
+    console.print("  macbot status                    # Check service status")
+
+    if "MACBOT_TELEGRAM_BOT_TOKEN" in env_vars:
+        console.print("  macbot start -d                  # Start service (with Telegram)")
+
+    console.print("\n[dim]Run 'macbot --help' for more commands.[/dim]\n")
+
+
 def cmd_doctor(args: argparse.Namespace) -> None:
     """Check system prerequisites and configuration."""
     import platform
@@ -1824,8 +2198,13 @@ def main() -> NoReturn:
     # Check for --help-all before argparse processes it
     show_all_commands = "--help-all" in sys.argv
 
-    # Handle custom help output for clean display
-    if "-h" in sys.argv or "--help" in sys.argv or (show_all_commands and len(sys.argv) == 2):
+    # Handle custom help output for clean display (only for top-level help)
+    is_top_level_help = (
+        ("-h" in sys.argv or "--help" in sys.argv) and
+        len([a for a in sys.argv[1:] if not a.startswith("-")]) == 0
+    ) or (show_all_commands and len(sys.argv) == 2)
+
+    if is_top_level_help:
         if show_all_commands:
             console.print(f"""[bold]macbot[/bold] v{__version__} - LLM-powered agent for macOS automation
 
@@ -1835,6 +2214,7 @@ def main() -> NoReturn:
   stop         Stop the macbot service
   status       Check service status
   doctor       Check system prerequisites
+  onboard      Interactive setup wizard
 
 [bold]ADMIN COMMANDS[/bold]
   chat         Interactive chat with the agent
@@ -1864,15 +2244,15 @@ def main() -> NoReturn:
   stop         Stop the macbot service
   status       Check service status
   doctor       Check system prerequisites
+  onboard      Interactive setup wizard
 
 [bold]OPTIONS[/bold]
   -v, --verbose    Show detailed output
   --help-all       Show all commands including admin tools
 
-[bold]EXAMPLES[/bold]
+[bold]GETTING STARTED[/bold]
+  macbot onboard                      Setup wizard (recommended for new users)
   macbot run "Check my emails"        Run a goal
-  macbot start -d                     Start service as daemon
-  macbot status                       Check service status
   macbot doctor                       Verify setup
 
 Use [bold]macbot --help-all[/bold] to see all commands.
@@ -1973,6 +2353,15 @@ Use [bold]macbot <command> --help[/bold] for command details.
                     "prerequisites are met."
     )
     doctor_parser.set_defaults(func=cmd_doctor)
+
+    # Onboard command
+    onboard_parser = subparsers.add_parser(
+        "onboard",
+        help="Interactive setup wizard for new users",
+        description="Step-by-step guide to set up MacBot: configure LLM provider, "
+                    "grant macOS permissions, set up Telegram, and verify everything works."
+    )
+    onboard_parser.set_defaults(func=cmd_onboard)
 
     # ==========================================================================
     # ADMIN COMMANDS (hidden from default help, shown with --help-all)
