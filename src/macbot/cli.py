@@ -1119,7 +1119,7 @@ def cmd_doctor(args: argparse.Namespace) -> None:
         check("API Key", True, f"{masked}")
     else:
         check("API Key", False, "Not set",
-              f"Set {key_name} in environment or .env file")
+              f"Set {key_name} or run 'macbot onboard' to configure")
 
     check("Model", True, model)
 
@@ -1128,7 +1128,8 @@ def cmd_doctor(args: argparse.Namespace) -> None:
     if data_dir.exists():
         check("Data Directory", True, str(data_dir))
     else:
-        warn("Data Directory", f"{data_dir} (will be created on first use)")
+        warn("Data Directory", f"{data_dir} not found",
+             "Will be created automatically on first use")
 
     # macOS Automation Scripts
     console.print("\n[bold]macOS Automation[/bold]")
@@ -1173,7 +1174,7 @@ def cmd_doctor(args: argparse.Namespace) -> None:
                   "Run: chmod +x macos-automation/**/*.sh")
     else:
         check("Scripts Directory", False, "Not found",
-              "Clone macos-automation to project directory")
+              "Clone https://github.com/user/macos-automation to ~/macos-automation")
 
     # osascript (AppleScript)
     osascript = shutil.which("osascript")
@@ -1339,19 +1340,20 @@ def cmd_doctor(args: argparse.Namespace) -> None:
         if settings.telegram_chat_id:
             check("Chat ID", True, settings.telegram_chat_id)
         else:
-            warn("Chat ID", "Not configured",
-                 "Run 'macbot telegram whoami' to get your chat ID")
+            warn("Chat ID", "Not configured (agent can't send proactive messages)",
+                 "Message your bot, then run 'macbot telegram whoami' to get your chat ID")
 
         # Service status
-        telegram_pid = _get_telegram_pid()
-        if telegram_pid:
-            check("Service", True, f"Running (PID {telegram_pid})")
+        from macbot.service import get_service_pid
+        service_pid = get_service_pid()
+        if service_pid:
+            check("Service", True, f"Running (PID {service_pid})")
         else:
             warn("Service", "Not running",
-                 "Start with 'macbot telegram start'")
+                 "Start with 'macbot start' or 'macbot start --daemon'")
     else:
         warn("Telegram", "Not configured",
-             "Set MACBOT_TELEGRAM_BOT_TOKEN to enable")
+             "Create bot at t.me/BotFather, then run 'macbot onboard' or set MACBOT_TELEGRAM_BOT_TOKEN")
 
     # Summary
     console.print()
