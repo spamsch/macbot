@@ -118,13 +118,13 @@ class Agent:
                             tool_strs.append(f"{tc.name}({', '.join(params)})")
                         else:
                             tool_strs.append(tc.name)
-                    console.print(f"[dim]→ {', '.join(tool_strs)}[/dim]")
+                    console.print(f"[dim][{self.iteration}/{self.config.max_iterations}] → {', '.join(tool_strs)}[/dim]")
                 await self._execute_tool_calls(response, verbose)
             else:
                 # No tool calls means the agent has finished
                 return response.content or "Task completed."
 
-        return "Reached maximum iterations without completing the goal."
+        return f"Reached maximum iterations ({self.config.max_iterations}) without completing the goal. Increase MACBOT_MAX_ITERATIONS to allow more steps."
 
     def _build_system_prompt(self) -> str:
         """Build a dynamic system prompt with platform and tool context."""

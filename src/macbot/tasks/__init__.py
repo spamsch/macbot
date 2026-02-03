@@ -116,4 +116,8 @@ def create_default_registry() -> TaskRegistry:
     from macbot.tasks.telegram import register_telegram_tasks
     register_telegram_tasks(registry)
 
+    # Register Paperless-ngx tasks
+    from macbot.tasks.paperless import register_paperless_tasks
+    register_paperless_tasks(registry)
+
     return registry

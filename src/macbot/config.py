@@ -149,6 +149,16 @@ class Settings(BaseSettings):
         description="List of allowed Telegram user IDs (empty = allow all)",
     )
 
+    # Paperless-ngx settings
+    paperless_url: str = Field(
+        default="",
+        description="Paperless-ngx server URL (e.g., http://localhost:8000)",
+    )
+    paperless_api_token: str = Field(
+        default="",
+        description="Paperless-ngx API token",
+    )
+
     def get_provider_config(self) -> dict[str, Any]:
         """Get configuration for the selected LLM provider."""
         if self.llm_provider == LLMProviderType.ANTHROPIC:

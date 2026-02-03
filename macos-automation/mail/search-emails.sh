@@ -117,28 +117,69 @@ tell application "Mail"
     set mailboxesToSearch to {}
 
     if "$ACCOUNT_ESCAPED" is not "" then
-        -- Search specific account
+        -- Search specific account (by name or email address)
+        set acct to missing value
+        set searchTerm to "$ACCOUNT_ESCAPED"
+
+        -- First try exact match by name
         try
-            set acct to account "$ACCOUNT_ESCAPED"
-            if "$MAILBOX_ESCAPED" is not "" then
-                set mailboxesToSearch to {mailbox "$MAILBOX_ESCAPED" of acct}
-            else if $ALL_MAILBOXES then
-                set mailboxesToSearch to mailboxes of acct
-            else
-                -- Default: search Inbox and Archive of the account
-                try
-                    set mailboxesToSearch to mailboxesToSearch & {mailbox "Inbox" of acct}
-                end try
-                try
-                    set mailboxesToSearch to mailboxesToSearch & {mailbox "INBOX" of acct}
-                end try
-                try
-                    set mailboxesToSearch to mailboxesToSearch & {mailbox "Archive" of acct}
-                end try
-            end if
-        on error
-            return "Account '$ACCOUNT_ESCAPED' not found."
+            set acct to account searchTerm
         end try
+
+        -- If not found, search by email address or partial name match
+        if acct is missing value then
+            repeat with a in accounts
+                -- Check if email addresses contain the search term
+                try
+                    set addrList to email addresses of a
+                    repeat with addr in addrList
+                        set addrStr to addr as text
+                        if addrStr contains searchTerm then
+                            set acct to a
+                            exit repeat
+                        end if
+                    end repeat
+                end try
+                -- Also check if account name contains the search term (case-insensitive)
+                if acct is missing value then
+                    set acctName to name of a
+                    set lcName to do shell script "echo " & quoted form of acctName & " | tr '[:upper:]' '[:lower:]'"
+                    set lcSearch to do shell script "echo " & quoted form of searchTerm & " | tr '[:upper:]' '[:lower:]'"
+                    if lcName contains lcSearch or lcSearch contains lcName then
+                        set acct to a
+                    end if
+                end if
+                if acct is not missing value then exit repeat
+            end repeat
+        end if
+
+        if acct is missing value then
+            -- List available accounts in error message
+            set acctNames to {}
+            repeat with a in accounts
+                set end of acctNames to name of a
+            end repeat
+            set AppleScript's text item delimiters to ", "
+            set acctList to acctNames as text
+            return "Account '" & searchTerm & "' not found. Available accounts: " & acctList
+        end if
+
+        if "$MAILBOX_ESCAPED" is not "" then
+            set mailboxesToSearch to {mailbox "$MAILBOX_ESCAPED" of acct}
+        else if $ALL_MAILBOXES then
+            set mailboxesToSearch to mailboxes of acct
+        else
+            -- Default: search Inbox and Archive of the account
+            try
+                set mailboxesToSearch to mailboxesToSearch & {mailbox "Inbox" of acct}
+            end try
+            try
+                set mailboxesToSearch to mailboxesToSearch & {mailbox "INBOX" of acct}
+            end try
+            try
+                set mailboxesToSearch to mailboxesToSearch & {mailbox "Archive" of acct}
+            end try
+        end if
     else if "$MAILBOX_ESCAPED" is not "" then
         -- Search specific mailbox name across all accounts
         repeat with acct in accounts

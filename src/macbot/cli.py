@@ -27,6 +27,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import NoReturn
 
+import httpx
 import yaml
 from rich.console import Console
 from rich.logging import RichHandler
@@ -748,7 +749,7 @@ def cmd_onboard(args: argparse.Namespace) -> None:
         except Exception:
             return False
 
-    total_steps = 5
+    total_steps = 6
 
     # =========================================================================
     # Step 1: LLM Provider
@@ -980,9 +981,84 @@ def cmd_onboard(args: argparse.Namespace) -> None:
                     console.print(f"[red]✗ Error: {e}[/red]")
 
     # =========================================================================
-    # Step 5: Save & Test
+    # Step 5: Paperless-ngx (Optional)
     # =========================================================================
-    step_header(5, total_steps, "Save & Test")
+    step_header(5, total_steps, "Paperless-ngx Integration (Optional)")
+
+    console.print("Manage documents with Paperless-ngx document management.\n")
+
+    has_paperless = bool(settings.paperless_url and settings.paperless_api_token)
+    if has_paperless:
+        console.print("[green]✓[/green] Paperless-ngx already configured")
+        console.print(f"  URL: {settings.paperless_url}")
+        if not prompt_yes_no("Reconfigure?", default=False):
+            pass
+        else:
+            has_paperless = False
+
+    if not has_paperless:
+        if not prompt_yes_no("Set up Paperless-ngx?", default=False):
+            console.print("[dim]Skipped[/dim]")
+        else:
+            console.print("\n[bold]Enter your Paperless-ngx server details:[/bold]")
+
+            # Get server URL
+            while True:
+                url = console.input("Server URL (e.g., http://localhost:8000): ").strip()
+                if not url:
+                    console.print("[red]URL is required[/red]")
+                    continue
+                # Basic URL validation
+                if not url.startswith(("http://", "https://")):
+                    console.print("[red]URL must start with http:// or https://[/red]")
+                    continue
+                break
+
+            # Get API token
+            console.print("\n[bold]To get your API token:[/bold]")
+            console.print("  1. Go to your Paperless-ngx web interface")
+            console.print("  2. Click your username > My Profile")
+            console.print("  3. Generate or copy your API token\n")
+
+            token = prompt_secret("Enter your API token")
+            if token:
+                # Validate connection
+                console.print("Validating connection...", end=" ")
+                try:
+                    async def _validate_paperless():
+                        async with httpx.AsyncClient(timeout=10.0) as client:
+                            response = await client.get(
+                                f"{url.rstrip('/')}/api/documents/",
+                                params={"page_size": 1},
+                                headers={"Authorization": f"Token {token}"},
+                            )
+                            response.raise_for_status()
+                            return True, response.json().get("count", 0)
+
+                    ok, doc_count = asyncio.run(_validate_paperless())
+                    if ok:
+                        console.print(f"[green]✓ Connected ({doc_count} documents)[/green]")
+                        env_vars["MACBOT_PAPERLESS_URL"] = url
+                        env_vars["MACBOT_PAPERLESS_API_TOKEN"] = token
+                    else:
+                        console.print("[red]✗ Connection failed[/red]")
+                except httpx.HTTPStatusError as e:
+                    if e.response.status_code == 401:
+                        console.print("[red]✗ Invalid API token[/red]")
+                    elif e.response.status_code == 403:
+                        console.print("[red]✗ API token lacks permissions[/red]")
+                    else:
+                        console.print(f"[red]✗ HTTP {e.response.status_code}[/red]")
+                except httpx.RequestError as e:
+                    console.print(f"[red]✗ Connection error: {e}[/red]")
+                    console.print("    Check that the URL is correct and the server is running.")
+                except Exception as e:
+                    console.print(f"[red]✗ Error: {e}[/red]")
+
+    # =========================================================================
+    # Step 6: Save & Test
+    # =========================================================================
+    step_header(6, total_steps, "Save & Test")
 
     # Save environment variables
     if env_vars:
@@ -1352,6 +1428,53 @@ def cmd_doctor(args: argparse.Namespace) -> None:
     else:
         warn("Telegram", "Not configured",
              "Create bot at t.me/BotFather, then run 'macbot onboard' or set MACBOT_TELEGRAM_BOT_TOKEN")
+
+    # Paperless-ngx Integration
+    console.print("\n[bold]Paperless-ngx Integration[/bold]")
+
+    if settings.paperless_url and settings.paperless_api_token:
+        check("URL", True, settings.paperless_url)
+
+        # Mask the token
+        token = settings.paperless_api_token
+        masked = token[:8] + "..." + token[-4:] if len(token) > 12 else "***"
+        check("API Token", True, masked)
+
+        # Test API connection
+        async def _test_paperless() -> tuple[bool, str]:
+            try:
+                async with httpx.AsyncClient(timeout=10.0) as client:
+                    response = await client.get(
+                        f"{settings.paperless_url.rstrip('/')}/api/documents/",
+                        params={"page_size": 1},
+                        headers={"Authorization": f"Token {settings.paperless_api_token}"},
+                    )
+                    response.raise_for_status()
+                    count = response.json().get("count", 0)
+                    return True, f"Connected ({count} documents)"
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code == 401:
+                    return False, "Invalid API token"
+                elif e.response.status_code == 403:
+                    return False, "API token lacks permissions"
+                return False, f"HTTP {e.response.status_code}"
+            except httpx.RequestError as e:
+                return False, f"Connection error: {e}"
+            except Exception as e:
+                return False, str(e)[:50]
+
+        try:
+            ok, msg = asyncio.run(_test_paperless())
+            if ok:
+                check("API Connection", True, msg)
+            else:
+                check("API Connection", False, msg,
+                      "Check URL and API token, or run 'macbot onboard' to reconfigure")
+        except Exception as e:
+            check("API Connection", False, str(e)[:50])
+    else:
+        warn("Paperless-ngx", "Not configured",
+             "Run 'macbot onboard' or set MACBOT_PAPERLESS_URL and MACBOT_PAPERLESS_API_TOKEN")
 
     # Summary
     console.print()
