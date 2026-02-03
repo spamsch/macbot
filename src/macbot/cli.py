@@ -864,6 +864,61 @@ def cmd_doctor(args: argparse.Namespace) -> None:
     check("Safari.app", ok, msg,
           "Grant access in System Settings > Privacy & Security > Automation" if not ok else None)
 
+    # Browser Automation Tools
+    console.print("\n[bold]Browser Automation[/bold]")
+
+    # Check for cliclick (used for physical mouse clicks)
+    cliclick_path = shutil.which("cliclick")
+    if cliclick_path:
+        # Test if cliclick has Accessibility permissions
+        import subprocess
+        try:
+            result = subprocess.run(
+                ["cliclick", "p:."],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if result.returncode == 0:
+                check("cliclick", True, f"{cliclick_path} (Accessibility OK)")
+            else:
+                error = result.stderr.strip()
+                if "Accessibility" in error or "permission" in error.lower():
+                    check("cliclick", False, "Accessibility permission denied",
+                          "Grant Terminal Accessibility in System Settings > Privacy & Security > Accessibility")
+                else:
+                    check("cliclick", False, error[:60])
+        except subprocess.TimeoutExpired:
+            check("cliclick", False, "Timeout testing cliclick")
+        except Exception as e:
+            check("cliclick", False, str(e)[:60])
+    else:
+        warn("cliclick", "Not installed (optional, for physical clicks)",
+             "Install with: brew install cliclick")
+
+    # Check for JavaScript execution capability in Safari
+    js_test = 'tell application "Safari" to do JavaScript "1+1" in current tab of front window'
+    try:
+        result = subprocess.run(
+            ["osascript", "-e", js_test],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if result.returncode == 0:
+            check("Safari JavaScript", True, "Allowed")
+        else:
+            error = result.stderr.strip()
+            if "-1743" in error:
+                check("Safari JavaScript", False, "Permission denied",
+                      "Enable: Safari > Settings > Advanced > 'Allow JavaScript from Apple Events'")
+            elif "window" in error.lower() or "tab" in error.lower():
+                warn("Safari JavaScript", "No Safari window open (can't test)")
+            else:
+                warn("Safari JavaScript", f"Could not test: {error[:40]}")
+    except Exception as e:
+        warn("Safari JavaScript", f"Could not test: {str(e)[:40]}")
+
     # Tasks
     console.print("\n[bold]Tasks[/bold]")
 
