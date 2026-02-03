@@ -53,7 +53,7 @@ class Settings(BaseSettings):
 
     # Agent settings
     max_iterations: int = Field(
-        default=50,
+        default=100,
         description="Maximum iterations for the agent loop",
     )
     agent_system_prompt: str = Field(

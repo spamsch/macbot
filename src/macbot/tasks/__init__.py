@@ -37,6 +37,7 @@ from macbot.tasks.registry import TaskRegistry, task_registry
 
 # Import all task modules to trigger auto-registration
 from macbot.tasks import (
+    browser_automation,
     calculator,
     fetch_url,
     file_read,
@@ -58,6 +59,7 @@ __all__ = [
     "TaskRegistry",
     "task_registry",
     # Task modules (for explicit imports if needed)
+    "browser_automation",
     "calculator",
     "fetch_url",
     "file_read",
@@ -101,6 +103,10 @@ def create_default_registry() -> TaskRegistry:
 
     # Register macOS automation tasks (Mail, Calendar, Reminders, Notes, Safari)
     register_macos_tasks(registry)
+
+    # Register browser automation tasks (ARIA-based Safari automation)
+    from macbot.tasks.browser_automation import register_browser_tasks
+    register_browser_tasks(registry)
 
     # Register agent memory tasks
     from macbot.tasks.memory import register_memory_tasks
