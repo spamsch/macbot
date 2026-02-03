@@ -91,6 +91,9 @@ class MacbotService:
         async def agent_handler(payload: CronPayload):
             from macbot.cron.executor import ExecutionResult
             try:
+                timestamp = datetime.now().strftime("%H:%M:%S")
+                # Show cron job in console
+                print(f"\n[{timestamp}] ⏰ Cron: {payload.message[:100]}{'...' if len(payload.message) > 100 else ''}")
                 logger.info(f"Cron: Running '{payload.message[:50]}...'")
                 result = await self.agent.run(payload.message, stream=False)
                 logger.info(f"Cron: Completed, result length: {len(result)}")
@@ -120,6 +123,10 @@ class MacbotService:
         )
 
         async def message_handler(text: str, chat_id: str) -> str:
+            from datetime import datetime
+            timestamp = datetime.now().strftime("%H:%M:%S")
+            # Show incoming message in console
+            print(f"\n[{timestamp}] 📩 Telegram: {text[:100]}{'...' if len(text) > 100 else ''}")
             logger.info(f"Telegram: Message from {chat_id}: {text[:50]}...")
             try:
                 result = await self.agent.run(text, stream=False)
