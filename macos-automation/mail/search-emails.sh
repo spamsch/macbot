@@ -34,12 +34,14 @@ source "$SCRIPT_DIR/../lib/common.sh"
 # Default values
 SENDER_PATTERN=""
 SUBJECT_PATTERN=""
+MESSAGE_ID=""
 ACCOUNT=""
 MAILBOX=""
 TODAY_ONLY=false
 DAYS=""
 LIMIT=20
 ALL_MAILBOXES=false
+WITH_CONTENT=false
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
@@ -50,6 +52,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --subject)
             SUBJECT_PATTERN="$2"
+            shift 2
+            ;;
+        --message-id)
+            MESSAGE_ID="$2"
             shift 2
             ;;
         --account)
@@ -76,6 +82,10 @@ while [[ $# -gt 0 ]]; do
             ALL_MAILBOXES=true
             shift
             ;;
+        --with-content)
+            WITH_CONTENT=true
+            shift
+            ;;
         -h|--help)
             head -35 "$0" | tail -30
             exit 0
@@ -86,14 +96,15 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Allow searching without sender/subject if account is specified with date filter
-if [[ -z "$SENDER_PATTERN" && -z "$SUBJECT_PATTERN" && -z "$ACCOUNT" ]]; then
-    error_exit "Please specify --sender, --subject, or --account with date filter"
+# Allow searching without sender/subject if account is specified with date filter, or message_id
+if [[ -z "$SENDER_PATTERN" && -z "$SUBJECT_PATTERN" && -z "$ACCOUNT" && -z "$MESSAGE_ID" ]]; then
+    error_exit "Please specify --sender, --subject, --account, or --message-id"
 fi
 
 # Escape patterns for AppleScript
 SENDER_ESCAPED=$(escape_for_applescript "$SENDER_PATTERN")
 SUBJECT_ESCAPED=$(escape_for_applescript "$SUBJECT_PATTERN")
+MESSAGE_ID_ESCAPED=$(escape_for_applescript "$MESSAGE_ID")
 ACCOUNT_ESCAPED=$(escape_for_applescript "$ACCOUNT")
 MAILBOX_ESCAPED=$(escape_for_applescript "$MAILBOX")
 
@@ -205,45 +216,56 @@ tell application "Mail"
     -- Search each mailbox
     repeat with mb in mailboxesToSearch
         try
-            -- Use 'whose' clause for date filtering when possible (much faster)
-            if cutoffDate is not missing value then
-                set mbMsgs to (messages of mb whose date received >= cutoffDate)
-            else
-                set mbMsgs to messages of mb
-            end if
-
-            repeat with msg in mbMsgs
-                set includeMsg to true
-
-                -- Check sender filter
-                if "$SENDER_ESCAPED" is not "" then
-                    try
-                        if sender of msg does not contain "$SENDER_ESCAPED" then
-                            set includeMsg to false
-                        end if
-                    on error
-                        set includeMsg to false
-                    end try
-                end if
-
-                -- Check subject filter
-                if includeMsg and "$SUBJECT_ESCAPED" is not "" then
-                    try
-                        if subject of msg does not contain "$SUBJECT_ESCAPED" then
-                            set includeMsg to false
-                        end if
-                    on error
-                        set includeMsg to false
-                    end try
-                end if
-
-                if includeMsg then
-                    set end of matchingMsgs to msg
-                    if (count of matchingMsgs) >= $LIMIT then
-                        exit repeat
+            -- If searching by message_id, use direct lookup (much faster)
+            if "$MESSAGE_ID_ESCAPED" is not "" then
+                set targetId to "$MESSAGE_ID_ESCAPED"
+                try
+                    set foundMsgs to (messages of mb whose message id is targetId)
+                    if (count of foundMsgs) > 0 then
+                        set matchingMsgs to matchingMsgs & foundMsgs
                     end if
+                end try
+            else
+                -- Use 'whose' clause for date filtering when possible (much faster)
+                if cutoffDate is not missing value then
+                    set mbMsgs to (messages of mb whose date received >= cutoffDate)
+                else
+                    set mbMsgs to messages of mb
                 end if
-            end repeat
+
+                repeat with msg in mbMsgs
+                    set includeMsg to true
+
+                    -- Check sender filter
+                    if "$SENDER_ESCAPED" is not "" then
+                        try
+                            if sender of msg does not contain "$SENDER_ESCAPED" then
+                                set includeMsg to false
+                            end if
+                        on error
+                            set includeMsg to false
+                        end try
+                    end if
+
+                    -- Check subject filter
+                    if includeMsg and "$SUBJECT_ESCAPED" is not "" then
+                        try
+                            if subject of msg does not contain "$SUBJECT_ESCAPED" then
+                                set includeMsg to false
+                            end if
+                        on error
+                            set includeMsg to false
+                        end try
+                    end if
+
+                    if includeMsg then
+                        set end of matchingMsgs to msg
+                        if (count of matchingMsgs) >= $LIMIT then
+                            exit repeat
+                        end if
+                    end if
+                end repeat
+            end if
 
             if (count of matchingMsgs) >= $LIMIT then
                 exit repeat
@@ -265,6 +287,21 @@ tell application "Mail"
         set output to output & "From: " & sender of msg & return
         set output to output & "Date: " & (date received of msg as string) & return
         set output to output & "Read: " & read status of msg & return
+
+        -- Include email content if requested
+        if $WITH_CONTENT then
+            try
+                set msgContent to content of msg
+                -- Truncate very long content
+                if length of msgContent > 10000 then
+                    set msgContent to (text 1 thru 10000 of msgContent) & "... [truncated]"
+                end if
+                set output to output & "Content:" & return & msgContent & return
+            on error
+                set output to output & "Content: [Unable to retrieve content]" & return
+            end try
+        end if
+
         set output to output & "---" & return
     end repeat
 

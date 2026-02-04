@@ -136,21 +136,23 @@ class SearchEmailsTask(Task):
     @property
     def description(self) -> str:
         return (
-            "Search emails in Mail.app. Can search by sender, subject, or list all emails in an account. "
+            "Search emails in Mail.app. Can search by sender, subject, message_id, or list all emails in an account. "
             "IMPORTANT: 'emails from X account' means emails RECEIVED BY that account (use account parameter), "
-            "not emails FROM that sender. Use account='waas.rent' to get all emails in that account, "
-            "optionally filtered by today_only or days parameter."
+            "not emails FROM that sender. Use message_id for precise lookup of a specific email. "
+            "Use with_content=True to include the full email body text (needed to read what an email says)."
         )
 
     async def execute(
         self,
         sender: str | None = None,
         subject: str | None = None,
+        message_id: str | None = None,
         account: str | None = None,
         mailbox: str | None = None,
         today_only: bool = False,
         days: int | None = None,
         all_mailboxes: bool = False,
+        with_content: bool = False,
         limit: int = 20
     ) -> dict[str, Any]:
         """Search emails.
@@ -158,24 +160,28 @@ class SearchEmailsTask(Task):
         Args:
             sender: Search for emails from sender containing this pattern.
             subject: Search for emails with subject containing this pattern.
+            message_id: Search for specific email by Message-ID (fast direct lookup).
             account: Search in specified account (e.g., "waas.rent" for all emails in that account).
             mailbox: Search specific mailbox (e.g., "Archive", "Sent Items").
             today_only: Only return emails from today.
             days: Only return emails from the last N days.
             all_mailboxes: Search all mailboxes including Sent, Trash, etc.
+            with_content: Include the full email body text (use when you need to read the email content).
             limit: Maximum number of results to return.
 
         Returns:
             Dictionary with matching emails.
         """
-        if not sender and not subject and not account:
-            return {"success": False, "error": "Must specify sender, subject, or account"}
+        if not sender and not subject and not account and not message_id:
+            return {"success": False, "error": "Must specify sender, subject, message_id, or account"}
 
         args = []
         if sender:
             args.extend(["--sender", sender])
         if subject:
             args.extend(["--subject", subject])
+        if message_id:
+            args.extend(["--message-id", message_id])
         if account:
             args.extend(["--account", account])
         if mailbox:
@@ -186,6 +192,8 @@ class SearchEmailsTask(Task):
             args.extend(["--days", str(days)])
         if all_mailboxes:
             args.append("--all-mailboxes")
+        if with_content:
+            args.append("--with-content")
         args.extend(["--limit", str(limit)])
 
         return await run_script("mail/search-emails.sh", args, timeout=60)
