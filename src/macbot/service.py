@@ -222,13 +222,20 @@ class MacbotService:
         loop = asyncio.get_event_loop()
         console = Console()
 
-        console.print("\n[dim][Ready for input - type a query or 'quit' to exit][/dim]")
+        # Use the same agent as the primary Telegram chat for shared context
+        if settings.telegram_chat_id:
+            agent = self._get_chat_agent(settings.telegram_chat_id)
+            console.print(f"\n[dim][Context shared with Telegram chat {settings.telegram_chat_id}][/dim]")
+        else:
+            agent = self.agent
+
+        console.print("[dim][Ready for input - type a query or 'quit' to exit][/dim]")
         console.print("[dim][Commands: 'clear' resets conversation, 'stats' shows token usage][/dim]\n")
 
         while self._running:
             try:
                 # Build prompt with token stats
-                stats = self.agent.get_token_stats()
+                stats = agent.get_token_stats()
                 ctx = self._format_tokens(stats["context_tokens"])
                 total = self._format_tokens(stats["session_total_tokens"])
 
@@ -247,7 +254,7 @@ class MacbotService:
 
                 if user_input.lower() in ("quit", "exit", "q"):
                     # Show final stats
-                    stats = self.agent.get_token_stats()
+                    stats = agent.get_token_stats()
                     if stats["session_total_tokens"] > 0:
                         console.print(f"\n[dim]Session total: {stats['session_total_tokens']:,} tokens "
                                       f"(in: {stats['session_input_tokens']:,}, out: {stats['session_output_tokens']:,})[/dim]")
@@ -256,12 +263,12 @@ class MacbotService:
                     break
 
                 if user_input.lower() == "clear":
-                    self.agent.reset()
+                    agent.reset()
                     console.print("[dim][Conversation cleared - token session continues][/dim]")
                     continue
 
                 if user_input.lower() == "stats":
-                    stats = self.agent.get_token_stats()
+                    stats = agent.get_token_stats()
                     console.print(f"\n[bold]Token Statistics[/bold]")
                     console.print(f"  Context size:    {stats['context_tokens']:,} tokens")
                     console.print(f"  Messages:        {stats['message_count']}")
@@ -270,7 +277,7 @@ class MacbotService:
                     console.print(f"  Session total:   {stats['session_total_tokens']:,} tokens\n")
                     continue
 
-                # Process query through main agent (cancellable with Escape)
+                # Process query through shared agent (cancellable with Escape)
                 timestamp = datetime.now().strftime("%H:%M:%S")
                 console.print(f"[dim][{timestamp}] Processing... (Escape to cancel)[/dim]\n")
 
@@ -278,7 +285,7 @@ class MacbotService:
                     from macbot.utils.cancellable import run_with_escape_cancel
 
                     result, cancelled = await run_with_escape_cancel(
-                        self.agent.run(user_input, stream=False, continue_conversation=True)
+                        agent.run(user_input, stream=False, continue_conversation=True)
                     )
 
                     if cancelled:
