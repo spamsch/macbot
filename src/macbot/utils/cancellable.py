@@ -14,6 +14,25 @@ class EscapeCancelled(Exception):
     pass
 
 
+def _read_char_if_available(fd: int, old_settings) -> str | None:
+    """Briefly enter raw mode to check for a keypress, then restore."""
+    import select
+
+    # Check if input is available first (without changing terminal mode)
+    readable, _, _ = select.select([sys.stdin], [], [], 0.1)
+    if not readable:
+        return None
+
+    # Briefly enter raw mode to read the character
+    try:
+        tty.setraw(fd)
+        char = sys.stdin.read(1)
+        return char
+    finally:
+        # Immediately restore terminal settings
+        termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+
+
 async def _check_escape(stop_event: asyncio.Event) -> None:
     """Monitor for Escape key press in a non-blocking way.
 
@@ -26,33 +45,19 @@ async def _check_escape(stop_event: asyncio.Event) -> None:
     # Save original terminal settings
     old_settings = termios.tcgetattr(fd)
 
-    try:
-        # Set terminal to raw mode (no buffering, immediate char read)
-        tty.setraw(fd)
+    while not stop_event.is_set():
+        # Check for input (briefly enters raw mode only when reading)
+        char = await loop.run_in_executor(
+            None,
+            lambda: _read_char_if_available(fd, old_settings)
+        )
 
-        while not stop_event.is_set():
-            # Check if there's input available (non-blocking)
-            ready = await loop.run_in_executor(
-                None,
-                lambda: _select_stdin(0.1)  # 100ms timeout
-            )
+        if char == '\x1b':  # Escape key
+            stop_event.set()
+            return
 
-            if ready:
-                # Read one character
-                char = await loop.run_in_executor(None, lambda: sys.stdin.read(1))
-                if char == '\x1b':  # Escape key
-                    stop_event.set()
-                    return
-    finally:
-        # Restore terminal settings
-        termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
-
-
-def _select_stdin(timeout: float) -> bool:
-    """Check if stdin has data available."""
-    import select
-    readable, _, _ = select.select([sys.stdin], [], [], timeout)
-    return bool(readable)
+        # Small delay to avoid busy-waiting
+        await asyncio.sleep(0.05)
 
 
 async def run_with_escape_cancel(
