@@ -141,14 +141,13 @@ class Agent:
                     # Print tool calls - one per line if multiple, single line if one
                     prefix = f"[dim][{self.iteration}/{self.config.max_iterations}] → "
                     if len(tool_strs) == 1:
-                        console.print(f"{prefix}{tool_strs[0]}[/dim]", soft_wrap=True)
+                        console.print(f"{prefix}{tool_strs[0]}[/dim]")
                     else:
-                        console.print(f"{prefix}[/dim]", end="")
                         for i, ts in enumerate(tool_strs):
                             if i == 0:
-                                console.print(f"[dim]{ts}[/dim]", soft_wrap=True)
+                                console.print(f"{prefix}{ts}[/dim]")
                             else:
-                                console.print(f"[dim]          {ts}[/dim]", soft_wrap=True)
+                                console.print(f"[dim]          {ts}[/dim]")
                 await self._execute_tool_calls(response, verbose)
             else:
                 # No tool calls means the agent has finished
