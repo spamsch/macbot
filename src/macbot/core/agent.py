@@ -18,9 +18,8 @@ from rich.panel import Panel
 
 from macbot.config import Settings, settings
 from macbot.core.task import TaskRegistry, TaskResult
-from macbot.providers.anthropic import AnthropicProvider
 from macbot.providers.base import LLMProvider, LLMResponse, Message
-from macbot.providers.openai import OpenAIProvider
+from macbot.providers.litellm_provider import LiteLLMProvider
 
 logger = logging.getLogger(__name__)
 console = Console()
@@ -58,23 +57,18 @@ class Agent:
         self._last_context_tokens = 0  # Input tokens from last request (= context size)
 
     def _create_provider(self) -> LLMProvider:
-        """Create an LLM provider based on configuration."""
-        from macbot.config import LLMProviderType
+        """Create an LLM provider based on configuration.
 
-        provider_config = self.config.get_provider_config()
+        Uses LiteLLM which supports 100+ providers via unified model string format:
+        - anthropic/claude-sonnet-4-20250514
+        - openai/gpt-4o
+        - groq/llama3-70b-8192
+        - ollama/llama2
+        """
+        model = self.config.get_model()
+        api_key = self.config.get_api_key_for_model(model)
 
-        if self.config.llm_provider == LLMProviderType.ANTHROPIC:
-            return AnthropicProvider(
-                api_key=provider_config["api_key"],
-                model=provider_config["model"],
-            )
-        else:
-            # Note: OpenAI's native web_search requires Responses API (not yet supported)
-            # For web search, the agent can use the web_search task instead
-            return OpenAIProvider(
-                api_key=provider_config["api_key"],
-                model=provider_config["model"],
-            )
+        return LiteLLMProvider(model=model, api_key=api_key)
 
     async def run(
         self,

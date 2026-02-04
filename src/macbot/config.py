@@ -1,8 +1,6 @@
 """Configuration management for MacBot."""
 
-from enum import Enum
 from pathlib import Path
-from typing import Any
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -10,13 +8,6 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # Macbot config directory
 MACBOT_DIR = Path.home() / ".macbot"
 MACBOT_ENV_FILE = MACBOT_DIR / ".env"
-
-
-class LLMProviderType(str, Enum):
-    """Supported LLM providers."""
-
-    ANTHROPIC = "anthropic"
-    OPENAI = "openai"
 
 
 class Settings(BaseSettings):
@@ -32,33 +23,21 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    # LLM Provider settings
-    llm_provider: LLMProviderType = Field(
-        default=LLMProviderType.ANTHROPIC,
-        description="The LLM provider to use",
+    # LLM Model setting (provider/model format)
+    model: str = Field(
+        default="anthropic/claude-sonnet-4-20250514",
+        description="Model in provider/model format (e.g., anthropic/claude-sonnet-4-20250514, openai/gpt-4o)",
     )
 
-    # Anthropic settings
+    # API Keys (LiteLLM routes based on model prefix)
     anthropic_api_key: str = Field(
         default="",
-        description="Anthropic API key",
+        description="Anthropic API key (for anthropic/* models)",
     )
-    anthropic_model: str = Field(
-        default="claude-sonnet-4-20250514",
-        description="Anthropic model to use",
-    )
-
-    # OpenAI settings
     openai_api_key: str = Field(
         default="",
-        description="OpenAI API key",
+        description="OpenAI API key (for openai/* models)",
     )
-    openai_model: str = Field(
-        default="gpt-4o",
-        description="OpenAI model to use",
-    )
-    # Note: OpenAI's native web_search requires the Responses API (future enhancement)
-    # For now, use the web_search task which uses DuckDuckGo
 
     # Agent settings
     max_iterations: int = Field(
@@ -180,18 +159,39 @@ Before starting a task, check `get_agent_memory` to see recent context and avoid
         description="Paperless-ngx API token",
     )
 
-    def get_provider_config(self) -> dict[str, Any]:
-        """Get configuration for the selected LLM provider."""
-        if self.llm_provider == LLMProviderType.ANTHROPIC:
-            return {
-                "api_key": self.anthropic_api_key,
-                "model": self.anthropic_model,
-            }
-        else:
-            return {
-                "api_key": self.openai_api_key,
-                "model": self.openai_model,
-            }
+    def get_model(self) -> str:
+        """Get the model string in provider/model format.
+
+        Returns:
+            Model string like 'anthropic/claude-sonnet-4-20250514'
+        """
+        return self.model
+
+    def get_provider(self) -> str:
+        """Get the provider name from the model string.
+
+        Returns:
+            Provider name like 'anthropic' or 'openai'
+        """
+        return self.model.split("/")[0] if "/" in self.model else "openai"
+
+    def get_api_key_for_model(self, model: str | None = None) -> str | None:
+        """Get the API key for a model's provider.
+
+        Args:
+            model: Model string (defaults to current model)
+
+        Returns:
+            API key string or None if not configured
+        """
+        model = model or self.get_model()
+        provider = model.split("/")[0] if "/" in model else "openai"
+
+        key_map = {
+            "anthropic": self.anthropic_api_key,
+            "openai": self.openai_api_key,
+        }
+        return key_map.get(provider)
 
     def get_cron_storage_path(self) -> Path:
         """Get the cron storage path, using default if not set."""

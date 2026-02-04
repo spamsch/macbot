@@ -262,7 +262,7 @@ def cmd_chat(args: argparse.Namespace) -> None:
 
     console.print(Panel(
         f"[bold]MacBot Chat[/bold] v{__version__}\n\n"
-        f"Provider: {settings.llm_provider.value}\n"
+        f"Model: {settings.model}\n"
         f"Tasks available: {len(registry)}",
         title="Welcome"
     ))
@@ -286,10 +286,19 @@ def cmd_run(args: argparse.Namespace) -> None:
                 console.print(f"    {goal_preview}...")
         return
 
-    # Require goal if not listing jobs
-    if not args.goal:
-        console.print("[red]Error:[/red] goal is required (or use --list-jobs)")
+    # Handle multiline input mode
+    if getattr(args, "multiline", False):
+        if sys.stdin.isatty():
+            console.print("[dim]Enter your prompt (Ctrl+D when done):[/dim]")
+        goal = sys.stdin.read().strip()
+        if not goal:
+            console.print("[red]Error:[/red] no input provided")
+            sys.exit(1)
+    elif not args.goal:
+        console.print("[red]Error:[/red] goal is required (or use --list-jobs or -m)")
         sys.exit(1)
+    else:
+        goal = args.goal
 
     # Enable debug logging if --debug flag is set
     if getattr(args, "debug", False):
@@ -297,7 +306,6 @@ def cmd_run(args: argparse.Namespace) -> None:
         console.print("[dim]Debug mode enabled[/dim]\n")
 
     # Check if the goal matches a job name from jobs.yaml
-    goal = args.goal
     job_goal = find_job_goal(goal)
     if job_goal:
         console.print(f"[dim]Running job:[/dim] [bold]{goal}[/bold]\n")
@@ -665,7 +673,7 @@ def cmd_schedule_log(args: argparse.Namespace) -> None:
 def cmd_version(args: argparse.Namespace) -> None:
     """Show version and configuration information."""
     console.print(f"[bold]MacBot[/bold] v{__version__}")
-    console.print(f"LLM Provider: {settings.llm_provider.value}")
+    console.print(f"Model: {settings.model}")
     console.print(f"Max iterations: {settings.max_iterations}")
 
     registry = create_default_registry()
@@ -813,22 +821,19 @@ def cmd_onboard(args: argparse.Namespace) -> None:
     step_header(1, total_steps, "LLM Provider")
 
     # Check if already configured
-    has_anthropic = bool(settings.anthropic_api_key)
-    has_openai = bool(settings.openai_api_key)
+    has_api_key = bool(settings.anthropic_api_key or settings.openai_api_key)
 
-    if has_anthropic or has_openai:
-        current = "Anthropic" if settings.llm_provider.value == "anthropic" else "OpenAI"
-        console.print(f"[green]✓[/green] Already configured: {current}")
+    if has_api_key:
+        console.print(f"[green]✓[/green] Already configured: {settings.model}")
         if not prompt_yes_no("Reconfigure?", default=False):
             pass  # Keep existing config
         else:
-            has_anthropic = False
-            has_openai = False
+            has_api_key = False
 
-    if not has_anthropic and not has_openai:
+    if not has_api_key:
         choice = prompt_choice(
             "Which LLM provider would you like to use?",
-            ["OpenAI (GPT-5.2) - Recommended", "Anthropic (Claude)"],
+            ["OpenAI (GPT-4o) - Recommended", "Anthropic (Claude)"],
             default=1,
         )
 
@@ -836,15 +841,14 @@ def cmd_onboard(args: argparse.Namespace) -> None:
             console.print("\nGet your API key from: [link]https://platform.openai.com/api-keys[/link]")
             api_key = prompt_secret("Enter your OpenAI API key")
             if api_key:
-                env_vars["MACBOT_LLM_PROVIDER"] = "openai"
+                env_vars["MACBOT_MODEL"] = "openai/gpt-4o"
                 env_vars["MACBOT_OPENAI_API_KEY"] = api_key
-                env_vars["MACBOT_OPENAI_MODEL"] = "gpt-5.2"
                 console.print("[green]✓ API key saved[/green]")
         else:
             console.print("\nGet your API key from: [link]https://console.anthropic.com/[/link]")
             api_key = prompt_secret("Enter your Anthropic API key")
             if api_key:
-                env_vars["MACBOT_LLM_PROVIDER"] = "anthropic"
+                env_vars["MACBOT_MODEL"] = "anthropic/claude-sonnet-4-20250514"
                 env_vars["MACBOT_ANTHROPIC_API_KEY"] = api_key
 
                 # Validate the key
@@ -1230,19 +1234,13 @@ def cmd_doctor(args: argparse.Namespace) -> None:
     # Configuration checks
     console.print("\n[bold]Configuration[/bold]")
 
-    # LLM Provider
-    provider = settings.llm_provider.value
-    check("LLM Provider", True, provider)
+    # Model
+    check("Model", True, settings.model)
 
     # API Key
-    if settings.llm_provider.value == "anthropic":
-        api_key = settings.anthropic_api_key
-        key_name = "MACBOT_ANTHROPIC_API_KEY"
-        model = settings.anthropic_model
-    else:
-        api_key = settings.openai_api_key
-        key_name = "MACBOT_OPENAI_API_KEY"
-        model = settings.openai_model
+    provider = settings.get_provider()
+    api_key = settings.get_api_key_for_model()
+    key_name = f"MACBOT_{provider.upper()}_API_KEY"
 
     if api_key:
         masked = api_key[:8] + "..." + api_key[-4:] if len(api_key) > 12 else "***"
@@ -2464,7 +2462,9 @@ Use [bold]macbot <command> --help[/bold] for command details.
         epilog="""Examples:
   macbot run "Check my emails"              Run a goal
   macbot run "What's on my calendar?"       Ask a question
-  macbot run --list-jobs                    Show available jobs"""
+  macbot run --list-jobs                    Show available jobs
+  macbot run -m                             Enter multiline prompt (Ctrl+D to end)
+  cat prompt.txt | macbot run -m            Run from file"""
     )
     run_parser.add_argument(
         "goal", nargs="?", default=None,
@@ -2489,6 +2489,10 @@ Use [bold]macbot <command> --help[/bold] for command details.
     run_parser.add_argument(
         "--debug", action="store_true",
         help="Show debug output (script commands, full errors)"
+    )
+    run_parser.add_argument(
+        "-m", "--multiline", action="store_true",
+        help="Read multiline prompt from stdin (end with Ctrl+D)"
     )
     run_parser.set_defaults(func=cmd_run)
 

@@ -601,9 +601,12 @@ class AnalyzeScreenshotTask(Task):
             # Create OpenAI client
             client = AsyncOpenAI(api_key=settings.openai_api_key)
 
+            # Get model - use configured model if OpenAI, otherwise default to gpt-4o
+            vision_model = settings.model.split("/")[1] if settings.model.startswith("openai/") else "gpt-4o"
+
             # Send to vision model
             response = await client.chat.completions.create(
-                model=settings.openai_model,  # Uses configured model (gpt-5.2)
+                model=vision_model,
                 messages=[
                     {
                         "role": "system",
@@ -633,7 +636,7 @@ class AnalyzeScreenshotTask(Task):
                 "success": True,
                 "analysis": analysis,
                 "screenshot": screenshot_path,
-                "model": settings.openai_model,
+                "model": vision_model,
             }
 
         except ImportError:
