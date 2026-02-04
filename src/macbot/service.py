@@ -208,43 +208,47 @@ class MacbotService:
 
     async def _run_interactive(self) -> None:
         """Run interactive console input loop."""
-        import sys
         from concurrent.futures import ThreadPoolExecutor
+        from rich.console import Console
+        from rich.markdown import Markdown
 
         executor = ThreadPoolExecutor(max_workers=1)
         loop = asyncio.get_event_loop()
+        console = Console()
 
-        print("\n[Ready for input - type a query or 'quit' to exit]\n")
+        console.print("\n[dim][Ready for input - type a query or 'quit' to exit][/dim]\n")
 
         while self._running:
             try:
                 # Read input in a thread to not block the event loop
                 user_input = await loop.run_in_executor(
-                    executor, lambda: input("→ ").strip()
+                    executor, lambda: console.input("[bold blue]→[/bold blue] ").strip()
                 )
 
                 if not user_input:
                     continue
 
                 if user_input.lower() in ("quit", "exit", "q"):
-                    print("[Stopping service...]")
+                    console.print("[dim][Stopping service...][/dim]")
                     await self.stop()
                     break
 
                 if user_input.lower() == "clear":
                     self.agent.reset()
-                    print("[Conversation cleared]")
+                    console.print("[dim][Conversation cleared][/dim]")
                     continue
 
                 # Process query through main agent
                 timestamp = datetime.now().strftime("%H:%M:%S")
-                print(f"[{timestamp}] Processing: {user_input[:50]}{'...' if len(user_input) > 50 else ''}\n")
+                console.print(f"[dim][{timestamp}] Processing...[/dim]\n")
 
                 try:
                     result = await self.agent.run(user_input, stream=True, continue_conversation=True)
-                    print(f"\n{result}\n")
+                    console.print()
+                    console.print(Markdown(result))
+                    console.print()
                 except Exception as e:
-                    print(f"\n[Error: {e}]\n")
+                    console.print(f"\n[red]Error: {e}[/red]\n")
 
             except EOFError:
                 break

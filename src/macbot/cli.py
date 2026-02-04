@@ -184,7 +184,9 @@ async def interactive_loop(agent: Agent, verbose: bool = False) -> None:
             # Run the agent with the user's input
             console.print()
             result = await agent.run(user_input, verbose=verbose)
-            console.print(f"\n[bold green]Agent:[/bold green] {result}\n")
+            console.print()
+            console.print(Markdown(result))
+            console.print()
 
         except KeyboardInterrupt:
             console.print("\n[dim]Use 'quit' to exit.[/dim]")
@@ -272,9 +274,10 @@ def cmd_run(args: argparse.Namespace) -> None:
         result = await agent.run(goal, verbose=verbose, stream=stream)
 
         # When streaming, text was already printed via stream callback
-        # Otherwise, print the final result
+        # Otherwise, print the final result with markdown rendering
         if not stream:
-            console.print(f"\n[bold green]Agent:[/bold green] {result}")
+            console.print()
+            console.print(Markdown(result))
 
         # Continue to interactive mode if requested
         if args.continue_chat:
