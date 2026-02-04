@@ -54,35 +54,30 @@ done
 [[ -z "$REF" ]] && error_exit "Element ref is required"
 [[ -z "$VALUE" ]] && error_exit "Value is required"
 
+# Check if Safari window exists
+WINDOW_COUNT=$(osascript -e 'tell application "Safari" to count of windows' 2>/dev/null)
+if [[ "$WINDOW_COUNT" == "0" ]] || [[ -z "$WINDOW_COUNT" ]]; then
+    echo '{"success": false, "error": "No Safari window open"}'
+    exit 1
+fi
+
+# Check if library is loaded
+HAS_LIB=$(osascript -e 'tell application "Safari" to do JavaScript "typeof window.__ariaSelect === '\''function'\''" in current tab of front window' 2>/dev/null)
+if [[ "$HAS_LIB" != "true" ]]; then
+    echo '{"success": false, "error": "ARIA library not loaded. Run snapshot.sh --inject first."}'
+    exit 1
+fi
+
+# Escape single quotes in value for JavaScript
 VALUE_ESCAPED=$(echo "$VALUE" | sed "s/'/\\\\'/g")
 
-osascript -e '
-on run argv
-    set ref to item 1 of argv
-    set theValue to item 2 of argv
+# Select the option
+RESULT=$(osascript -e "tell application \"Safari\" to do JavaScript \"JSON.stringify(window.__ariaSelect('$REF', '$VALUE_ESCAPED'))\" in current tab of front window" 2>&1)
+EXIT_CODE=$?
 
-    tell application "Safari"
-        if (count of windows) is 0 then
-            return "{\"success\": false, \"error\": \"No Safari window open\"}"
-        end if
-
-        try
-            set hasLib to do JavaScript "typeof window.__ariaSelect === '\''function'\''" in current tab of front window
-            if hasLib is not true then
-                return "{\"success\": false, \"error\": \"ARIA library not loaded.\"}"
-            end if
-        on error errMsg
-            return "{\"success\": false, \"error\": \"" & errMsg & "\"}"
-        end try
-
-        set jsCode to "JSON.stringify(window.__ariaSelect('\''" & ref & "'\'', '\''" & theValue & "'\''))"
-
-        try
-            set result to do JavaScript jsCode in current tab of front window
-            return result
-        on error errMsg
-            return "{\"success\": false, \"error\": \"Select failed: " & errMsg & "\"}"
-        end try
-    end tell
-end run
-' -- "$REF" "$VALUE_ESCAPED"
+if [[ $EXIT_CODE -eq 0 ]] && [[ -n "$RESULT" ]]; then
+    echo "$RESULT"
+else
+    echo "{\"success\": false, \"error\": \"Select failed: $RESULT\"}"
+    exit 1
+fi
