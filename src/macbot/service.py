@@ -151,11 +151,39 @@ class MacbotService:
                     self._chat_agents[chat_id].reset()
                 return "Conversation cleared. Starting fresh!"
 
+            # Send acknowledgment
+            await self.telegram_service.send_message("⏳ Working on it...", chat_id, parse_mode=None)
+
             try:
                 # Get per-chat agent and continue conversation
                 agent = self._get_chat_agent(chat_id)
+
+                # Track tool calls for progress feedback
+                tools_called = []
+                original_execute = agent._execute_tool_calls
+
+                async def tracking_execute(response, verbose=False):
+                    for tc in response.tool_calls:
+                        tools_called.append(tc.name)
+                        # Send progress update every few tools
+                        if len(tools_called) == 1:
+                            await self.telegram_service.send_message(
+                                f"🔧 `{tc.name}`...", chat_id, parse_mode="Markdown"
+                            )
+                        elif len(tools_called) % 3 == 0:
+                            await self.telegram_service.send_message(
+                                f"🔧 `{tc.name}` ({len(tools_called)} steps)...", chat_id, parse_mode="Markdown"
+                            )
+                    return await original_execute(response, verbose)
+
+                agent._execute_tool_calls = tracking_execute
+
                 result = await agent.run(text, stream=False, continue_conversation=True)
-                logger.info(f"Telegram: Response sent, length: {len(result)}")
+
+                # Restore original method
+                agent._execute_tool_calls = original_execute
+
+                logger.info(f"Telegram: Response sent, length: {len(result)}, tools: {len(tools_called)}")
                 return result
             except Exception as e:
                 logger.error(f"Telegram: Error - {e}")
