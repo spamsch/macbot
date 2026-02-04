@@ -206,8 +206,59 @@ class MacbotService:
             return
         await self.telegram_service.start()
 
-    async def start(self) -> None:
-        """Start all configured services."""
+    async def _run_interactive(self) -> None:
+        """Run interactive console input loop."""
+        import sys
+        from concurrent.futures import ThreadPoolExecutor
+
+        executor = ThreadPoolExecutor(max_workers=1)
+        loop = asyncio.get_event_loop()
+
+        print("\n[Ready for input - type a query or 'quit' to exit]\n")
+
+        while self._running:
+            try:
+                # Read input in a thread to not block the event loop
+                user_input = await loop.run_in_executor(
+                    executor, lambda: input("→ ").strip()
+                )
+
+                if not user_input:
+                    continue
+
+                if user_input.lower() in ("quit", "exit", "q"):
+                    print("[Stopping service...]")
+                    await self.stop()
+                    break
+
+                if user_input.lower() == "clear":
+                    self.agent.reset()
+                    print("[Conversation cleared]")
+                    continue
+
+                # Process query through main agent
+                timestamp = datetime.now().strftime("%H:%M:%S")
+                print(f"[{timestamp}] Processing: {user_input[:50]}{'...' if len(user_input) > 50 else ''}\n")
+
+                try:
+                    result = await self.agent.run(user_input, stream=True, continue_conversation=True)
+                    print(f"\n{result}\n")
+                except Exception as e:
+                    print(f"\n[Error: {e}]\n")
+
+            except EOFError:
+                break
+            except asyncio.CancelledError:
+                break
+
+        executor.shutdown(wait=False)
+
+    async def start(self, interactive: bool = False) -> None:
+        """Start all configured services.
+
+        Args:
+            interactive: Whether to also run an interactive input loop
+        """
         self._running = True
 
         has_cron = self._setup_cron()
@@ -227,7 +278,10 @@ class MacbotService:
             else:
                 logger.error(f"Telegram token invalid: {msg}")
 
-        if not self._tasks:
+        # Add interactive loop if requested (foreground mode)
+        if interactive:
+            self._tasks.append(asyncio.create_task(self._run_interactive()))
+        elif not self._tasks:
             logger.warning("No services configured (no cron jobs, no Telegram)")
             return
 
@@ -346,8 +400,8 @@ def run_service(daemon: bool = False, verbose: bool = False) -> None:
         # Now in daemon process
         _run_daemon_service()
     else:
-        # Foreground mode
-        console.print("[dim]Press Ctrl+C to stop[/dim]\n")
+        # Foreground mode with interactive input
+        console.print("[dim]Type queries below, or 'quit' to exit. Ctrl+C also stops.[/dim]")
 
         # Set up logging for foreground
         if verbose:
@@ -358,11 +412,11 @@ def run_service(daemon: bool = False, verbose: bool = False) -> None:
             )
 
         try:
-            asyncio.run(service.start())
+            asyncio.run(service.start(interactive=True))
         except KeyboardInterrupt:
             console.print("\n[dim]Stopping...[/dim]")
             asyncio.run(service.stop())
-            console.print("[dim]Service stopped.[/dim]")
+        console.print("[dim]Service stopped.[/dim]")
 
 
 def _daemonize() -> None:
