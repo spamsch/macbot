@@ -9,9 +9,17 @@ from macbot.providers.base import LLMProvider, LLMResponse, Message, StreamCallb
 
 
 class OpenAIProvider(LLMProvider):
-    """LLM provider for OpenAI models."""
+    """LLM provider for OpenAI models.
 
-    def __init__(self, api_key: str, model: str = "gpt-4o") -> None:
+    Note: OpenAI's web_search_preview tool requires the Responses API,
+    not Chat Completions. For web search, use the web_search task instead.
+    """
+
+    def __init__(
+        self,
+        api_key: str,
+        model: str = "gpt-4o",
+    ) -> None:
         super().__init__(api_key, model)
         self.client = AsyncOpenAI(api_key=api_key)
 

@@ -57,6 +57,8 @@ class Settings(BaseSettings):
         default="gpt-4o",
         description="OpenAI model to use",
     )
+    # Note: OpenAI's native web_search requires the Responses API (future enhancement)
+    # For now, use the web_search task which uses DuckDuckGo
 
     # Agent settings
     max_iterations: int = Field(
