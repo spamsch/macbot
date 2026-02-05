@@ -70,12 +70,17 @@ class ServiceStore {
     this.addLog("Starting Son of Simon service...", "info");
 
     try {
-      // Use the sidecar command - for now we'll use the installed CLI
-      // In production, this would be a bundled sidecar
-      const command = Command.create("exec-sh", [
-        "-c",
-        "son start --foreground 2>&1",
-      ]);
+      // Try to use the bundled sidecar first, fall back to system-installed CLI
+      let command: Command;
+      try {
+        // Sidecar binary (bundled with PyInstaller)
+        command = Command.sidecar("son", ["start", "--foreground"]);
+        this.addLog("Using bundled sidecar", "info");
+      } catch {
+        // Fallback to system-installed CLI
+        command = Command.create("exec-sh", ["-c", "son start --foreground 2>&1"]);
+        this.addLog("Using system-installed CLI", "info");
+      }
 
       command.stdout.on("data", (line: string) => {
         if (line.trim()) {
