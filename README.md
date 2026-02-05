@@ -16,6 +16,8 @@ Son of Simon is an AI assistant for macOS that works directly with your built-in
 
 Where tools like OpenClaw need browser scraping or OAuth flows to access Gmail or Office 365, Son of Simon uses Apple's native app integration. Just add your account in Apple Mail or Calendar and the agent can use it. No tokens, no OAuth, no browser automation needed.
 
+Son of Simon is also more secure in practice because it does not run a separate gateway service. There is no always-on gateway process to expose or configure, which reduces the attack surface compared to a gateway-based setup like OpenClaw.
+
 Skills are compatible with the [AgentSkills standard](https://agentskills.io) used by OpenClaw, Claude Code, and Cursor — so community skills work across tools.
 
 You do not need to code. Download the app, sign in, and start asking.
@@ -69,7 +71,7 @@ Each skill defines:
   <img src="docs/images/skill-detail.png" alt="Skill Detail" width="500">
 </p>
 
-Custom skills are saved to `~/.macbot/skills/`. Skills use the **AgentSkills standard** (the same SKILL.md format used by OpenClaw, Claude Code, and Cursor) so you can drop in skills from any compatible tool and they just work.
+Custom skills are saved to `~/.macbot/skills/`. Skills use the **AgentSkills standard** (the same SKILL.md format used by OpenClaw, Claude Code, and Cursor) so you can drop in skills from any compatible tool and they just work. You can also use skills from https://clawhub.ai/.
 
 ## Requirements
 
