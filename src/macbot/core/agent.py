@@ -20,6 +20,7 @@ from macbot.config import Settings, settings
 from macbot.core.task import TaskRegistry, TaskResult
 from macbot.providers.base import LLMProvider, LLMResponse, Message
 from macbot.providers.litellm_provider import LiteLLMProvider
+from macbot.skills.registry import SkillsRegistry, get_default_registry
 
 logger = logging.getLogger(__name__)
 console = Console()
@@ -37,6 +38,7 @@ class Agent:
         task_registry: TaskRegistry,
         provider: LLMProvider | None = None,
         config: Settings | None = None,
+        skills_registry: SkillsRegistry | None = None,
     ) -> None:
         """Initialize the agent.
 
@@ -44,10 +46,12 @@ class Agent:
             task_registry: Registry of available tasks
             provider: LLM provider (auto-configured from settings if not provided)
             config: Settings (uses global settings if not provided)
+            skills_registry: Registry of skills (auto-loaded if not provided)
         """
         self.config = config or settings
         self.task_registry = task_registry
         self.provider = provider or self._create_provider()
+        self.skills_registry = skills_registry or get_default_registry()
         self.messages: list[Message] = []
         self.iteration = 0
 
@@ -150,139 +154,53 @@ class Agent:
         return f"Reached maximum iterations ({self.config.max_iterations}) without completing the goal. Increase MACBOT_MAX_ITERATIONS to allow more steps."
 
     def _build_system_prompt(self) -> str:
-        """Build a dynamic system prompt with platform and tool context."""
-        # Start with the configured base prompt
-        base_prompt = self.config.agent_system_prompt
+        """Build a dynamic system prompt with platform and skills context.
 
-        # Add platform context
-        system_info = f"""
+        The prompt is structured as:
+        1. Base prompt (Core Principles from config)
+        2. System context (platform info)
+        3. Skills section (with their tools and guidance)
+        4. Agent memory guidance
+        5. Important rules
+        6. Knowledge memory
+        """
+        prompt_parts = [self.config.agent_system_prompt]
 
+        # Add system context
+        prompt_parts.append(self._build_system_context())
+
+        # Add skills with their tools
+        skills_text = self.skills_registry.format_for_prompt(self.task_registry)
+        if skills_text:
+            prompt_parts.append(skills_text)
+
+        # Add agent memory guidance
+        prompt_parts.append(self._build_memory_guidance())
+
+        # Add important rules
+        prompt_parts.append(self._build_important_rules())
+
+        # Load knowledge memory if it exists
+        from macbot.memory import KnowledgeMemory
+        knowledge = KnowledgeMemory()
+        memory_text = knowledge.format_for_prompt()
+        if memory_text:
+            prompt_parts.append("\n" + memory_text)
+
+        return "\n".join(prompt_parts)
+
+    def _build_system_context(self) -> str:
+        """Build the system context section with platform info."""
+        return f"""
 ## System Context
 - Platform: macOS ({platform.mac_ver()[0]})
 - Architecture: {platform.machine()}
 - Hostname: {platform.node()}
-
-## Available Tools
-
-You have access to the following tools to help accomplish tasks on this macOS system:
 """
 
-        # Group tools by category based on naming conventions
-        tools = self.task_registry.list_tasks()
-        categories: dict[str, list[tuple[str, str]]] = {
-            "Mail": [],
-            "Calendar": [],
-            "Reminders": [],
-            "Notes": [],
-            "Safari": [],
-            "File Operations": [],
-            "System": [],
-        }
-
-        for task in tools:
-            name = task.name
-            desc = task.description
-
-            if "mail" in name or "email" in name:
-                categories["Mail"].append((name, desc))
-            elif "calendar" in name or "event" in name:
-                categories["Calendar"].append((name, desc))
-            elif "reminder" in name:
-                categories["Reminders"].append((name, desc))
-            elif "note" in name:
-                categories["Notes"].append((name, desc))
-            elif "safari" in name or "url" in name.lower() or "tab" in name:
-                categories["Safari"].append((name, desc))
-            elif "file" in name or "read" in name or "write" in name:
-                categories["File Operations"].append((name, desc))
-            else:
-                categories["System"].append((name, desc))
-
-        # Build tool descriptions
-        tool_text = ""
-        for category, task_list in categories.items():
-            if task_list:
-                tool_text += f"\n### {category}\n"
-                for name, desc in task_list:
-                    tool_text += f"- **{name}**: {desc}\n"
-
-        # Add guidance for common scenarios
-        guidance = """
-
-## How to Handle Common Requests
-
-- **"emails from X account"** or **"emails in X account"** → search_emails with account=X (searches ALL emails received by that account)
-- **"emails from X sender/person"** → search_emails with sender=X (filters by who sent the email)
-- **"today's emails"** → use today_only=true parameter
-- **"recent emails"** → use days parameter (e.g., days=7 for last week)
-- **"all emails" or "read and unread"** → the search includes both by default
-- **"read this email" or "what does this email say"** → search_emails with message_id AND with_content=True to get full body text
-- **"archive this email"** → move_email with to="archive" and message_id from search
-- **"delete this email"** → move_email with to="trash" and message_id from search
-- **"download attachments"** → download_attachments with output folder and message_id
-- **"check my calendar"** → get_today_events or get_week_events
-- **"remind me to..."** → create_reminder
-- **"search notes for..."** → search_notes with the query
-- **"search the web for..." or "look up..."** → web_search (fast, no browser needed)
-- **"read this webpage" or "fetch this URL"** → web_fetch (extracts text from URL)
-- **"book a table" or "make a reservation"** → browser automation (navigate, snapshot, fill forms, click, submit)
-- **"buy tickets" or "purchase..."** → browser automation to complete the transaction
-
-## Web Lookups vs Browser Automation
-
-**For simple lookups** (finding information, reading content):
-- **web_search** - Quick DuckDuckGo search, returns titles/URLs/snippets
-- **web_fetch** - Fetch a URL and extract readable text content
-
-**For interactive tasks** (bookings, form submissions, purchases) - USE BROWSER AUTOMATION:
-- **browser_navigate** - Go to a URL
-- **browser_snapshot** - See the page and get element refs (e1, e2, etc.)
-- **browser_click** - Click on buttons/links using ref
-- **browser_type** - Fill in form fields using ref
-- **browser_submit** - Submit forms
-
-## Making Online Bookings/Reservations
-
-When asked to book, reserve, or purchase something online, ALWAYS try to complete it.
-
-**First, verify required info** (per Core Principle #1): date, exact time, party size, name, contact. Ask if anything is missing or vague.
-
-**Then proceed with the booking:**
-
-1. **Find the website**: Use web_search to find the official site
-2. **Quick recon**: Use web_fetch to quickly scan the page for booking options, forms, or reservation links
-3. **Switch to browser**: Use browser_navigate to go to the booking/reservation page
-4. **Take a snapshot**: Use browser_snapshot to see the page and get element refs (e1, e2, etc.)
-5. **Fill forms**: Use browser_type to enter details (name, date, time, party size, email, phone, etc.)
-6. **Click buttons**: Use browser_click to select options, proceed, submit
-7. **Verify completion**: Take another snapshot to confirm the booking went through
-
-**The key insight**: web_fetch is great for quickly checking what's available, but you MUST continue with browser_* tools to actually interact with forms and buttons.
-
-**Be persistent**: If one approach doesn't work, try alternatives:
-- Look for "Reservierung", "Buchen", "Book", "Reserve" buttons/links
-- Try contact forms if no booking system exists
-- Fill out and submit inquiry forms on the user's behalf
-- As a last resort, draft an email for the user to send
-
-**Don't stop at web_fetch**: The user asked you to BOOK, not just find contact info. After using web_fetch to understand the page, continue with browser tools to actually complete the booking.
-
-IMPORTANT: "from X account" usually means emails RECEIVED BY that account (any sender), not FROM that sender. Use the account parameter for this.
-
-## Moving and Archiving Emails
-
-When processing emails and the user wants them archived or deleted:
-1. Use search_emails to find the email and get its Message-ID
-2. Use move_email with the message_id and to="archive" or to="trash"
-3. The email will be moved to the account's Archive/Trash mailbox
-
-## Downloading Attachments
-
-When the user wants to download email attachments:
-1. Use search_emails to find the email and get its Message-ID
-2. Use download_attachments with the message_id and output folder path
-3. Attachments will be saved with their original filenames (duplicates auto-renamed)
-
+    def _build_memory_guidance(self) -> str:
+        """Build guidance for agent memory tools."""
+        return """
 ## Agent Memory - Tracking Processed Work
 
 You have a persistent memory to track what you've done. USE IT to avoid duplicate work:
@@ -295,19 +213,6 @@ You have a persistent memory to track what you've done. USE IT to avoid duplicat
    - For each email, check if already processed (via Message-ID)
    - Take action (reply, create reminder, etc.)
    - Mark as processed with action_taken (e.g., 'replied', 'reminder_created', 'reviewed', 'no_action_needed')
-
-## Important Rules
-
-- Always try the most likely interpretation first
-- If a search returns no results, mention what you searched for and suggest alternatives
-- Use tool parameters to filter results (today, days, mailbox, etc.) rather than asking users for them
-- **NEVER use run_shell_command for tasks that have dedicated tools.** Use:
-  - `create_reminder` NOT osascript for reminders
-  - `send_email` NOT osascript for emails
-  - `create_calendar_event` NOT osascript for events
-  - `move_email` NOT osascript for moving emails
-  - `download_attachments` NOT osascript for attachments
-- If a dedicated tool fails, report the error. Do NOT work around it with run_shell_command.
 
 ## Knowledge Memory Management
 
@@ -325,16 +230,22 @@ Use these when:
 - You learn factual information about the user (location, preferences, etc.)
 """
 
-        prompt_parts = [base_prompt + system_info + tool_text + guidance]
+    def _build_important_rules(self) -> str:
+        """Build the important rules section."""
+        return """
+## Important Rules
 
-        # Load knowledge memory if it exists
-        from macbot.memory import KnowledgeMemory
-        knowledge = KnowledgeMemory()
-        memory_text = knowledge.format_for_prompt()
-        if memory_text:
-            prompt_parts.append("\n" + memory_text)
-
-        return "".join(prompt_parts)
+- Always try the most likely interpretation first
+- If a search returns no results, mention what you searched for and suggest alternatives
+- Use tool parameters to filter results (today, days, mailbox, etc.) rather than asking users for them
+- **NEVER use run_shell_command for tasks that have dedicated tools.** Use:
+  - `create_reminder` NOT osascript for reminders
+  - `send_email` NOT osascript for emails
+  - `create_calendar_event` NOT osascript for events
+  - `move_email` NOT osascript for moving emails
+  - `download_attachments` NOT osascript for attachments
+- If a dedicated tool fails, report the error. Do NOT work around it with run_shell_command.
+"""
 
     async def _get_llm_response(self, stream: bool = False, verbose: bool = False) -> LLMResponse:
         """Get a response from the LLM."""

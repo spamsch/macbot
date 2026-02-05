@@ -32,6 +32,8 @@ rich_path = Path(rich.__file__).parent
 datas = [
     # Include macos-automation scripts
     ('macos-automation', 'macos-automation'),
+    # Include built-in skills
+    ('skills', 'skills'),
 ]
 
 # Add litellm data files if they exist
@@ -95,6 +97,10 @@ a = Analysis(
         'macbot.memory',
         'macbot.memory.database',
         'macbot.memory.knowledge',
+        'macbot.skills',
+        'macbot.skills.models',
+        'macbot.skills.loader',
+        'macbot.skills.registry',
         'macbot.browser',
         'macbot.browser.safari',
         'macbot.providers',
