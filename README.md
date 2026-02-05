@@ -12,7 +12,9 @@
 
 ## What is this?
 
-Son of Simon is a personal assistant for macOS. It helps you with everyday tasks using the apps you already have - Mail, Calendar, Reminders, Notes, and Safari. It can also handle websites when needed.
+Son of Simon is a personal assistant for macOS. If you are considering OpenClaw but want something simpler, Mac-only, and easier to set up, this is that product.
+
+It helps you with everyday tasks using the apps you already have - Mail, Calendar, Reminders, Notes, and Safari. It can also handle websites when needed.
 
 You do not need to code. Most people just download the app, sign in, and start asking.
 
@@ -68,7 +70,7 @@ The setup wizard will guide you through:
 - **OpenClaw** runs a gateway with extra setup. **Son of Simon** is a single app with a guided setup.
 - **OpenClaw** has a broader skills ecosystem. **Son of Simon** keeps tasks built-in and local by default.
 
-If you want a cross-platform hub, OpenClaw is great. If you want a Mac-first assistant that is fast and reliable, Son of Simon is the better fit.
+OpenClaw is great if you want a cross-platform hub and do not mind extra setup. If you want a very simple agent that works like OpenClaw, but is Mac-first, fast, and reliable, choose Son of Simon.
 
 ## Optional extras
 
