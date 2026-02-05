@@ -1,7 +1,7 @@
 <script lang="ts">
   import { Button, LogViewer } from "$lib/components/ui";
-  import { serviceStore } from "$lib/stores/service";
-  import { onboardingStore } from "$lib/stores/onboarding";
+  import { serviceStore } from "$lib/stores/service.svelte";
+  import { onboardingStore } from "$lib/stores/onboarding.svelte";
   import { open } from "@tauri-apps/plugin-shell";
   import {
     Play,

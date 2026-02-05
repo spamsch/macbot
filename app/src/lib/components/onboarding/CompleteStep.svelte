@@ -1,7 +1,7 @@
 <script lang="ts">
   import { Button } from "$lib/components/ui";
   import { Check, Rocket } from "lucide-svelte";
-  import { onboardingStore } from "$lib/stores/onboarding";
+  import { onboardingStore } from "$lib/stores/onboarding.svelte";
 
   interface Props {
     onLaunch: () => void;

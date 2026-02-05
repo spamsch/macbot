@@ -13,7 +13,7 @@
     StickyNote,
     Globe,
   } from "lucide-svelte";
-  import { onboardingStore, type PermissionsData } from "$lib/stores/onboarding";
+  import { onboardingStore, type PermissionsData } from "$lib/stores/onboarding.svelte";
 
   interface Props {
     onNext: () => void;

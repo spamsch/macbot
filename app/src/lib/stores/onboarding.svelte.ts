@@ -97,15 +97,19 @@ class OnboardingStore {
   async load() {
     this._loading = true;
     this._error = null;
+    console.log("[Onboarding] Starting load...");
     try {
       const state = await invoke<OnboardingState>("read_onboarding_state");
+      console.log("[Onboarding] Loaded state:", state);
       this._state = state;
     } catch (e) {
-      console.error("Failed to load onboarding state:", e);
+      console.error("[Onboarding] Failed to load state:", e);
       this._error = String(e);
       this._state = createDefaultState();
+      console.log("[Onboarding] Using default state");
     } finally {
       this._loading = false;
+      console.log("[Onboarding] Loading complete, loading =", this._loading);
     }
   }
 

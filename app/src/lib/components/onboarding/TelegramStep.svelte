@@ -3,7 +3,7 @@
   import { invoke } from "@tauri-apps/api/core";
   import { open } from "@tauri-apps/plugin-shell";
   import { MessageSquare, ExternalLink, Check, AlertCircle } from "lucide-svelte";
-  import { onboardingStore } from "$lib/stores/onboarding";
+  import { onboardingStore } from "$lib/stores/onboarding.svelte";
 
   interface Props {
     onNext: () => void;

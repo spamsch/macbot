@@ -14,8 +14,8 @@
     STEPS,
     STEP_LABELS,
     type Step,
-  } from "$lib/stores/onboarding";
-  import { serviceStore } from "$lib/stores/service";
+  } from "$lib/stores/onboarding.svelte";
+  import { serviceStore } from "$lib/stores/service.svelte";
 
   let showDashboard = $state(false);
   let currentStep = $derived(onboardingStore.state.current_step as Step);
@@ -46,7 +46,7 @@
 
 {#if onboardingStore.loading}
   <div class="min-h-screen flex items-center justify-center">
-    <div class="text-text-muted">Loading...</div>
+    <div class="text-slate-400 text-lg">Loading...</div>
   </div>
 {:else if showDashboard}
   <Dashboard />
