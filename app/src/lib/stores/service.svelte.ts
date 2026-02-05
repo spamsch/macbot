@@ -24,9 +24,10 @@ class ServiceStore {
       const args = verbose ? "start --verbose" : "start";
 
       // AppleScript to open Terminal, resize it, and run the command
+      // Show startup message before running the command
       const script = `
         tell application "Terminal"
-          set newWindow to do script "clear && \\"${sonPath}\\" ${args}"
+          set newWindow to do script "clear && echo 'Starting Son of Simon... takes a minute' && \\"${sonPath}\\" ${args}"
           activate
           set bounds of front window to {100, 100, 1100, 700}
         end tell

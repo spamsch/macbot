@@ -1,7 +1,9 @@
 <script lang="ts">
   import { Button } from "$lib/components/ui";
+  import { SkillsList, SkillDetail, SkillEditor } from "$lib/components/skills";
   import { serviceStore } from "$lib/stores/service.svelte";
   import { onboardingStore } from "$lib/stores/onboarding.svelte";
+  import { skillsStore, type Skill } from "$lib/stores/skills.svelte";
   import { invoke } from "@tauri-apps/api/core";
   import { getVersion } from "@tauri-apps/api/app";
   import { Command } from "@tauri-apps/plugin-shell";
@@ -19,9 +21,13 @@
     Info,
     Terminal,
     ExternalLink,
+    Zap,
   } from "lucide-svelte";
 
   let showSettings = $state(false);
+  let showSkills = $state(false);
+  let selectedSkill = $state<Skill | null>(null);
+  let editingSkill = $state<Skill | null>(null);
   let config = $state<Record<string, string>>({});
   let loading = $state(true);
   let starting = $state(false);
@@ -86,6 +92,48 @@
 
   function toggleSettings() {
     showSettings = !showSettings;
+  }
+
+  function toggleSkills() {
+    showSkills = !showSkills;
+    selectedSkill = null;
+    editingSkill = null;
+  }
+
+  function handleSkillSelect(skill: Skill) {
+    selectedSkill = skill;
+    editingSkill = null;
+  }
+
+  function handleSkillEdit(skill: Skill) {
+    editingSkill = skill;
+  }
+
+  function handleSkillBack() {
+    if (editingSkill) {
+      editingSkill = null;
+    } else {
+      selectedSkill = null;
+    }
+  }
+
+  function handleSkillCreate() {
+    // Create a new skill template
+    const newSkill: Skill = {
+      id: "my_new_skill",
+      name: "My New Skill",
+      description: "Description of what this skill helps with",
+      enabled: true,
+      is_builtin: false,
+      apps: [],
+      tasks: [],
+      examples: [],
+      safe_defaults: {},
+      confirm_before_write: [],
+      source_path: null,
+    };
+    editingSkill = newSkill;
+    selectedSkill = null;
   }
 
   function maskApiKey(key: string): string {
@@ -262,11 +310,17 @@
       </div>
     {/if}
 
-    <!-- Settings Button -->
-    <Button variant="ghost" size="sm" onclick={toggleSettings}>
-      <Settings class="w-4 h-4" />
-      Settings
-    </Button>
+    <!-- Action Buttons -->
+    <div class="flex gap-3">
+      <Button variant="ghost" size="sm" onclick={toggleSkills}>
+        <Zap class="w-4 h-4" />
+        Skills
+      </Button>
+      <Button variant="ghost" size="sm" onclick={toggleSettings}>
+        <Settings class="w-4 h-4" />
+        Settings
+      </Button>
+    </div>
   </main>
 </div>
 
@@ -342,6 +396,70 @@
           </Button>
         </div>
       </div>
+    </div>
+  </div>
+{/if}
+
+<!-- Skills Panel (slide-in) -->
+{#if showSkills}
+  <div class="fixed inset-0 z-50">
+    <!-- Backdrop -->
+    <button
+      type="button"
+      class="absolute inset-0 bg-black/50"
+      onclick={toggleSkills}
+      onkeydown={(e) => e.key === "Escape" && toggleSkills()}
+      aria-label="Close skills"
+    ></button>
+
+    <!-- Panel -->
+    <div
+      class="absolute right-0 top-0 bottom-0 w-[520px] bg-bg-card border-l border-border overflow-y-auto"
+    >
+      {#if editingSkill}
+        <!-- Skill Editor View -->
+        <SkillEditor
+          skill={editingSkill}
+          onback={handleSkillBack}
+          onsave={() => {
+            editingSkill = null;
+            selectedSkill = null;
+          }}
+        />
+      {:else if selectedSkill}
+        <!-- Skill Detail View -->
+        <div class="p-6">
+          <SkillDetail
+            skill={selectedSkill}
+            onback={handleSkillBack}
+            onedit={handleSkillEdit}
+          />
+        </div>
+      {:else}
+        <!-- Skills List View -->
+        <div class="p-6">
+          <div class="flex items-center justify-between mb-6">
+            <h2 class="text-lg font-bold text-text">Skills</h2>
+            <button
+              type="button"
+              class="p-2 hover:bg-bg-input rounded-lg transition-colors"
+              onclick={toggleSkills}
+            >
+              &times;
+            </button>
+          </div>
+
+          <SkillsList onselect={handleSkillSelect} oncreate={handleSkillCreate} />
+
+          <div class="mt-6 p-4 bg-bg-input/50 rounded-xl">
+            <p class="text-xs text-text-muted">
+              Skills provide guidance for handling specific types of requests.
+              Custom skills require <span class="font-mono">id</span>, <span class="font-mono">name</span>, and <span class="font-mono">description</span> fields.
+              Saved to <span class="font-mono">~/.macbot/skills/</span>
+            </p>
+          </div>
+        </div>
+      {/if}
     </div>
   </div>
 {/if}
