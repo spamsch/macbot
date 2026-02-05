@@ -60,7 +60,6 @@ output/
 
 # Node.js (for Tauri app)
 node_modules/
-package-lock.json
 
 # Tauri
 app/src-tauri/target/
