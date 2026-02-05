@@ -5,7 +5,7 @@
 <h1 align="center">Son of Simon</h1>
 
 <p align="center">
-  <em>An LLM-powered agent for macOS automation. Give natural language commands, it figures out the rest.</em>
+  <em>Your personal Mac assistant. Native APIs. Telegram voice. Zero config.</em>
 </p>
 
 ---
