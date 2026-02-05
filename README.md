@@ -20,6 +20,8 @@ The tradeoff? Your accounts live in Apple's apps. But that's actually a feature:
 
 For everything else—booking restaurants, checking prices, filling forms—browser automation handles the web. A hybrid approach: native where it matters, flexible where it doesn't.
 
+Son of Simon also integrates seamlessly with Telegram. Send a voice message while you're on the go—foundation models like GPT handle audio natively, so your spoken request just works. No extra transcription step, no friction.
+
 ## Features
 
 - **macOS Automation** - Control Mail, Calendar, Reminders, Notes, and Safari via natural language
