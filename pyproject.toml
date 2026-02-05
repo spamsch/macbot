@@ -51,8 +51,8 @@ dev = [
 son = "macbot.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/yourusername/macbot"
-Repository = "https://github.com/yourusername/macbot"
+Homepage = "https://github.com/spamsch/son-of-simon"
+Repository = "https://github.com/spamsch/son-of-simon"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/macbot"]
