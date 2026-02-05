@@ -3,6 +3,7 @@
   import { serviceStore } from "$lib/stores/service.svelte";
   import { onboardingStore } from "$lib/stores/onboarding.svelte";
   import { invoke } from "@tauri-apps/api/core";
+  import { getVersion } from "@tauri-apps/api/app";
   import { Command } from "@tauri-apps/plugin-shell";
   import { homeDir, join } from "@tauri-apps/api/path";
   import { onMount } from "svelte";
@@ -27,9 +28,11 @@
   let stopping = $state(false);
   let error = $state<string | null>(null);
   let verbose = $state(false);
+  let appVersion = $state("0.0.0");
 
   onMount(async () => {
     await loadConfig();
+    appVersion = await getVersion();
   });
 
   async function loadConfig() {
@@ -298,7 +301,7 @@
         <div>
           <h3 class="text-sm font-medium text-text mb-2">About</h3>
           <p class="text-sm text-text-muted">
-            Son of Simon v0.1.0<br />
+            Son of Simon v{appVersion}<br />
             AI-powered macOS automation
           </p>
         </div>
