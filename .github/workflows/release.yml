@@ -92,7 +92,6 @@ jobs:
         uses: softprops/action-gh-release@v1
         with:
           files: Son-of-Simon-*.dmg
-          draft: true
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
