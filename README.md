@@ -18,6 +18,8 @@ It helps you with everyday tasks using the apps you already have - Mail, Calenda
 
 You do not need to code. Most people just download the app, sign in, and start asking.
 
+**Core idea:** For Gmail or Office 365, OpenClaw usually needs a browser or OAuth setup. With Son of Simon you just add the account in Apple Mail/Calendar and the agent can use it.
+
 ## What it can do
 
 - Summarize your inbox and find important emails
@@ -46,8 +48,28 @@ The setup wizard will guide you through:
 - Optional Telegram setup
 
 <p align="center">
-  <img src="docs/screenshots/welcome.png" alt="Welcome" width="500">
+  <img src="docs/images/dashboard.png" alt="Dashboard" width="500">
 </p>
+
+## Skills
+
+Skills provide guidance for handling specific types of requests. Son of Simon comes with built-in skills for Mail, Calendar, Reminders, Notes, Safari, and Browser Automation. You can enable or disable skills, customize built-in ones, or create your own.
+
+<p align="center">
+  <img src="docs/images/skills-list.png" alt="Skills List" width="500">
+</p>
+
+Each skill defines:
+- Which apps and tasks it uses
+- Example prompts that trigger it
+- Safe defaults to prevent mistakes
+- Actions that require your confirmation
+
+<p align="center">
+  <img src="docs/images/skill-detail.png" alt="Skill Detail" width="500">
+</p>
+
+Custom skills are saved to `~/.macbot/skills/` and require `id`, `name`, and `description` fields.
 
 ## Requirements
 
@@ -67,6 +89,7 @@ The setup wizard will guide you through:
 
 - **OpenClaw** is cross-platform and connects many messaging apps.
 - **Son of Simon** is Mac-first and works directly with built-in Apple apps.
+- **Gmail/Office 365**: With OpenClaw you typically need a browser flow or OAuth setup. With Son of Simon you just add Gmail or Office 365 in Apple Mail/Calendar, and the agent can use them.
 - **OpenClaw** runs a gateway with extra setup. **Son of Simon** is a single app with a guided setup.
 - **OpenClaw** has a broader skills ecosystem. **Son of Simon** keeps tasks built-in and local by default.
 
