@@ -76,6 +76,25 @@ class MacbotService:
         self._running = False
         self._tasks: list[asyncio.Task] = []
 
+    def reload_skills(self) -> None:
+        """Reload skills from disk for all agents.
+
+        Called via SIGHUP signal when skills are added/modified.
+        """
+        logger.info("Reloading skills...")
+
+        # Reload the main agent's skills registry
+        self.agent.skills_registry.reload()
+
+        # Reload skills for all chat agents
+        for chat_id, agent in self._chat_agents.items():
+            agent.skills_registry.reload()
+            logger.debug(f"Reloaded skills for chat {chat_id}")
+
+        skill_count = len(self.agent.skills_registry)
+        enabled_count = len(self.agent.skills_registry.list_enabled_skills())
+        logger.info(f"Skills reloaded: {enabled_count}/{skill_count} enabled")
+
     def _get_chat_agent(self, chat_id: str) -> Agent:
         """Get or create an agent for a specific chat.
 
@@ -393,6 +412,11 @@ class MacbotService:
             stdin_reader: Whether to read queries from stdin (GUI/foreground mode)
         """
         self._running = True
+
+        # Set up SIGHUP handler for skills reload
+        loop = asyncio.get_event_loop()
+        loop.add_signal_handler(signal.SIGHUP, self.reload_skills)
+        logger.debug("SIGHUP handler registered for skills reload")
 
         has_cron = self._setup_cron()
         has_telegram = self._setup_telegram()

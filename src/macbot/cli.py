@@ -2145,6 +2145,185 @@ def cmd_memory_clear(args: argparse.Namespace) -> None:
     console.print(f"[green]Cleared all memory ({result['total']} records)[/green]")
 
 
+# Skills commands
+def cmd_skills_list(args: argparse.Namespace) -> None:
+    """List all registered skills."""
+    import json as json_module
+
+    from macbot.skills import SkillsRegistry
+
+    registry = SkillsRegistry()
+    skills = registry.list_skills()
+
+    if getattr(args, "json", False):
+        # JSON output for dashboard integration
+        output = []
+        for skill in skills:
+            output.append({
+                "id": skill.id,
+                "name": skill.name,
+                "description": skill.description,
+                "enabled": skill.enabled,
+                "is_builtin": skill.is_builtin,
+                "apps": skill.apps,
+                "tasks": skill.tasks,
+                "examples": skill.examples,
+                "safe_defaults": skill.safe_defaults,
+                "confirm_before_write": skill.confirm_before_write,
+                "source_path": str(skill.source_path) if skill.source_path else None,
+            })
+        print(json_module.dumps(output, indent=2))
+        return
+
+    if not skills:
+        console.print("[yellow]No skills found[/yellow]")
+        console.print("[dim]Skills directory: ~/.macbot/skills/[/dim]")
+        return
+
+    # Display skills as a table
+    table = Table(title=f"Skills ({len(skills)})")
+    table.add_column("ID", style="cyan")
+    table.add_column("Name", style="white")
+    table.add_column("Status", style="green")
+    table.add_column("Apps", style="yellow")
+    table.add_column("Source", style="dim")
+
+    for skill in sorted(skills, key=lambda s: s.name):
+        status = "✓ Enabled" if skill.enabled else "✗ Disabled"
+        status_style = "green" if skill.enabled else "red"
+        apps = ", ".join(skill.apps[:3]) if skill.apps else "-"
+        source = "built-in" if skill.is_builtin else "user"
+
+        table.add_row(
+            skill.id,
+            skill.name,
+            f"[{status_style}]{status}[/{status_style}]",
+            apps,
+            source,
+        )
+
+    console.print(table)
+
+
+def cmd_skills_show(args: argparse.Namespace) -> None:
+    """Show details of a specific skill."""
+    import json as json_module
+
+    from macbot.skills import SkillsRegistry
+
+    registry = SkillsRegistry()
+    skill = registry.get(args.skill_id)
+
+    if not skill:
+        console.print(f"[red]Skill not found:[/red] {args.skill_id}")
+        console.print("\nAvailable skills:")
+        for s in registry.list_skills():
+            console.print(f"  - {s.id}")
+        sys.exit(1)
+
+    if getattr(args, "json", False):
+        output = {
+            "id": skill.id,
+            "name": skill.name,
+            "description": skill.description,
+            "enabled": skill.enabled,
+            "is_builtin": skill.is_builtin,
+            "apps": skill.apps,
+            "tasks": skill.tasks,
+            "examples": skill.examples,
+            "safe_defaults": skill.safe_defaults,
+            "confirm_before_write": skill.confirm_before_write,
+            "requires_permissions": skill.requires_permissions,
+            "body": skill.body,
+            "source_path": str(skill.source_path) if skill.source_path else None,
+        }
+        print(json_module.dumps(output, indent=2))
+        return
+
+    # Display detailed skill info
+    console.print(f"\n[bold]{skill.name}[/bold] ({skill.id})")
+    console.print(f"[dim]{skill.description}[/dim]\n")
+
+    status = "[green]Enabled[/green]" if skill.enabled else "[red]Disabled[/red]"
+    source = "[dim]built-in[/dim]" if skill.is_builtin else "[cyan]user[/cyan]"
+    console.print(f"Status: {status}  |  Source: {source}")
+
+    if skill.source_path:
+        console.print(f"[dim]Path: {skill.source_path}[/dim]")
+
+    if skill.apps:
+        console.print(f"\n[bold]Apps:[/bold] {', '.join(skill.apps)}")
+
+    if skill.tasks:
+        console.print(f"[bold]Tasks:[/bold] {', '.join(skill.tasks)}")
+
+    if skill.examples:
+        console.print("\n[bold]Examples:[/bold]")
+        for example in skill.examples[:5]:
+            console.print(f"  • \"{example}\"")
+
+    if skill.safe_defaults:
+        console.print("\n[bold]Safe Defaults:[/bold]")
+        for key, value in skill.safe_defaults.items():
+            console.print(f"  {key}: {value}")
+
+    if skill.confirm_before_write:
+        console.print("\n[bold]Requires Confirmation:[/bold]")
+        for action in skill.confirm_before_write:
+            console.print(f"  • {action}")
+
+    if skill.body:
+        console.print("\n[bold]Behavior Notes:[/bold]")
+        console.print(Markdown(skill.body))
+
+
+def cmd_skills_enable(args: argparse.Namespace) -> None:
+    """Enable a skill."""
+    from macbot.skills import SkillsRegistry
+
+    registry = SkillsRegistry()
+
+    if registry.enable(args.skill_id):
+        console.print(f"[green]Enabled skill:[/green] {args.skill_id}")
+    else:
+        console.print(f"[red]Skill not found:[/red] {args.skill_id}")
+        sys.exit(1)
+
+
+def cmd_skills_disable(args: argparse.Namespace) -> None:
+    """Disable a skill."""
+    from macbot.skills import SkillsRegistry
+
+    registry = SkillsRegistry()
+
+    if registry.disable(args.skill_id):
+        console.print(f"[yellow]Disabled skill:[/yellow] {args.skill_id}")
+    else:
+        console.print(f"[red]Skill not found:[/red] {args.skill_id}")
+        sys.exit(1)
+
+
+def cmd_skills_reload(args: argparse.Namespace) -> None:
+    """Reload skills in the running service."""
+    from macbot.service import get_service_pid
+
+    pid = get_service_pid()
+    if pid is None:
+        console.print("[yellow]No running service found.[/yellow]")
+        console.print("Skills will be loaded fresh on next service start.")
+        return
+
+    try:
+        os.kill(pid, signal.SIGHUP)
+        console.print(f"[green]Sent reload signal to service (PID {pid})[/green]")
+    except ProcessLookupError:
+        console.print("[red]Service process not found.[/red]")
+        sys.exit(1)
+    except PermissionError:
+        console.print("[red]Permission denied sending signal.[/red]")
+        sys.exit(1)
+
+
 # Telegram commands
 TELEGRAM_PID_FILE = MACBOT_DIR / "telegram.pid"
 TELEGRAM_LOG_FILE = MACBOT_DIR / "telegram.log"
@@ -2443,6 +2622,7 @@ def main() -> NoReturn:
   chat         Interactive chat with the agent
   task         Execute a task directly (no LLM)
   tasks        List available tasks
+  skills       Manage agent skills
   cron         Manage scheduled jobs
   memory       Manage agent memory
   telegram     Telegram bot commands
@@ -2892,6 +3072,87 @@ Example:
     )
     memory_clear.set_defaults(func=cmd_memory_clear)
 
+    # Skills command group
+    skills_parser = subparsers.add_parser(
+        "skills",
+        help=argparse.SUPPRESS,  # Admin command
+        description="Manage agent skills that provide declarative guidance "
+                    "for handling specific types of requests.",
+        epilog="""Skills provide:
+  - Examples of how to handle requests
+  - Safe parameter defaults
+  - Confirmation rules before destructive actions
+
+Skills are loaded from:
+  - Built-in: skills/ directory in the app
+  - User: ~/.macbot/skills/
+
+Examples:
+  macbot skills                  List all skills
+  macbot skills show mail        Show details of mail skill
+  macbot skills disable mail     Disable mail skill
+  macbot skills enable mail      Enable mail skill"""
+    )
+    skills_subparsers = skills_parser.add_subparsers(dest="skills_command", metavar="SUBCOMMAND")
+
+    # skills list (default when no subcommand)
+    skills_list = skills_subparsers.add_parser(
+        "list",
+        help="List all skills with status"
+    )
+    skills_list.add_argument(
+        "--json", action="store_true",
+        help="Output as JSON (for dashboard integration)"
+    )
+    skills_list.set_defaults(func=cmd_skills_list)
+
+    # skills show
+    skills_show = skills_subparsers.add_parser(
+        "show",
+        help="Show details of a specific skill",
+        description="Display full details of a skill including examples and behavior notes."
+    )
+    skills_show.add_argument(
+        "skill_id",
+        help="Skill ID to show"
+    )
+    skills_show.add_argument(
+        "--json", action="store_true",
+        help="Output as JSON (for dashboard integration)"
+    )
+    skills_show.set_defaults(func=cmd_skills_show)
+
+    # skills enable
+    skills_enable = skills_subparsers.add_parser(
+        "enable",
+        help="Enable a skill"
+    )
+    skills_enable.add_argument(
+        "skill_id",
+        help="Skill ID to enable"
+    )
+    skills_enable.set_defaults(func=cmd_skills_enable)
+
+    # skills disable
+    skills_disable = skills_subparsers.add_parser(
+        "disable",
+        help="Disable a skill"
+    )
+    skills_disable.add_argument(
+        "skill_id",
+        help="Skill ID to disable"
+    )
+    skills_disable.set_defaults(func=cmd_skills_disable)
+
+    # skills reload
+    skills_reload = skills_subparsers.add_parser(
+        "reload",
+        help="Reload skills in running service",
+        description="Signal the running service to reload skills from disk. "
+                    "Use this after creating or modifying skills."
+    )
+    skills_reload.set_defaults(func=cmd_skills_reload)
+
     # Telegram command group
     telegram_parser = subparsers.add_parser(
         "telegram",
@@ -2993,6 +3254,12 @@ Examples:
     # Handle memory subcommands
     if args.command == "memory" and args.memory_command is None:
         memory_parser.print_help()
+        sys.exit(0)
+
+    # Handle skills subcommands - default to list when no subcommand
+    if args.command == "skills" and args.skills_command is None:
+        # Default to list command
+        cmd_skills_list(args)
         sys.exit(0)
 
     # Handle telegram subcommands
