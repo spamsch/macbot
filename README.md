@@ -30,19 +30,23 @@ Son of Simon also integrates seamlessly with Telegram. Send a voice message whil
 
 ### How is this different from OpenClaw?
 
-[OpenClaw](https://github.com/openclaw/openclaw) is an excellent multi-platform AI assistant with a gateway-based architecture. Son of Simon differs in a few key ways:
+[OpenClaw](https://github.com/openclaw/openclaw) is a multi-platform AI assistant. Son of Simon takes a fundamentally different approach:
 
-| Aspect | Son of Simon | OpenClaw |
-|--------|--------------|----------|
-| **macOS automation** | Native AppleScript via official APIs | Gateway + accessibility APIs |
-| **Focus** | macOS-first, deep native integration | Cross-platform (macOS, Linux, Windows) |
-| **Architecture** | Simple CLI + optional GUI | WebSocket gateway with node pairing |
-| **Messaging** | Telegram only | WhatsApp, Telegram, Slack, Discord, etc. |
-| **Setup** | Download app or `pip install` | Node.js + gateway configuration |
+**Native APIs, not accessibility hacks.** Son of Simon talks directly to Mail, Calendar, Reminders, Notes, and Safari through Apple's official scripting architecture. No screen scraping. No pixel hunting. No accessibility permission nightmares. Your agent reads email content, calendar details, and reminder metadata through the same APIs Apple's own apps use. It's **fast**, **reliable**, and works even when apps are hidden or minimized.
 
-**Why AppleScript matters**: Apple's scripting architecture provides direct access to app internals—Mail message content, Calendar event details, Reminder metadata—without screen scraping or accessibility hacks. This means faster execution, more reliable results, and operations that work even when apps are hidden or minimized.
+**Zero-config setup.** Download the app. Run it. Done. No Node.js runtime. No WebSocket gateways. No "pairing modes" or Docker containers. Son of Simon is a single app that just works.
 
-If you need multi-platform support or broad messaging integration, OpenClaw is a great choice. If you want deep, reliable macOS automation with minimal setup, Son of Simon is built for that.
+**Telegram with voice—your agent in your pocket.** Send a voice message while walking the dog. Son of Simon transcribes it and gets to work. Ask follow-up questions. Get responses with full conversation context. It's like having a personal assistant that actually understands what you asked five minutes ago.
+
+| | Son of Simon | OpenClaw |
+|---|---|---|
+| **Setup** | Download app → Run | Node.js + gateway + pairing + config |
+| **macOS automation** | Native AppleScript APIs | Accessibility APIs + screen scraping |
+| **Speed** | Instant (direct API calls) | Slower (gateway overhead) |
+| **Reliability** | Works with hidden windows | Needs visible UI elements |
+| **Remote access** | Telegram with voice | Multiple platforms, text only |
+
+OpenClaw tries to do everything on every platform. Son of Simon does one thing exceptionally well: **make your Mac work for you**.
 
 ## Features
 
