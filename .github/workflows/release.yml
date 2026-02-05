@@ -31,7 +31,7 @@ jobs:
           node-version: '20'
 
       - name: Setup Rust
-        uses: dtolnay/rust-action@stable
+        uses: dtolnay/rust-toolchain@stable
 
       - name: Install Rust targets
         run: |
@@ -93,7 +93,7 @@ jobs:
 
   # Optional: Build for Intel Macs
   build-macos-intel:
-    runs-on: macos-13  # Intel runner
+    runs-on: macos-15  # Intel runner (cross-compile from ARM)
     permissions:
       contents: write
 
@@ -112,7 +112,7 @@ jobs:
           node-version: '20'
 
       - name: Setup Rust
-        uses: dtolnay/rust-action@stable
+        uses: dtolnay/rust-toolchain@stable
 
       - name: Install Python dependencies
         run: |

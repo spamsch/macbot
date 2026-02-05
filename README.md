@@ -28,6 +28,22 @@ For everything else—booking restaurants, checking prices, filling forms—brow
 
 Son of Simon also integrates seamlessly with Telegram. Send a voice message while you're on the go—foundation models like GPT handle audio natively, so your spoken request just works. No extra transcription step, no friction.
 
+### How is this different from OpenClaw?
+
+[OpenClaw](https://github.com/openclaw/openclaw) is an excellent multi-platform AI assistant with a gateway-based architecture. Son of Simon differs in a few key ways:
+
+| Aspect | Son of Simon | OpenClaw |
+|--------|--------------|----------|
+| **macOS automation** | Native AppleScript via official APIs | Gateway + accessibility APIs |
+| **Focus** | macOS-first, deep native integration | Cross-platform (macOS, Linux, Windows) |
+| **Architecture** | Simple CLI + optional GUI | WebSocket gateway with node pairing |
+| **Messaging** | Telegram only | WhatsApp, Telegram, Slack, Discord, etc. |
+| **Setup** | Download app or `pip install` | Node.js + gateway configuration |
+
+**Why AppleScript matters**: Apple's scripting architecture provides direct access to app internals—Mail message content, Calendar event details, Reminder metadata—without screen scraping or accessibility hacks. This means faster execution, more reliable results, and operations that work even when apps are hidden or minimized.
+
+If you need multi-platform support or broad messaging integration, OpenClaw is a great choice. If you want deep, reliable macOS automation with minimal setup, Son of Simon is built for that.
+
 ## Features
 
 - **macOS Automation** - Control Mail, Calendar, Reminders, Notes, and Safari via natural language
@@ -56,7 +72,26 @@ Son of Simon also integrates seamlessly with Telegram. Send a voice message whil
 
 **"Just talk to it"** — Send a voice message via Telegram while you're on the go. Son of Simon transcribes it and gets to work.
 
-## Prerequisites
+## Installation
+
+The easiest way to get started is to download the app:
+
+1. **Download** the latest `.dmg` from [Releases](https://github.com/spamsch/macbot/releases)
+2. **Drag** Son of Simon to your Applications folder
+3. **Launch** the app and follow the onboarding wizard
+
+The app bundles everything you need—no Python, no dependencies, no terminal commands. The onboarding wizard will guide you through:
+- Setting up your LLM provider (OpenAI, Anthropic, etc.)
+- Granting macOS automation permissions
+- Optionally configuring Telegram for remote access
+
+<p align="center">
+  <img src="docs/screenshots/welcome.png" alt="Welcome" width="500">
+</p>
+
+## Prerequisites (Development)
+
+> **Note:** These prerequisites are only needed if you're running Son of Simon from this repository. If you downloaded the app, skip to [Use Cases](#use-cases).
 
 - **macOS** — Son of Simon uses AppleScript to control native apps
 - **Python 3.10+** — Required for the runtime
@@ -68,7 +103,7 @@ Son of Simon also integrates seamlessly with Telegram. Send a voice message whil
 - **Telegram bot** — For remote access via text or voice ([create one with @BotFather](https://t.me/BotFather))
 - **Paperless-ngx** — For document search and management
 
-## Quick Start
+## Quick Start (Development)
 
 ```bash
 # Install
