@@ -48,7 +48,7 @@ dev = [
 ]
 
 [project.scripts]
-macbot = "macbot.cli:main"
+son = "macbot.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/yourusername/macbot"
