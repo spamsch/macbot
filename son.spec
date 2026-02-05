@@ -17,24 +17,49 @@ from pathlib import Path
 # Get the project root
 project_root = Path(SPECPATH)
 
+# Dynamically find package locations (works in venv and system Python)
+import litellm
+import rich
+
+litellm_path = Path(litellm.__file__).parent
+rich_path = Path(rich.__file__).parent
+
+# Build datas list dynamically
+datas = [
+    # Include macos-automation scripts
+    ('macos-automation', 'macos-automation'),
+]
+
+# Add litellm data files if they exist
+litellm_data_paths = [
+    ('litellm_core_utils/tokenizers', 'litellm/litellm_core_utils/tokenizers'),
+    ('containers', 'litellm/containers'),
+    ('llms/openai_like', 'litellm/llms/openai_like'),
+    ('integrations', 'litellm/integrations'),
+    ('proxy', 'litellm/proxy'),
+]
+
+for src_rel, dest in litellm_data_paths:
+    src_path = litellm_path / src_rel
+    if src_path.exists():
+        datas.append((str(src_path), dest))
+
+# Add litellm JSON files
+for json_file in ['cost.json', 'model_prices_and_context_window_backup.json']:
+    src_path = litellm_path / json_file
+    if src_path.exists():
+        datas.append((str(src_path), 'litellm'))
+
+# Add rich unicode data if it exists
+rich_unicode_path = rich_path / '_unicode_data'
+if rich_unicode_path.exists():
+    datas.append((str(rich_unicode_path), 'rich/_unicode_data'))
+
 a = Analysis(
     ['src/macbot/cli.py'],
     pathex=[str(project_root)],
     binaries=[],
-    datas=[
-        # Include macos-automation scripts
-        ('macos-automation', 'macos-automation'),
-        # Include ALL litellm data files (tokenizers, cost tables, endpoints, etc.)
-        ('.venv-mac/lib/python3.14/site-packages/litellm/litellm_core_utils/tokenizers', 'litellm/litellm_core_utils/tokenizers'),
-        ('.venv-mac/lib/python3.14/site-packages/litellm/containers', 'litellm/containers'),
-        ('.venv-mac/lib/python3.14/site-packages/litellm/llms/openai_like', 'litellm/llms/openai_like'),
-        ('.venv-mac/lib/python3.14/site-packages/litellm/integrations', 'litellm/integrations'),
-        ('.venv-mac/lib/python3.14/site-packages/litellm/proxy', 'litellm/proxy'),
-        ('.venv-mac/lib/python3.14/site-packages/litellm/cost.json', 'litellm'),
-        ('.venv-mac/lib/python3.14/site-packages/litellm/model_prices_and_context_window_backup.json', 'litellm'),
-        # Include rich unicode data (modules with hyphens in names need to be data files)
-        ('.venv-mac/lib/python3.14/site-packages/rich/_unicode_data', 'rich/_unicode_data'),
-    ],
+    datas=datas,
     hiddenimports=[
         # Ensure all macbot modules are included
         'macbot',
