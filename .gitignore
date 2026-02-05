@@ -57,3 +57,12 @@ Thumbs.db
 # Project specific
 *.log
 output/
+
+# Node.js (for Tauri app)
+node_modules/
+package-lock.json
+
+# Tauri
+app/src-tauri/target/
+app/.svelte-kit/
+app/build/
