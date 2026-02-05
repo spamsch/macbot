@@ -36,24 +36,62 @@ npm run tauri build
 
 echo ""
 echo "=========================================="
+echo "Verifying Build"
+echo "=========================================="
+
+# Verify binaries are in place
+case "$(uname -s)" in
+    Darwin)
+        APP_BUNDLE="$APP_DIR/src-tauri/target/release/bundle/macos/Son of Simon.app"
+        MACOS_DIR="$APP_BUNDLE/Contents/MacOS"
+
+        echo "Checking binaries in $MACOS_DIR..."
+
+        # Check main executable
+        if [ -f "$MACOS_DIR/son-of-simon" ]; then
+            echo "  ✓ Main executable: son-of-simon ($(du -h "$MACOS_DIR/son-of-simon" | cut -f1))"
+        else
+            echo "  ✗ ERROR: Main executable not found!"
+            exit 1
+        fi
+
+        # Check sidecar
+        if [ -f "$MACOS_DIR/son" ]; then
+            echo "  ✓ Sidecar binary: son ($(du -h "$MACOS_DIR/son" | cut -f1))"
+        else
+            echo "  ✗ ERROR: Sidecar binary 'son' not found!"
+            echo "    Expected at: $MACOS_DIR/son"
+            echo "    Run ./scripts/build-sidecar.sh first"
+            exit 1
+        fi
+
+        # Verify sidecar is executable
+        if [ -x "$MACOS_DIR/son" ]; then
+            echo "  ✓ Sidecar is executable"
+        else
+            echo "  ✗ WARNING: Sidecar is not executable"
+        fi
+
+        BUNDLE_DIR="$APP_DIR/src-tauri/target/release/bundle/macos"
+        ;;
+    Linux)
+        BUNDLE_DIR="$APP_DIR/src-tauri/target/release/bundle"
+        echo "Linux build verification not implemented"
+        ;;
+esac
+
+echo ""
+echo "=========================================="
 echo "Build complete!"
 echo "=========================================="
 echo ""
 echo "The app bundle is located at:"
+ls -la "$BUNDLE_DIR"
+echo ""
 
-# Find the built app
 case "$(uname -s)" in
     Darwin)
-        BUNDLE_DIR="$APP_DIR/src-tauri/target/release/bundle/macos"
-        if [ -d "$BUNDLE_DIR" ]; then
-            ls -la "$BUNDLE_DIR"
-        fi
-        echo ""
         echo "To create a DMG, run:"
         echo "  $SCRIPT_DIR/create-dmg.sh"
-        ;;
-    Linux)
-        BUNDLE_DIR="$APP_DIR/src-tauri/target/release/bundle"
-        ls -la "$BUNDLE_DIR"
         ;;
 esac

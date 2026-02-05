@@ -8,6 +8,12 @@
   <em>An LLM-powered agent for macOS automation. Give natural language commands, it figures out the rest.</em>
 </p>
 
+<p align="center">
+  <img src="docs/screenshots/welcome.png" alt="Welcome Screen" width="400">
+  &nbsp;&nbsp;
+  <img src="docs/screenshots/dashboard.png" alt="Dashboard" width="400">
+</p>
+
 ---
 
 ## Why Son of Simon?
