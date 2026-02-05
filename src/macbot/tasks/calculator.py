@@ -35,7 +35,9 @@ class CalculatorTask(Task):
         Returns:
             Sum of all numbers.
         """
-        return sum(numbers)
+        # Convert strings to floats (LLM may send strings)
+        nums = [float(n) for n in numbers]
+        return sum(nums)
 
 
 # Auto-register on import

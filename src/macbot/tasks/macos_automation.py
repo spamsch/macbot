@@ -8,14 +8,21 @@ These tasks wrap the shell scripts in /workspace/macos-automation/.
 
 import asyncio
 import os
+import sys
 from typing import Any
 
 from macbot.tasks.base import Task
 
 # Base path to the automation scripts
-# Compute relative to the package location (src/macbot -> project_root/macos-automation)
-_PACKAGE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-SCRIPTS_BASE = os.path.join(_PACKAGE_DIR, "macos-automation")
+# When running from PyInstaller bundle, use sys._MEIPASS
+# Otherwise, compute relative to the package location
+if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+    # Running from PyInstaller bundle
+    SCRIPTS_BASE = os.path.join(sys._MEIPASS, "macos-automation")
+else:
+    # Running from source
+    _PACKAGE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+    SCRIPTS_BASE = os.path.join(_PACKAGE_DIR, "macos-automation")
 
 
 async def run_script(script_path: str, args: list[str] | None = None, timeout: int = 30) -> dict[str, Any]:

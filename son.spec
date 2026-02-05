@@ -24,6 +24,16 @@ a = Analysis(
     datas=[
         # Include macos-automation scripts
         ('macos-automation', 'macos-automation'),
+        # Include ALL litellm data files (tokenizers, cost tables, endpoints, etc.)
+        ('.venv-mac/lib/python3.14/site-packages/litellm/litellm_core_utils/tokenizers', 'litellm/litellm_core_utils/tokenizers'),
+        ('.venv-mac/lib/python3.14/site-packages/litellm/containers', 'litellm/containers'),
+        ('.venv-mac/lib/python3.14/site-packages/litellm/llms/openai_like', 'litellm/llms/openai_like'),
+        ('.venv-mac/lib/python3.14/site-packages/litellm/integrations', 'litellm/integrations'),
+        ('.venv-mac/lib/python3.14/site-packages/litellm/proxy', 'litellm/proxy'),
+        ('.venv-mac/lib/python3.14/site-packages/litellm/cost.json', 'litellm'),
+        ('.venv-mac/lib/python3.14/site-packages/litellm/model_prices_and_context_window_backup.json', 'litellm'),
+        # Include rich unicode data (modules with hyphens in names need to be data files)
+        ('.venv-mac/lib/python3.14/site-packages/rich/_unicode_data', 'rich/_unicode_data'),
     ],
     hiddenimports=[
         # Ensure all macbot modules are included
@@ -69,6 +79,12 @@ a = Analysis(
         'anthropic',
         'openai',
         'litellm',
+        'litellm.litellm_core_utils',
+        'litellm.litellm_core_utils.tokenizers',
+        'litellm.litellm_core_utils.llm_cost_calc',
+        'litellm.llms',
+        'litellm.llms.anthropic',
+        'litellm.llms.openai',
         'rich',
         'yaml',
         'pydantic',
@@ -76,6 +92,9 @@ a = Analysis(
         'croniter',
         'apscheduler',
         'telegram',
+        'tiktoken',
+        'tiktoken_ext',
+        'tiktoken_ext.openai_public',
     ],
     hookspath=[],
     hooksconfig={},
