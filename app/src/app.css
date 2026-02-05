@@ -1,18 +1,18 @@
 @import "tailwindcss";
 
-/* Custom design tokens - Light theme for native macOS feel */
+/* Custom design tokens - Light theme matching logo colors */
 @theme {
-  --color-primary: #007aff;
-  --color-primary-hover: #0056b3;
+  --color-primary: #00b4d8;
+  --color-primary-hover: #0096c7;
   --color-success: #34c759;
   --color-warning: #ff9500;
   --color-error: #ff3b30;
   --color-bg: #ffffff;
-  --color-bg-card: #f5f5f7;
+  --color-bg-card: #f8f9fa;
   --color-bg-input: #ffffff;
-  --color-text: #1d1d1f;
-  --color-text-muted: #86868b;
-  --color-border: #d2d2d7;
+  --color-text: #1a1a2e;
+  --color-text-muted: #6c757d;
+  --color-border: #dee2e6;
 }
 
 /* Base styles */

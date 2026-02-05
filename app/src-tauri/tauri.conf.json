@@ -14,11 +14,11 @@
       {
         "title": "Son of Simon",
         "width": 800,
-        "height": 720,
+        "height": 820,
         "resizable": true,
         "center": true,
         "minWidth": 700,
-        "minHeight": 640
+        "minHeight": 720
       }
     ],
     "security": {
