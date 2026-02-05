@@ -91,8 +91,12 @@ jobs:
         run: |
           if [ -n "${{ github.event.inputs.version }}" ]; then
             echo "version=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
-          else
+          elif [[ "$GITHUB_REF" == refs/tags/v* ]]; then
             echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+          else
+            # Fallback: read from tauri.conf.json
+            VERSION=$(grep -o '"version": "[^"]*"' app/src-tauri/tauri.conf.json | head -1 | cut -d'"' -f4)
+            echo "version=$VERSION" >> $GITHUB_OUTPUT
           fi
 
       - name: Rename DMG
