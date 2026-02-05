@@ -2,10 +2,11 @@
 # Release script for Son of Simon
 #
 # Usage:
-#   ./scripts/release.sh patch    # 0.1.0 -> 0.1.1
-#   ./scripts/release.sh minor    # 0.1.0 -> 0.2.0
-#   ./scripts/release.sh major    # 0.1.0 -> 1.0.0
-#   ./scripts/release.sh 0.2.0    # Set specific version
+#   ./scripts/release.sh patch                    # 0.1.0 -> 0.1.1
+#   ./scripts/release.sh minor                    # 0.1.0 -> 0.2.0
+#   ./scripts/release.sh major                    # 0.1.0 -> 1.0.0
+#   ./scripts/release.sh 0.2.0                    # Set specific version
+#   ./scripts/release.sh patch "Custom message"   # With custom commit message
 
 set -e
 
@@ -52,6 +53,10 @@ case "${1:-patch}" in
 esac
 
 echo -e "${GREEN}New version: ${NC}$NEW_VERSION"
+
+# Custom commit message (optional second argument)
+COMMIT_MSG="${2:-Release version $NEW_VERSION}"
+echo -e "${YELLOW}Commit message: ${NC}$COMMIT_MSG"
 echo ""
 
 # Confirm
@@ -89,8 +94,8 @@ echo "Committing changes..."
 echo "=========================================="
 
 git add pyproject.toml app/src-tauri/tauri.conf.json app/package.json app/src-tauri/Cargo.toml
-git commit --no-gpg-sign -m "Bump version to $NEW_VERSION"
-echo "  ✓ Committed version bump"
+git commit --no-gpg-sign -m "$COMMIT_MSG"
+echo "  ✓ Committed: $COMMIT_MSG"
 
 echo ""
 echo "=========================================="
