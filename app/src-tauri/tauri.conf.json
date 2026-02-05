@@ -14,7 +14,7 @@
       {
         "title": "Son of Simon",
         "width": 800,
-        "height": 920,
+        "height": 1024,
         "resizable": true,
         "center": true,
         "minWidth": 700,
@@ -28,6 +28,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "externalBin": ["binaries/son"],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

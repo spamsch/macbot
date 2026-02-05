@@ -67,7 +67,7 @@ impl Default for OnboardingState {
                     automation,
                 },
                 api_key: ApiKeyData {
-                    provider: "anthropic".to_string(),
+                    provider: "openai".to_string(),
                     configured: false,
                     verified: false,
                 },
@@ -150,6 +150,19 @@ fn open_system_preferences(pane: String) -> Result<(), String> {
     Ok(())
 }
 
+// Check if accessibility permission is granted for THIS app
+#[tauri::command]
+fn check_accessibility_permission() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        macos_accessibility_client::accessibility::application_is_trusted()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        true // Non-macOS platforms don't need this check
+    }
+}
+
 // Get service running state
 #[tauri::command]
 fn get_service_state(state: tauri::State<'_, Mutex<ServiceState>>) -> bool {
@@ -175,6 +188,7 @@ pub fn run() {
             read_config,
             write_config,
             open_system_preferences,
+            check_accessibility_permission,
             get_service_state,
             set_service_running,
         ])
