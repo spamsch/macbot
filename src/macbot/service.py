@@ -220,6 +220,78 @@ class MacbotService:
             return f"{count / 1000:.1f}K"
         return str(count)
 
+    async def _run_stdin_reader(self) -> None:
+        """Run stdin reader for GUI/foreground mode (non-interactive)."""
+        import sys
+        from concurrent.futures import ThreadPoolExecutor
+
+        executor = ThreadPoolExecutor(max_workers=1)
+        loop = asyncio.get_event_loop()
+
+        # Use the same agent as the primary Telegram chat for shared context
+        if settings.telegram_chat_id:
+            agent = self._get_chat_agent(settings.telegram_chat_id)
+        else:
+            agent = self.agent
+
+        def read_line():
+            try:
+                return sys.stdin.readline()
+            except Exception:
+                return None
+
+        def output(msg: str):
+            """Print and flush immediately for GUI to receive."""
+            print(msg, flush=True)
+
+        while self._running:
+            try:
+                # Read line from stdin in a thread to not block the event loop
+                line = await loop.run_in_executor(executor, read_line)
+
+                if line is None or line == "":
+                    # EOF or error
+                    await asyncio.sleep(0.1)
+                    continue
+
+                user_input = line.strip()
+                if not user_input:
+                    continue
+
+                if user_input.lower() in ("quit", "exit", "q"):
+                    output("[Stopping service...]")
+                    await self.stop()
+                    break
+
+                if user_input.lower() == "clear":
+                    agent.reset()
+                    output("[Conversation cleared]")
+                    continue
+
+                # Process query through shared agent
+                timestamp = datetime.now().strftime("%H:%M:%S")
+                output(f"[{timestamp}] Processing: {user_input[:50]}{'...' if len(user_input) > 50 else ''}")
+
+                try:
+                    result = await agent.run(user_input, stream=False, continue_conversation=True)
+
+                    # Output the response
+                    output(f"\n[{timestamp}] Response:")
+                    output(result)
+                    output("-" * 60 + "\n")
+                except Exception as e:
+                    output(f"[{timestamp}] Error: {e}\n")
+
+            except EOFError:
+                break
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"Stdin reader error: {e}")
+                await asyncio.sleep(0.1)
+
+        executor.shutdown(wait=False)
+
     async def _run_interactive(self) -> None:
         """Run interactive console input loop."""
         from concurrent.futures import ThreadPoolExecutor
@@ -313,11 +385,12 @@ class MacbotService:
 
         executor.shutdown(wait=False)
 
-    async def start(self, interactive: bool = False) -> None:
+    async def start(self, interactive: bool = False, stdin_reader: bool = False) -> None:
         """Start all configured services.
 
         Args:
-            interactive: Whether to also run an interactive input loop
+            interactive: Whether to also run an interactive input loop (CLI mode)
+            stdin_reader: Whether to read queries from stdin (GUI/foreground mode)
         """
         self._running = True
 
@@ -338,9 +411,12 @@ class MacbotService:
             else:
                 logger.error(f"Telegram token invalid: {msg}")
 
-        # Add interactive loop if requested (foreground mode)
+        # Add interactive loop if requested (CLI mode)
         if interactive:
             self._tasks.append(asyncio.create_task(self._run_interactive()))
+        # Add stdin reader for GUI/foreground mode
+        elif stdin_reader:
+            self._tasks.append(asyncio.create_task(self._run_stdin_reader()))
         elif not self._tasks:
             logger.warning("No services configured (no cron jobs, no Telegram)")
             return
@@ -423,23 +499,23 @@ def run_service(daemon: bool = False, verbose: bool = False, foreground: bool = 
 
     if not has_cron and not has_telegram:
         console.print("[yellow]Nothing to run:[/yellow]")
-        console.print("  - No cron jobs configured (use 'macbot cron import <file>')")
-        console.print("  - No Telegram configured (set MACBOT_TELEGRAM_BOT_TOKEN)")
+        console.print("  - No scheduled tasks configured")
+        console.print("  - No Telegram configured (set up in Settings)")
         return
 
     # Show what will run
-    console.print("[bold]Starting macbot service[/bold]\n")
+    console.print("[bold]Starting Son of Simon...[/bold]\n")
 
     if has_cron:
-        console.print(f"  [green]✓[/green] Cron: {status['cron']['jobs_enabled']} enabled jobs")
+        console.print(f"  [green]✓[/green] Scheduled Tasks: {status['cron']['jobs_enabled']} active")
     else:
-        console.print(f"  [dim]○[/dim] Cron: No jobs configured")
+        console.print(f"  [dim]○[/dim] Scheduled Tasks: None configured")
 
     if has_telegram:
         chat_info = f" (chat: {status['telegram']['chat_id']})" if status['telegram']['chat_id'] else ""
-        console.print(f"  [green]✓[/green] Telegram: Configured{chat_info}")
+        console.print(f"  [green]✓[/green] Telegram: Connected{chat_info}")
     else:
-        console.print(f"  [dim]○[/dim] Telegram: Not configured")
+        console.print(f"  [dim]○[/dim] Telegram: Not connected")
 
     console.print()
 
@@ -470,11 +546,11 @@ def run_service(daemon: bool = False, verbose: bool = False, foreground: bool = 
                 format="%(asctime)s %(message)s",
                 datefmt="%H:%M:%S",
             )
-            console.print("[green]✓[/green] Service started in foreground mode")
-            console.print("[dim]Press Ctrl+C to stop[/dim]")
+            console.print("[green]✓[/green] Ready! You can now send commands.")
 
             try:
-                asyncio.run(service.start(interactive=False))
+                # Enable stdin reader so GUI can send queries
+                asyncio.run(service.start(interactive=False, stdin_reader=True))
             except KeyboardInterrupt:
                 console.print("\n[dim]Stopping...[/dim]")
                 asyncio.run(service.stop())
