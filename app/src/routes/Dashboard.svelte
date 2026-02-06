@@ -4,6 +4,8 @@
   import { serviceStore } from "$lib/stores/service.svelte";
   import { onboardingStore } from "$lib/stores/onboarding.svelte";
   import { skillsStore, type Skill } from "$lib/stores/skills.svelte";
+  import { memoryStore } from "$lib/stores/memory.svelte";
+  import { heartbeatStore } from "$lib/stores/heartbeat.svelte";
   import { invoke } from "@tauri-apps/api/core";
   import { getVersion } from "@tauri-apps/api/app";
   import { Command } from "@tauri-apps/plugin-shell";
@@ -22,10 +24,14 @@
     Terminal,
     ExternalLink,
     Zap,
+    Brain,
+    Heart,
   } from "lucide-svelte";
 
   let showSettings = $state(false);
   let showSkills = $state(false);
+  let showMemory = $state(false);
+  let showHeartbeat = $state(false);
   let selectedSkill = $state<Skill | null>(null);
   let editingSkill = $state<Skill | null>(null);
   let config = $state<Record<string, string>>({});
@@ -100,6 +106,20 @@
     editingSkill = null;
   }
 
+  function toggleMemory() {
+    showMemory = !showMemory;
+    if (showMemory) {
+      memoryStore.load();
+    }
+  }
+
+  function toggleHeartbeat() {
+    showHeartbeat = !showHeartbeat;
+    if (showHeartbeat) {
+      heartbeatStore.load();
+    }
+  }
+
   function handleSkillSelect(skill: Skill) {
     selectedSkill = skill;
     editingSkill = null;
@@ -142,7 +162,12 @@
   }
 
   function getModelDisplay(model: string): string {
-    if (model.includes("gpt")) return `OpenAI (${model.split("/").pop()})`;
+    if (model.startsWith("openrouter/")) {
+      // e.g. "openrouter/deepseek/deepseek-v3.2-20251201" → "OpenRouter (deepseek-v3.2-20251201)"
+      const parts = model.split("/");
+      return `OpenRouter (${parts[parts.length - 1]})`;
+    }
+    if (model.includes("gpt") || model.includes("o4-") || model.includes("o3-")) return `OpenAI (${model.split("/").pop()})`;
     if (model.includes("claude")) return `Anthropic (${model.split("/").pop()})`;
     return model;
   }
@@ -202,6 +227,8 @@
                 {maskApiKey(config.MACBOT_OPENAI_API_KEY)}
               {:else if config.MACBOT_ANTHROPIC_API_KEY}
                 {maskApiKey(config.MACBOT_ANTHROPIC_API_KEY)}
+              {:else if config.MACBOT_OPENROUTER_API_KEY}
+                {maskApiKey(config.MACBOT_OPENROUTER_API_KEY)}
               {:else}
                 Not configured
               {/if}
@@ -315,6 +342,14 @@
       <Button variant="ghost" size="sm" onclick={toggleSkills}>
         <Zap class="w-4 h-4" />
         Skills
+      </Button>
+      <Button variant="ghost" size="sm" onclick={toggleMemory}>
+        <Brain class="w-4 h-4" />
+        Memory
+      </Button>
+      <Button variant="ghost" size="sm" onclick={toggleHeartbeat}>
+        <Heart class="w-4 h-4" />
+        Heartbeat
       </Button>
       <Button variant="ghost" size="sm" onclick={toggleSettings}>
         <Settings class="w-4 h-4" />
@@ -460,6 +495,168 @@
           </div>
         </div>
       {/if}
+    </div>
+  </div>
+{/if}
+
+<!-- Memory Panel (slide-in) -->
+{#if showMemory}
+  <div class="fixed inset-0 z-50">
+    <!-- Backdrop -->
+    <button
+      type="button"
+      class="absolute inset-0 bg-black/50"
+      onclick={toggleMemory}
+      onkeydown={(e) => e.key === "Escape" && toggleMemory()}
+      aria-label="Close memory"
+    ></button>
+
+    <!-- Panel -->
+    <div
+      class="absolute right-0 top-0 bottom-0 w-[520px] bg-bg-card border-l border-border flex flex-col"
+    >
+      <div class="flex items-center justify-between p-6 pb-0">
+        <h2 class="text-lg font-bold text-text">Memory</h2>
+        <button
+          type="button"
+          class="p-2 hover:bg-bg-input rounded-lg transition-colors"
+          onclick={toggleMemory}
+        >
+          &times;
+        </button>
+      </div>
+
+      <p class="text-xs text-text-muted px-6 pt-2">
+        Edit <span class="font-mono">~/.macbot/memory.yaml</span> — persistent context for the agent.
+      </p>
+
+      <div class="flex-1 flex flex-col p-6 gap-4 min-h-0">
+        {#if memoryStore.loading}
+          <div class="text-center text-text-muted py-8">Loading...</div>
+        {:else}
+          <textarea
+            class="flex-1 w-full bg-bg-input border border-border rounded-xl p-4 text-sm font-mono text-text resize-none focus:outline-none focus:ring-2 focus:ring-primary/50"
+            value={memoryStore.content}
+            oninput={(e) => memoryStore.setContent(e.currentTarget.value)}
+            spellcheck={false}
+          ></textarea>
+
+          <div class="flex items-center justify-between">
+            <div class="text-xs text-text-muted">
+              {#if memoryStore.saving}
+                Saving...
+              {:else if memoryStore.dirty}
+                Unsaved changes
+              {:else}
+                &nbsp;
+              {/if}
+            </div>
+            <Button
+              size="sm"
+              onclick={() => memoryStore.save()}
+              disabled={memoryStore.saving || !memoryStore.dirty}
+              loading={memoryStore.saving}
+            >
+              Save
+            </Button>
+          </div>
+
+          {#if memoryStore.error}
+            <div class="p-3 bg-error/10 border border-error/30 rounded-xl text-error text-xs">
+              {memoryStore.error}
+            </div>
+          {/if}
+        {/if}
+      </div>
+    </div>
+  </div>
+{/if}
+
+<!-- Heartbeat Panel (slide-in) -->
+{#if showHeartbeat}
+  <div class="fixed inset-0 z-50">
+    <!-- Backdrop -->
+    <button
+      type="button"
+      class="absolute inset-0 bg-black/50"
+      onclick={toggleHeartbeat}
+      onkeydown={(e) => e.key === "Escape" && toggleHeartbeat()}
+      aria-label="Close heartbeat"
+    ></button>
+
+    <!-- Panel -->
+    <div
+      class="absolute right-0 top-0 bottom-0 w-[520px] bg-bg-card border-l border-border flex flex-col"
+    >
+      <div class="flex items-center justify-between p-6 pb-0">
+        <h2 class="text-lg font-bold text-text">Heartbeat</h2>
+        <button
+          type="button"
+          class="p-2 hover:bg-bg-input rounded-lg transition-colors"
+          onclick={toggleHeartbeat}
+        >
+          &times;
+        </button>
+      </div>
+
+      <p class="text-xs text-text-muted px-6 pt-2">
+        Edit <span class="font-mono">~/.macbot/heartbeat.md</span> — this prompt runs every 30 minutes while the service is active.
+      </p>
+
+      <div class="flex-1 flex flex-col p-6 gap-4 min-h-0">
+        {#if heartbeatStore.loading}
+          <div class="text-center text-text-muted py-8">Loading...</div>
+        {:else}
+          {#if !heartbeatStore.content.trim() && !heartbeatStore.dirty}
+            <button
+              type="button"
+              class="p-3 bg-primary/5 border border-primary/20 rounded-xl text-sm text-primary hover:bg-primary/10 transition-colors text-left"
+              onclick={() => heartbeatStore.setContent(`Quick check — only report if something needs my attention, otherwise stay silent.
+
+1. Scan Mail for unread messages from the last 30 minutes. Flag anything urgent or that needs a reply today.
+2. Check Calendar for events starting in the next hour. If a meeting is coming up, note the topic and attendees.
+3. Check Reminders for items due today that are not yet completed.
+4. Look for Mail threads where I was the last sender with no reply in 3+ days — suggest a follow-up if needed.
+
+Be concise. Skip anything that's purely informational with no action required.`)}
+            >
+              Generate template prompt
+            </button>
+          {/if}
+          <textarea
+            class="flex-1 w-full bg-bg-input border border-border rounded-xl p-4 text-sm font-mono text-text resize-none focus:outline-none focus:ring-2 focus:ring-primary/50"
+            value={heartbeatStore.content}
+            oninput={(e) => heartbeatStore.setContent(e.currentTarget.value)}
+            spellcheck={false}
+          ></textarea>
+
+          <div class="flex items-center justify-between">
+            <div class="text-xs text-text-muted">
+              {#if heartbeatStore.saving}
+                Saving...
+              {:else if heartbeatStore.dirty}
+                Unsaved changes
+              {:else}
+                &nbsp;
+              {/if}
+            </div>
+            <Button
+              size="sm"
+              onclick={() => heartbeatStore.save()}
+              disabled={heartbeatStore.saving || !heartbeatStore.dirty}
+              loading={heartbeatStore.saving}
+            >
+              Save
+            </Button>
+          </div>
+
+          {#if heartbeatStore.error}
+            <div class="p-3 bg-error/10 border border-error/30 rounded-xl text-error text-xs">
+              {heartbeatStore.error}
+            </div>
+          {/if}
+        {/if}
+      </div>
     </div>
   </div>
 {/if}

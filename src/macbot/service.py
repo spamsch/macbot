@@ -21,6 +21,10 @@ logger = logging.getLogger(__name__)
 MACBOT_DIR = Path.home() / ".macbot"
 PID_FILE = MACBOT_DIR / "service.pid"
 LOG_FILE = MACBOT_DIR / "service.log"
+HEARTBEAT_FILE = MACBOT_DIR / "heartbeat.md"
+HEARTBEAT_INTERVAL = 1800  # 30 minutes
+HEARTBEAT_ACTIVE_START = 7   # 7 AM
+HEARTBEAT_ACTIVE_END = 23    # 11 PM
 
 
 def get_service_pid() -> int | None:
@@ -233,6 +237,60 @@ class MacbotService:
             return
         await self.telegram_service.start()
 
+    async def _run_heartbeat(self) -> None:
+        """Run the heartbeat loop every 30 minutes.
+
+        Reads ~/.macbot/heartbeat.md and executes its content as a prompt.
+        If the file doesn't exist or is empty, just prints 'heartbeat'.
+        Only runs during active hours (7 AM - 11 PM) to save API costs.
+        """
+        while self._running:
+            try:
+                await asyncio.sleep(HEARTBEAT_INTERVAL)
+            except asyncio.CancelledError:
+                return
+
+            now = datetime.now()
+            timestamp = now.strftime("%H:%M:%S")
+
+            # Skip outside active hours
+            if not (HEARTBEAT_ACTIVE_START <= now.hour < HEARTBEAT_ACTIVE_END):
+                logger.debug(f"Heartbeat: Skipping outside active hours ({HEARTBEAT_ACTIVE_START}:00-{HEARTBEAT_ACTIVE_END}:00)")
+                continue
+
+            try:
+                if HEARTBEAT_FILE.exists():
+                    content = HEARTBEAT_FILE.read_text().strip()
+                else:
+                    content = ""
+
+                if not content:
+                    print(f"[{timestamp}] heartbeat")
+                    continue
+
+                print(f"\n[{timestamp}] 💓 Heartbeat: {content[:100]}{'...' if len(content) > 100 else ''}")
+                logger.info(f"Heartbeat: Running '{content[:50]}...'")
+                result = await self.agent.run(content, stream=False)
+                logger.info(f"Heartbeat: Completed, result length: {len(result)}")
+                print(f"[{timestamp}] 💓 Heartbeat result:")
+                for line in result.split('\n'):
+                    print(f"    {line}")
+                print()
+
+                # Send result to Telegram if configured
+                if self.telegram_service and result:
+                    try:
+                        chat_id = settings.telegram_chat_id
+                        if chat_id:
+                            await self.telegram_service.send_message(result, chat_id)
+                    except Exception as e:
+                        logger.warning(f"Heartbeat: Failed to send to Telegram: {e}")
+            except asyncio.CancelledError:
+                return
+            except Exception as e:
+                logger.error(f"Heartbeat: Error - {e}")
+                print(f"[{timestamp}] 💓 Heartbeat error: {e}")
+
     def _format_tokens(self, count: int) -> str:
         """Format token count with K suffix for thousands."""
         if count >= 1000:
@@ -421,6 +479,10 @@ class MacbotService:
         has_cron = self._setup_cron()
         has_telegram = self._setup_telegram()
 
+        # Heartbeat always runs
+        logger.info("Starting heartbeat (every 30 minutes)")
+        self._tasks.append(asyncio.create_task(self._run_heartbeat()))
+
         if has_cron:
             jobs = [j for j in self.cron_service.list_jobs() if j.enabled]
             logger.info(f"Starting cron service with {len(jobs)} enabled jobs")
@@ -521,14 +583,10 @@ def run_service(daemon: bool = False, verbose: bool = False, foreground: bool = 
     has_cron = status["cron"]["enabled"]
     has_telegram = status["telegram"]["enabled"]
 
-    if not has_cron and not has_telegram:
-        console.print("[yellow]Nothing to run:[/yellow]")
-        console.print("  - No scheduled tasks configured")
-        console.print("  - No Telegram configured (set up in Settings)")
-        return
-
     # Show what will run
     console.print("[bold]Starting Son of Simon...[/bold]\n")
+
+    console.print(f"  [green]✓[/green] Heartbeat: every 30 minutes, {HEARTBEAT_ACTIVE_START}:00-{HEARTBEAT_ACTIVE_END}:00 (~/.macbot/heartbeat.md)")
 
     if has_cron:
         console.print(f"  [green]✓[/green] Scheduled Tasks: {status['cron']['jobs_enabled']} active")
