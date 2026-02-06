@@ -73,7 +73,23 @@ Each skill defines:
   <img src="docs/images/skill-detail.png" alt="Skill Detail" width="500">
 </p>
 
-Custom skills are saved to `~/.macbot/skills/`. Skills use the **AgentSkills standard** (the same SKILL.md format used by OpenClaw, Claude Code, and Cursor) so you can drop in skills from any compatible tool and they just work. You can also use skills from https://clawhub.ai/.
+Custom skills are saved to `~/.macbot/skills/`. Skills use the **AgentSkills standard** (the same SKILL.md format used by OpenClaw, Claude Code, and Cursor) so you can drop in skills from any compatible tool and they just work.
+
+### Install skills from ClawHub
+
+[ClawHub](https://clawhub.ai) is a community registry of agent skills. You can browse and install skills directly by asking the agent:
+
+> "Search ClawHub for a Slack skill"
+> "Install https://clawhub.ai/steipete/slack"
+
+The agent will install the skill and automatically enrich it with task mappings and behavior notes so it works out of the box. You can also use the CLI:
+
+```bash
+npm install -g clawhub                              # one-time setup
+clawhub search slack                                 # find skills
+clawhub install --dir ~/.macbot/skills slack          # install
+son skills enrich slack                              # enrich with AI
+```
 
 ## AI providers and models
 
