@@ -46,11 +46,11 @@ npm install -g clawhub
 ```
 
 ### URL Handling
-When the user provides a ClawHub URL like `https://clawhub.ai/steipete/slack`, extract the slug from the path: `steipete/slack`. The slug is everything after `clawhub.ai/`. Then use it directly:
+When the user provides a ClawHub URL like `https://clawhub.ai/steipete/slack`, the slug is the **last** path segment only: `slack` (NOT `steipete/slack` — the first segment is the owner, not part of the slug). Use the short slug:
 ```
-clawhub install --dir ~/.macbot/skills steipete/slack
+clawhub install --dir ~/.macbot/skills slack
 ```
-The skill ID for enrichment is the part after the `/` (e.g., `slack`).
+The skill ID for enrichment is the same short slug (e.g., `slack`).
 
 ### Acting Autonomously
 When the user asks to search for or install a skill, just do it. Don't ask for confirmation before searching. Only confirm before installing (since it writes to disk).
