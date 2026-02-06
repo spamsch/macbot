@@ -10,13 +10,26 @@
 
 ---
 
+## Start here (early testers)
+
+If you're here from Reddit / HN, the fastest way to help is to get to a first "it worked" moment, then report friction.
+
+1. Download the latest `.dmg` from Releases and complete the setup wizard
+2. Grant the macOS permissions it asks for (especially **Automation**)
+3. (Optional) At the end of onboarding, click the Doctor button to verify permissions and prerequisites (or run `son doctor` from Terminal; see below)
+4. Try a safe, read-only prompt:
+   - "What's on my calendar today? List it as bullets."
+   - "Summarize my unread emails and highlight anything urgent. Don't reply or send anything."
+
+If you hit an error, jump to **FAQ** below and open an Issue/Discussion with the exact error message plus the Doctor output.
+
 ## What is this?
 
-Son of Simon is an AI assistant for macOS that works directly with your built-in Apple apps — Mail, Calendar, Reminders, Notes, and Safari. Think of it as the macOS automation layer that OpenClaw is missing.
+Son of Simon is an AI assistant for macOS that works directly with your built-in Apple apps — Mail, Calendar, Reminders, Notes, and Safari.
 
-Where tools like OpenClaw need browser scraping or OAuth flows to access Gmail or Office 365, Son of Simon uses Apple's native app integration. Just add your account in Apple Mail or Calendar and the agent can use it. No tokens, no OAuth, no browser automation needed.
+Where many agent tools rely on browser automation or OAuth flows to access Gmail/Office 365, Son of Simon leans on Apple's native app integration. Add your account in Apple Mail/Calendar and the agent can use it.
 
-Son of Simon is also more secure in practice because it does not run a separate gateway service. There is no always-on gateway process to expose or configure, which reduces the attack surface compared to a gateway-based setup like OpenClaw.
+Son of Simon does not require a separate local gateway service for normal use. That reduces moving parts and attack surface compared to gateway-based setups.
 
 Skills are compatible with the [AgentSkills standard](https://agentskills.io) used by OpenClaw, Claude Code, and Cursor — so community skills work across tools.
 
@@ -50,6 +63,11 @@ The setup wizard will guide you through:
 - Choosing a model (Claude, GPT-5, DeepSeek, Gemini, GLM, Llama, and more)
 - Granting macOS permissions
 - Optional Telegram setup
+
+First success (safe demo prompts):
+- "What's on my calendar today? (Read-only.)"
+- "Summarize my unread emails and highlight anything urgent. Don't reply or send anything."
+- "Search my Notes for anything about <keyword> and summarize what you find."
 
 <p align="center">
   <img src="docs/images/dashboard.png" alt="Dashboard" width="500">
@@ -130,19 +148,21 @@ Use it for recurring checks like:
 
 Son of Simon does not store your passwords. Your email, calendar, and other account credentials are managed by macOS Keychain — the same way Apple Mail and Calendar already handle them. The assistant talks to your apps through AppleScript. It never sees or stores your passwords.
 
-There is no gateway process, no server to expose, and no OAuth tokens to manage. Nothing listens on a port. The attack surface is your Mac and the LLM API call — that's it.
+Son of Simon does not require a separate local gateway service for normal use, and nothing needs to listen on a port just to access your Mail/Calendar/Notes data through the Apple apps.
 
 - No stored passwords — macOS Keychain handles authentication
-- No gateway — nothing listening on a port, no service to configure or secure
-- No OAuth tokens — the apps are already signed in, the agent just uses them
+- No local gateway required — fewer moving parts to configure and secure
+- No extra OAuth tokens for Apple apps — the apps are already signed in, the agent just uses them
 - No browser automation for your own data — AppleScript talks to apps directly
-- LLM API calls are the only traffic that leaves your Mac
+- Clear data egress: prompts go to your chosen LLM provider; optional Telegram sends messages via Telegram
+
+Privacy clarification: if you use a hosted LLM, the prompt you send (which may include email/calendar snippets) is transmitted to that provider. If you want to keep content local, use a local model via LiteLLM.
 
 ## It learns you
 
 Son of Simon remembers context between conversations. It stores observations about your preferences, habits, and patterns into a local memory file. Over time it gets better at helping you — it will know how you like your emails drafted, which calendar you use for work vs personal, and how you prefer reminders worded.
 
-All memory is stored locally in `~/.macbot/memory/`. Nothing is shared. You can read, edit, or delete it at any time.
+Memory is stored locally under `~/.macbot/` (not in a cloud account). You can read it, edit it, or delete it at any time (start with `~/.macbot/memory.yaml`).
 
 ## OpenClaw vs Son of Simon
 
@@ -150,10 +170,10 @@ All memory is stored locally in `~/.macbot/memory/`. Nothing is shared. You can 
 |---|---|---|
 | **Platform** | macOS only | Cross-platform |
 | **Apple apps** | Native (Mail, Calendar, Reminders, Notes, Safari) | Limited (iMessage via imsg) |
-| **Gmail / Office 365** | Just add account in Apple Mail/Calendar | Browser flow or OAuth setup |
-| **Setup** | Single app with guided wizard | Gateway + configuration |
-| **Passwords** | Handled by macOS Keychain — never stored | OAuth tokens / API keys you manage |
-| **Gateway** | None — no ports open, no service to expose | Always-on gateway process |
+| **Gmail / Office 365** | Uses Apple Mail/Calendar accounts you already added | Varies by integration (often OAuth / browser flow) |
+| **Setup** | Single app with guided wizard | Typically more components |
+| **Passwords** | Handled by macOS Keychain — never stored | Varies by integration |
+| **Gateway** | No local gateway required for normal use | Many setups use a local gateway/service |
 | **Memory** | Learns your preferences over time, stored locally | Persistent memory (cloud or local) |
 | **Skills format** | AgentSkills standard (compatible) | AgentSkills standard (compatible) |
 | **Messaging** | Telegram | WhatsApp, Telegram, Slack, Discord, Signal, iMessage, etc. |
@@ -167,6 +187,31 @@ All memory is stored locally in `~/.macbot/memory/`. Nothing is shared. You can 
 - Paperless-ngx integration for documents
 - Time tracking
 - Scheduled jobs (daily or hourly tasks)
+
+## Techy: run the bundled CLI from Terminal
+
+If you installed the `.dmg` app, it includes a `son` CLI binary inside the app bundle. You can run it directly without `pip install`.
+
+Typical paths (depends on build):
+
+```bash
+"/Applications/Son of Simon.app/Contents/MacOS/son" doctor
+```
+
+If that path doesn't exist, find it:
+
+```bash
+APP="/Applications/Son of Simon.app"
+find "$APP/Contents" -maxdepth 4 -type f -name "son" -print
+```
+
+Convenience alias:
+
+```bash
+alias son="/Applications/Son of Simon.app/Contents/MacOS/son"
+```
+
+Note: when running from Terminal/iTerm, macOS Automation permission prompts apply to that terminal app.
 
 ## Advanced (run from source)
 
@@ -186,6 +231,26 @@ Common commands:
 | `son chat` | Interactive chat mode |
 | `son start` | Start background service (heartbeat + Telegram + cron) |
 | `son doctor` | Verify setup and permissions |
+
+## FAQ
+
+### What data leaves my Mac?
+
+- Prompts go to your chosen LLM provider (unless you use a local model via LiteLLM).
+- If you enable Telegram, messages you send/receive go through Telegram.
+- Son of Simon does not need to expose a local gateway server just to use Apple Mail/Calendar/Notes via AppleScript.
+
+### What permissions does it need?
+
+- **Automation** (required for AppleScript control of Mail/Calendar/Reminders/Notes/Safari)
+- **Accessibility** (optional; required for certain browser automation flows)
+
+If something fails, `son doctor` prints what’s missing and points you at the right System Settings page.
+
+### Where is memory stored and how do I reset it?
+
+- Primary file: `~/.macbot/memory.yaml`
+- Reset by deleting or clearing that file (it will be recreated as needed)
 
 ## License
 
