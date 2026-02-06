@@ -1,7 +1,7 @@
 <script lang="ts">
   import { skillsStore, type Skill } from "$lib/stores/skills.svelte";
   import { Button } from "$lib/components/ui";
-  import { ArrowLeft, Save, AlertCircle } from "lucide-svelte";
+  import { ArrowLeft, Save, AlertCircle, Sparkles, Loader2 } from "lucide-svelte";
   import { onMount } from "svelte";
 
   interface Props {
@@ -15,6 +15,7 @@
   let content = $state("");
   let loading = $state(true);
   let saving = $state(false);
+  let enriching = $state(false);
   let error = $state<string | null>(null);
   let modified = $state(false);
 
@@ -124,6 +125,32 @@ ${skill.body || "## Behavior Notes\n\nAdd behavior guidance here."}
       saving = false;
     }
   }
+
+  async function handleEnrich() {
+    // Save first if modified, so enrichment runs on the latest content
+    if (modified) {
+      await handleSave();
+      if (error) return;
+    }
+
+    enriching = true;
+    error = null;
+
+    try {
+      const result = await skillsStore.enrichSkill(skill.id);
+      if (result.success) {
+        // Reload the editor content with enriched version
+        await loadContent();
+        modified = false;
+      } else {
+        error = result.error || "Enrichment failed";
+      }
+    } catch (e) {
+      error = `Failed to enrich: ${e}`;
+    } finally {
+      enriching = false;
+    }
+  }
 </script>
 
 <div class="flex flex-col h-full">
@@ -159,6 +186,17 @@ ${skill.body || "## Behavior Notes\n\nAdd behavior guidance here."}
     <div class="flex items-center gap-2">
       {#if modified}
         <span class="text-xs text-warning">Unsaved changes</span>
+      {/if}
+      {#if !isNewSkill}
+        <Button variant="secondary" onclick={handleEnrich} disabled={enriching || saving}>
+          {#if enriching}
+            <Loader2 class="w-4 h-4 animate-spin" />
+            Enriching...
+          {:else}
+            <Sparkles class="w-4 h-4" />
+            Enrich with AI
+          {/if}
+        </Button>
       {/if}
       <Button onclick={handleSave} loading={saving} disabled={saving || !modified}>
         <Save class="w-4 h-4" />

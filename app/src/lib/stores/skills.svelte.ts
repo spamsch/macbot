@@ -112,6 +112,21 @@ const BUILTIN_SKILLS: Omit<Skill, "enabled" | "source_path">[] = [
     safe_defaults: { timeout: 20, max_elements: 200 },
     confirm_before_write: ["submit form", "complete purchase", "confirm booking"],
   },
+  {
+    id: "clawhub",
+    name: "ClawHub",
+    description: "Search, install, and manage community skills from the ClawHub registry.",
+    is_builtin: true,
+    apps: [],
+    tasks: ["run_shell_command"],
+    examples: [
+      "Search ClawHub for a Slack skill",
+      "Install the weather skill from ClawHub",
+      "Update all my ClawHub skills",
+    ],
+    safe_defaults: { dir: "~/.macbot/skills" },
+    confirm_before_write: ["install skill", "update all skills"],
+  },
 ];
 
 class SkillsStore {
@@ -442,6 +457,30 @@ class SkillsStore {
       // Reload our local list
       await this.load();
 
+      return { success: true };
+    } catch (e) {
+      const errorMsg = e instanceof Error ? e.message : String(e);
+      return { success: false, error: errorMsg };
+    }
+  }
+
+  async enrichSkill(skillId: string): Promise<{ success: boolean; error?: string }> {
+    try {
+      // Get path to sidecar binary
+      const resourcePath = await resourceDir();
+      const contentsPath = await dirname(resourcePath);
+      const sonPath = await join(contentsPath, "MacOS", "son");
+
+      const cmd = Command.create("exec-sh", ["-c", `"${sonPath}" skills enrich "${skillId}"`]);
+      const output = await cmd.execute();
+
+      if (output.code !== 0) {
+        const errMsg = output.stderr || output.stdout || "Enrichment failed";
+        return { success: false, error: errMsg.trim() };
+      }
+
+      // Reload skills to pick up changes
+      await this.load();
       return { success: true };
     } catch (e) {
       const errorMsg = e instanceof Error ? e.message : String(e);

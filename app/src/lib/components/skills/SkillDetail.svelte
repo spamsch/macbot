@@ -13,7 +13,10 @@
     X,
     AlertTriangle,
     MousePointer2,
+    Package,
     Copy,
+    Sparkles,
+    Loader2,
   } from "lucide-svelte";
 
   interface Props {
@@ -32,14 +35,32 @@
       notes_assistant: StickyNote,
       safari_assistant: Globe,
       browser_automation: MousePointer2,
+      clawhub: Package,
     };
     return icons[skillId] || Zap;
   }
 
   const Icon = $derived(getIcon(skill.id));
+  let enriching = $state(false);
+  let enrichError = $state<string | null>(null);
+
+  // A skill needs enrichment if it has a source_path (user skill) and no enriched metadata
+  const needsEnrichment = $derived(
+    skill.source_path && !skill.is_builtin && skill.tasks.length === 0 && skill.examples.length === 0
+  );
 
   async function handleToggle() {
     await skillsStore.toggle(skill.id);
+  }
+
+  async function handleEnrich() {
+    enriching = true;
+    enrichError = null;
+    const result = await skillsStore.enrichSkill(skill.id);
+    enriching = false;
+    if (!result.success) {
+      enrichError = result.error || "Enrichment failed";
+    }
   }
 </script>
 
@@ -173,6 +194,35 @@
           </li>
         {/each}
       </ul>
+    </div>
+  {/if}
+
+  <!-- Enrich with AI -->
+  {#if needsEnrichment}
+    <div class="p-4 bg-primary/5 rounded-xl border border-primary/30">
+      <div class="flex items-center justify-between">
+        <div>
+          <h3 class="text-sm font-medium text-text mb-1">This skill hasn't been enriched yet</h3>
+          <p class="text-xs text-text-muted">Use AI to add task mappings, examples, and behavior notes.</p>
+        </div>
+        <Button
+          variant="primary"
+          size="sm"
+          onclick={handleEnrich}
+          disabled={enriching}
+        >
+          {#if enriching}
+            <Loader2 class="w-4 h-4 animate-spin" />
+            Enriching...
+          {:else}
+            <Sparkles class="w-4 h-4" />
+            Enrich with AI
+          {/if}
+        </Button>
+      </div>
+      {#if enrichError}
+        <p class="mt-2 text-xs text-error">{enrichError}</p>
+      {/if}
     </div>
   {/if}
 

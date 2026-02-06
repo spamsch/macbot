@@ -11,6 +11,7 @@
     ChevronRight,
     RefreshCw,
     MousePointer2,
+    Package,
     Plus,
   } from "lucide-svelte";
 
@@ -33,6 +34,7 @@
       notes_assistant: StickyNote,
       safari_assistant: Globe,
       browser_automation: MousePointer2,
+      clawhub: Package,
     };
     return icons[skillId] || Zap;
   }
@@ -59,6 +61,11 @@
     >
       <RefreshCw class="w-4 h-4 {skillsStore.loading ? 'animate-spin' : ''}" />
     </button>
+  </div>
+
+  <!-- ClawHub Tip -->
+  <div class="p-3 bg-bg-card/50 border border-border rounded-lg text-sm text-text-muted">
+    Tip: The easiest way to install skills is to ask the agent to search ClawHub.
   </div>
 
   <!-- Create New Skill Button -->
