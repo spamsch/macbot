@@ -190,9 +190,12 @@ class Agent:
         return "\n".join(prompt_parts)
 
     def _build_system_context(self) -> str:
-        """Build the system context section with platform info."""
+        """Build the system context section with platform info and current time."""
+        from datetime import datetime
+        now = datetime.now()
         return f"""
 ## System Context
+- Current date and time: {now.strftime("%A, %B %d, %Y at %I:%M %p")}
 - Platform: macOS ({platform.mac_ver()[0]})
 - Architecture: {platform.machine()}
 - Hostname: {platform.node()}
