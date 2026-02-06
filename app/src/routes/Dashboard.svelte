@@ -506,11 +506,16 @@
 
           <SkillsList onselect={handleSkillSelect} oncreate={handleSkillCreate} />
 
-          <div class="mt-6 p-4 bg-bg-input/50 rounded-xl">
+          <div class="mt-6 p-4 bg-bg-input/50 rounded-xl space-y-2">
             <p class="text-xs text-text-muted">
               Skills provide guidance for handling specific types of requests.
               Custom skills require <span class="font-mono">id</span>, <span class="font-mono">name</span>, and <span class="font-mono">description</span> fields.
               Saved to <span class="font-mono">~/.macbot/skills/</span>
+            </p>
+            <p class="text-xs text-text-muted">
+              Want more? Ask the agent: <span class="italic">"Search ClawHub for a Slack skill"</span> or
+              <span class="italic">"Install https://clawhub.ai/steipete/slack"</span>.
+              Browse community skills at <span class="font-mono">clawhub.ai</span>.
             </p>
           </div>
         </div>

@@ -92,7 +92,7 @@ class ServiceStore {
 
       const script = `
         tell application "Terminal"
-          set newWindow to do script "clear && \\"${sonPath}\\" doctor; echo ''; echo 'Press any key to close...'; read -n 1"
+          set newWindow to do script "clear && echo 'Preparing environment... takes a minute' && \\"${sonPath}\\" doctor; echo ''; echo 'Press any key to close...'; read -n 1"
           activate
           set bounds of front window to {100, 100, 1100, 700}
         end tell
