@@ -1,6 +1,6 @@
 <script lang="ts">
   import { Button } from "$lib/components/ui";
-  import { Sparkles, Terminal, MessageSquare, Calendar, ArrowRight } from "lucide-svelte";
+  import { Terminal, MessageSquare, Calendar, Shield, ArrowRight } from "lucide-svelte";
 
   interface Props {
     onNext: () => void;
@@ -10,19 +10,19 @@
 
   const features = [
     {
-      icon: Terminal,
-      title: "Talk to Your Mac",
-      description: "Just type what you want to do in everyday language. For example: \"Send an email to John about tomorrow's meeting\" or \"Create a reminder to call mom at 5pm\".",
+      icon: Calendar,
+      title: "Works With Your Apple Apps",
+      description: "Uses Mail, Calendar, Reminders, Notes, and Safari directly. Make sure your accounts are set up in macOS System Settings first.",
     },
     {
-      icon: Calendar,
-      title: "Works With Your Apps",
-      description: "Son of Simon can control Mail, Calendar, Reminders, Notes, and Safari on your behalf. It reads and creates items just like you would.",
+      icon: Shield,
+      title: "Secure by Default",
+      description: "No passwords stored, no server running, no OAuth tokens. Your credentials stay in macOS Keychain. Only LLM API calls leave your Mac.",
     },
     {
       icon: MessageSquare,
-      title: "Control From Anywhere",
-      description: "Optionally connect Telegram to send commands to your Mac from your phone, even when you're away from your computer.",
+      title: "Best With Telegram",
+      description: "Connect Telegram to control your Mac from your phone — even while away. Leave your Mac running, send voice or text commands from anywhere.",
     },
   ];
 </script>
@@ -33,8 +33,7 @@
   <h1 class="text-3xl font-bold text-text mb-3">Welcome to Son of Simon</h1>
 
   <p class="text-text-muted mb-8 max-w-lg">
-    Your personal AI assistant that helps you automate everyday tasks on your Mac.
-    No technical knowledge required.
+    Your personal AI assistant for macOS. Automate Mail, Calendar, and more — securely, with no technical knowledge required.
   </p>
 
   <div class="grid gap-4 mb-8 w-full max-w-lg text-left">
