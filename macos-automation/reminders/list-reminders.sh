@@ -94,83 +94,109 @@ tell application "Reminders"
         set output to output & "=== ALL REMINDERS ===" & return & return
     end if
 
+    -- Phase 1: batch-count total reminders per list to skip empty ones (fast)
+    set totalCounts to {}
     repeat with l in listCollection
-        set listOutput to ""
-        set listCount to 0
+        set end of totalCounts to count of reminders of l
+    end repeat
 
-        if "$LIST_NAME" is "" then
-            set listOutput to "📋 " & name of l & return
-        end if
+    -- Phase 2: only query properties for lists that have reminders
+    set listIdx to 0
+    repeat with l in listCollection
+        set listIdx to listIdx + 1
+        if item listIdx of totalCounts > 0 then
+            set listOutput to ""
+            set listCount to 0
 
-        -- Get reminders based on completion status
-        if $COMPLETED then
-            set allReminders to (reminders of l whose completed is true)
-        else
-            set allReminders to (reminders of l whose completed is false)
-        end if
-
-        repeat with r in allReminders
-            -- Apply filters
-            set include to true
-
-            if $FLAGGED and not flagged of r then
-                set include to false
+            if "$LIST_NAME" is "" then
+                set listOutput to "📋 " & name of l & return
             end if
 
-            if $HIGH_PRIORITY and (priority of r is 0 or priority of r > 4) then
-                set include to false
+            -- Bulk-fetch per property with "whose" pre-filter (each is fast;
+            -- multi-property in one call causes error -1728 in Reminders.app)
+            if $COMPLETED then
+                set allNames to name of (every reminder of l whose completed is true)
+            else
+                set allNames to name of (every reminder of l whose completed is false)
             end if
 
-            if $OVERDUE then
-                try
-                    if due date of r >= now then
+            set rCount to count of allNames
+            if rCount > 0 then
+                if $COMPLETED then
+                    set allPriorities to priority of (every reminder of l whose completed is true)
+                    set allFlagged to flagged of (every reminder of l whose completed is true)
+                    set allDueDates to due date of (every reminder of l whose completed is true)
+                else
+                    set allPriorities to priority of (every reminder of l whose completed is false)
+                    set allFlagged to flagged of (every reminder of l whose completed is false)
+                    set allDueDates to due date of (every reminder of l whose completed is false)
+                end if
+
+                repeat with i from 1 to rCount
+                    set rName to item i of allNames
+                    set rPriority to item i of allPriorities
+                    set rFlag to item i of allFlagged
+                    set rDue to item i of allDueDates
+
+                    -- Apply remaining filters
+                    set include to true
+
+                    if $FLAGGED and not rFlag then
                         set include to false
                     end if
-                on error
-                    set include to false
-                end try
-            end if
 
-            if include and displayCount < $LIMIT then
-                set displayCount to displayCount + 1
-                set listCount to listCount + 1
-
-                -- Build reminder line
-                set line to "  "
-                if $COMPLETED then
-                    set line to line & "✓ "
-                else
-                    set line to line & "□ "
-                end if
-                set line to line & name of r
-
-                -- Add indicators
-                if priority of r > 0 and priority of r < 5 then
-                    set line to line & " ❗"
-                end if
-                if flagged of r then
-                    set line to line & " 🚩"
-                end if
-
-                set listOutput to listOutput & line & return
-
-                -- Add due date if set
-                try
-                    set dueStr to due date of r as string
-                    set listOutput to listOutput & "     Due: " & dueStr & return
-                end try
-
-                -- Check if overdue
-                try
-                    if due date of r < now and not $COMPLETED then
-                        set listOutput to listOutput & "     ⚠️ OVERDUE" & return
+                    if $HIGH_PRIORITY and (rPriority is 0 or rPriority > 4) then
+                        set include to false
                     end if
-                end try
-            end if
-        end repeat
 
-        if listCount > 0 then
-            set output to output & listOutput & return
+                    if $OVERDUE then
+                        try
+                            if rDue is missing value or rDue ≥ now then
+                                set include to false
+                            end if
+                        on error
+                            set include to false
+                        end try
+                    end if
+
+                    if include and displayCount < $LIMIT then
+                        set displayCount to displayCount + 1
+                        set listCount to listCount + 1
+
+                        -- Build reminder line
+                        set rLine to "  "
+                        if $COMPLETED then
+                            set rLine to rLine & "✓ "
+                        else
+                            set rLine to rLine & "□ "
+                        end if
+                        set rLine to rLine & rName
+
+                        -- Add indicators
+                        if rPriority > 0 and rPriority < 5 then
+                            set rLine to rLine & " ❗"
+                        end if
+                        if rFlag then
+                            set rLine to rLine & " 🚩"
+                        end if
+
+                        set listOutput to listOutput & rLine & return
+
+                        -- Add due date if set
+                        if rDue is not missing value then
+                            set listOutput to listOutput & "     Due: " & (rDue as string) & return
+                            -- Check if overdue
+                            if rDue < now and not $COMPLETED then
+                                set listOutput to listOutput & "     ⚠️ OVERDUE" & return
+                            end if
+                        end if
+                    end if
+                end repeat
+            end if
+
+            if listCount > 0 then
+                set output to output & listOutput & return
+            end if
         end if
     end repeat
 
