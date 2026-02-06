@@ -1,6 +1,6 @@
 [package]
 name = "son-of-simon"
-version = "0.1.47"
+version = "0.1.48"
 description = "AI-powered macOS automation assistant"
 authors = ["spamies"]
 edition = "2021"
