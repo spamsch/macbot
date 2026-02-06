@@ -103,27 +103,27 @@ def find_job_goal(name: str, jobs_file: Path | None = None) -> str | None:
 
 # Help text shown when no command is given
 WELCOME_TEXT = f"""
-# MacBot v{__version__}
+# Son of Simon v{__version__}
 
 An LLM-powered agent for macOS automation.
 
 ## Quick Start
 
 ```bash
-macbot run "Check my emails"             # Run a goal
-macbot run "What's on my calendar?"      # Ask a question
-macbot start                             # Start service (cron + telegram)
-macbot status                            # Check service status
-macbot doctor                            # Verify setup
+son run "Check my emails"                # Run a goal
+son run "What's on my calendar?"         # Ask a question
+son start                                # Start service (cron + telegram)
+son status                               # Check service status
+son doctor                               # Verify setup
 ```
 
 ## Service Setup
 
-1. Import scheduled jobs: `macbot cron import jobs.yaml`
+1. Import scheduled jobs: `son cron import jobs.yaml`
 2. Configure Telegram: `export MACBOT_TELEGRAM_BOT_TOKEN=...`
-3. Start the service: `macbot start -d` (daemon) or `macbot start` (foreground)
+3. Start the service: `son start -d` (daemon) or `son start` (foreground)
 
-Use `macbot --help-all` to see all commands including admin tools.
+Use `son --help-all` to see all commands including admin tools.
 """
 
 
@@ -439,7 +439,7 @@ def cmd_tasks(args: argparse.Namespace) -> None:
                 task_names = ", ".join(t.name for t in sorted(tasks, key=lambda t: t.name))
                 console.print(f"[cyan]{category}:[/cyan] {task_names}")
 
-        console.print("\n[dim]Use 'macbot tasks -v' for detailed view with parameters.[/dim]")
+        console.print("\n[dim]Use 'son tasks -v' for detailed view with parameters.[/dim]")
 
 
 def _get_scheduler_pid() -> int | None:
@@ -505,7 +505,7 @@ def cmd_schedule(args: argparse.Namespace) -> None:
     existing_pid = _get_scheduler_pid()
     if existing_pid and args.background:
         console.print(f"[yellow]Scheduler already running[/yellow] (PID {existing_pid})")
-        console.print(f"Stop it first with: macbot schedule stop")
+        console.print("Stop it first with: son schedule stop")
         sys.exit(1)
 
     # Background mode
@@ -517,8 +517,8 @@ def cmd_schedule(args: argparse.Namespace) -> None:
             console.print(f"  Task: {args.task}")
         console.print(f"  Interval: {args.interval}s")
         console.print(f"  Log: {LOG_FILE}")
-        console.print(f"\nUse 'macbot schedule status' to check status")
-        console.print(f"Use 'macbot schedule stop' to stop")
+        console.print("\nUse 'son schedule status' to check status")
+        console.print("Use 'son schedule stop' to stop")
 
         # Store job config before forking (for the child process)
         job_goal = args.goal
@@ -529,7 +529,7 @@ def cmd_schedule(args: argparse.Namespace) -> None:
 
         # Now we're in the daemon process
         print(f"\n{'='*60}")
-        print(f"MacBot Scheduler started at {datetime.now().isoformat()}")
+        print(f"Son of Simon Scheduler started at {datetime.now().isoformat()}")
         print(f"PID: {os.getpid()}")
         print(f"{'='*60}\n")
 
@@ -724,7 +724,7 @@ def cmd_status(args: argparse.Namespace) -> None:
         console.print(f"  Jobs: {status['cron']['jobs_enabled']} enabled / {status['cron']['jobs_total']} total")
     else:
         console.print(f"  [dim]No jobs configured[/dim]")
-        console.print(f"  [dim]→ Use 'macbot cron import <file>' to add jobs[/dim]")
+        console.print("  [dim]→ Use 'son cron import <file>' to add jobs[/dim]")
 
     console.print(f"\n[bold]Telegram[/bold]")
     if status["telegram"]["enabled"]:
@@ -733,7 +733,7 @@ def cmd_status(args: argparse.Namespace) -> None:
             console.print(f"  Chat ID: {chat_id}")
         else:
             console.print(f"  [yellow]Chat ID not set[/yellow]")
-            console.print(f"  [dim]→ Run 'macbot telegram whoami' to get your chat ID[/dim]")
+            console.print("  [dim]→ Run 'son telegram whoami' to get your chat ID[/dim]")
     else:
         console.print(f"  [dim]Not configured[/dim]")
         console.print(f"  [dim]→ Set MACBOT_TELEGRAM_BOT_TOKEN to enable[/dim]")
@@ -752,7 +752,7 @@ def cmd_onboard(args: argparse.Namespace) -> None:
     import shutil
     import subprocess
 
-    console.print(f"\n[bold]Welcome to MacBot![/bold] v{__version__}")
+    console.print(f"\n[bold]Welcome to Son of Simon![/bold] v{__version__}")
     console.print("Let's get you set up.\n")
 
     env_file = MACBOT_DIR / ".env"
@@ -869,7 +869,7 @@ def cmd_onboard(args: argparse.Namespace) -> None:
     if platform.system() != "Darwin":
         console.print("[yellow]Skipping - not on macOS[/yellow]")
     else:
-        console.print("MacBot needs permission to control apps via AppleScript.")
+        console.print("Son of Simon needs permission to control apps via AppleScript.")
         console.print("We'll open System Settings for you to grant access.\n")
 
         apps_to_test = [
@@ -909,14 +909,14 @@ def cmd_onboard(args: argparse.Namespace) -> None:
                 console.print("[green]✓[/green] All permissions granted!")
             else:
                 console.print(f"[yellow]![/yellow] Still missing: {', '.join(still_missing)}")
-                console.print("    You can grant these later and run 'macbot doctor' to verify.")
+                console.print("    You can grant these later and run 'son doctor' to verify.")
 
     # =========================================================================
     # Step 3: Browser Automation (Optional)
     # =========================================================================
     step_header(3, total_steps, "Browser Automation (Optional)")
 
-    console.print("For advanced browser automation, MacBot can use physical clicks.")
+    console.print("For advanced browser automation, Son of Simon can use physical clicks.")
     console.print("This requires 'cliclick' and Accessibility permissions.\n")
 
     if not prompt_yes_no("Set up browser automation?", default=True):
@@ -1034,7 +1034,7 @@ def cmd_onboard(args: argparse.Namespace) -> None:
                             env_vars["MACBOT_TELEGRAM_CHAT_ID"] = chat_id
                         else:
                             console.print("[yellow]![/yellow] Timeout - no message received")
-                            console.print("    Run 'macbot telegram whoami' later to get your chat ID")
+                            console.print("    Run 'son telegram whoami' later to get your chat ID")
                     else:
                         console.print(f"[red]✗ Invalid: {msg}[/red]")
                 except Exception as e:
@@ -1139,7 +1139,7 @@ def cmd_onboard(args: argparse.Namespace) -> None:
         # Write back
         with open(env_file, "w") as f:
             f.write("# MacBot Configuration\n")
-            f.write("# Generated by 'macbot onboard'\n\n")
+            f.write("# Generated by 'son onboard'\n\n")
             for key, value in sorted(existing_env.items()):
                 f.write(f"{key}={value}\n")
 
@@ -1172,7 +1172,7 @@ def cmd_onboard(args: argparse.Namespace) -> None:
             console.print("[yellow]![/yellow] No API key configured - skipping test")
     except Exception as e:
         console.print(f"[red]✗[/red] Test failed: {e}")
-        console.print("    Run 'macbot doctor' to diagnose issues")
+        console.print("    Run 'son doctor' to diagnose issues")
 
     # Final summary
     console.print("\n" + "═" * 40)
@@ -1180,14 +1180,14 @@ def cmd_onboard(args: argparse.Namespace) -> None:
     console.print("═" * 40)
 
     console.print("\n[bold]Quick start:[/bold]")
-    console.print("  macbot run \"Check my emails\"     # Run a goal")
-    console.print("  macbot doctor                    # Verify setup")
-    console.print("  macbot status                    # Check service status")
+    console.print("  son run \"Check my emails\"        # Run a goal")
+    console.print("  son doctor                        # Verify setup")
+    console.print("  son status                        # Check service status")
 
     if "MACBOT_TELEGRAM_BOT_TOKEN" in env_vars:
-        console.print("  macbot start -d                  # Start service (with Telegram)")
+        console.print("  son start -d                      # Start service (with Telegram)")
 
-    console.print("\n[dim]Run 'macbot --help' for more commands.[/dim]\n")
+    console.print("\n[dim]Run 'son --help' for more commands.[/dim]\n")
 
 
 def cmd_doctor(args: argparse.Namespace) -> None:
@@ -1200,7 +1200,7 @@ def cmd_doctor(args: argparse.Namespace) -> None:
     json_mode = getattr(args, 'json', False)
 
     if not json_mode:
-        console.print(f"\n[bold]MacBot Doctor[/bold] v{__version__}\n")
+        console.print(f"\n[bold]Son of Simon Doctor[/bold] v{__version__}\n")
 
     all_ok = True
     results: dict = {
@@ -1271,7 +1271,7 @@ def cmd_doctor(args: argparse.Namespace) -> None:
         check("API Key", True, f"{masked}")
     else:
         check("API Key", False, "Not set",
-              f"Set {key_name} or run 'macbot onboard' to configure")
+              f"Set {key_name} or run 'son onboard' to configure")
 
     check("Model", True, model)
 
@@ -1504,7 +1504,7 @@ def cmd_doctor(args: argparse.Namespace) -> None:
             check("Chat ID", True, settings.telegram_chat_id)
         else:
             warn("Chat ID", "Not configured (agent can't send proactive messages)",
-                 "Message your bot, then run 'macbot telegram whoami' to get your chat ID")
+                 "Message your bot, then run 'son telegram whoami' to get your chat ID")
 
         # Service status
         from macbot.service import get_service_pid
@@ -1513,10 +1513,10 @@ def cmd_doctor(args: argparse.Namespace) -> None:
             check("Service", True, f"Running (PID {service_pid})")
         else:
             warn("Service", "Not running",
-                 "Start with 'macbot start' or 'macbot start --daemon'")
+                 "Start with 'son start' or 'son start --daemon'")
     else:
         warn("Telegram", "Not configured",
-             "Create bot at t.me/BotFather, then run 'macbot onboard' or set MACBOT_TELEGRAM_BOT_TOKEN")
+             "Create bot at t.me/BotFather, then run 'son onboard' or set MACBOT_TELEGRAM_BOT_TOKEN")
 
     # Paperless-ngx Integration
     if not json_mode:
@@ -1559,12 +1559,12 @@ def cmd_doctor(args: argparse.Namespace) -> None:
                 check("API Connection", True, msg)
             else:
                 check("API Connection", False, msg,
-                      "Check URL and API token, or run 'macbot onboard' to reconfigure")
+                      "Check URL and API token, or run 'son onboard' to reconfigure")
         except Exception as e:
             check("API Connection", False, str(e)[:50])
     else:
         warn("Paperless-ngx", "Not configured",
-             "Run 'macbot onboard' or set MACBOT_PAPERLESS_URL and MACBOT_PAPERLESS_API_TOKEN")
+             "Run 'son onboard' or set MACBOT_PAPERLESS_URL and MACBOT_PAPERLESS_API_TOKEN")
 
     # Update config info in results
     results["config"]["api_key_configured"] = bool(settings.get_api_key_for_model())
@@ -1578,7 +1578,7 @@ def cmd_doctor(args: argparse.Namespace) -> None:
     else:
         console.print()
         if all_ok:
-            console.print("[green]All checks passed![/green] MacBot is ready to use.\n")
+            console.print("[green]All checks passed![/green] Son of Simon is ready to use.\n")
         else:
             console.print("[yellow]Some checks failed.[/yellow] Please fix the issues above.\n")
             sys.exit(1)
@@ -1839,7 +1839,7 @@ def cmd_cron_import(args: argparse.Namespace) -> None:
 
     console.print(f"\n[green]Imported {imported_count} jobs[/green]")
     console.print(f"Storage: {service.storage_path}")
-    console.print(f"\nRun [bold]macbot cron start[/bold] to start the scheduler")
+    console.print("\nRun [bold]son cron start[/bold] to start the scheduler")
 
 
 def cmd_cron_start(args: argparse.Namespace) -> None:
@@ -1851,7 +1851,7 @@ def cmd_cron_start(args: argparse.Namespace) -> None:
 
     if not jobs:
         console.print("[yellow]No jobs registered.[/yellow]")
-        console.print("Use [bold]macbot cron import <file>[/bold] to import jobs")
+        console.print("Use [bold]son cron import <file>[/bold] to import jobs")
         sys.exit(0)
 
     if not enabled_jobs:
@@ -1862,7 +1862,7 @@ def cmd_cron_start(args: argparse.Namespace) -> None:
     existing_pid = _get_scheduler_pid()
     if existing_pid and args.background:
         console.print(f"[yellow]Scheduler already running[/yellow] (PID {existing_pid})")
-        console.print("Stop it first with: macbot cron stop")
+        console.print("Stop it first with: son cron stop")
         sys.exit(1)
 
     console.print(f"[bold]Starting cron scheduler[/bold] ({len(enabled_jobs)} enabled jobs)")
@@ -1886,13 +1886,13 @@ def cmd_cron_start(args: argparse.Namespace) -> None:
         # Background mode
         console.print(f"[green]Starting in background...[/green]")
         console.print(f"  Log: {LOG_FILE}")
-        console.print(f"\nUse 'macbot cron stop' to stop")
+        console.print("\nUse 'son cron stop' to stop")
 
         _daemonize()
 
         # Now in daemon process
         print(f"\n{'='*60}")
-        print(f"MacBot Cron Service started at {datetime.now().isoformat()}")
+        print(f"Son of Simon Cron Service started at {datetime.now().isoformat()}")
         print(f"PID: {os.getpid()}")
         print(f"Jobs: {len(enabled_jobs)} enabled")
         print(f"{'='*60}\n")
@@ -2398,7 +2398,7 @@ def cmd_telegram_start(args: argparse.Namespace) -> None:
     existing_pid = _get_telegram_pid()
     if existing_pid and args.daemon:
         console.print(f"[yellow]Telegram service already running[/yellow] (PID {existing_pid})")
-        console.print("Stop it first with: macbot telegram stop")
+        console.print("Stop it first with: son telegram stop")
         sys.exit(1)
 
     # Validate token first
@@ -2415,13 +2415,13 @@ def cmd_telegram_start(args: argparse.Namespace) -> None:
 
     if not settings.telegram_chat_id:
         console.print("[yellow]Warning:[/yellow] MACBOT_TELEGRAM_CHAT_ID not set")
-        console.print("  Run 'macbot telegram whoami' to get your chat ID")
+        console.print("  Run 'son telegram whoami' to get your chat ID")
 
     if args.daemon:
         # Background mode
         console.print(f"\n[green]Starting Telegram service in background...[/green]")
         console.print(f"  Log: {TELEGRAM_LOG_FILE}")
-        console.print(f"\nUse 'macbot telegram stop' to stop")
+        console.print("\nUse 'son telegram stop' to stop")
 
         _daemonize()
 
@@ -2435,7 +2435,7 @@ def cmd_telegram_start(args: argparse.Namespace) -> None:
         os.close(log_fd)
 
         print(f"\n{'='*60}")
-        print(f"MacBot Telegram Service started at {datetime.now().isoformat()}")
+        print(f"Son of Simon Telegram Service started at {datetime.now().isoformat()}")
         print(f"PID: {os.getpid()}")
         print(f"{'='*60}\n")
 
@@ -2638,7 +2638,7 @@ def cmd_telegram_whoami(args: argparse.Namespace) -> None:
 
 
 def main() -> NoReturn:
-    """Main entry point for MacBot CLI."""
+    """Main entry point for Son of Simon CLI."""
     # Check for --help-all before argparse processes it
     show_all_commands = "--help-all" in sys.argv
 
@@ -2650,12 +2650,12 @@ def main() -> NoReturn:
 
     if is_top_level_help:
         if show_all_commands:
-            console.print(f"""[bold]macbot[/bold] v{__version__} - LLM-powered agent for macOS automation
+            console.print(f"""[bold]son[/bold] v{__version__} - LLM-powered agent for macOS automation
 
 [bold]MAIN COMMANDS[/bold]
   run          Run a goal or ask a question
-  start        Start the macbot service (cron + telegram)
-  stop         Stop the macbot service
+  start        Start the service (cron + telegram)
+  stop         Stop the service
   status       Check service status
   doctor       Check system prerequisites
   onboard      Interactive setup wizard
@@ -2675,18 +2675,18 @@ def main() -> NoReturn:
   --help-all       Show all commands
 
 [bold]EXAMPLES[/bold]
-  macbot run "Check my emails"        Run a goal
-  macbot start -d                     Start service as daemon
-  macbot cron import jobs.yaml        Import scheduled jobs
-  macbot telegram whoami              Get your Telegram chat ID
+  son run "Check my emails"           Run a goal
+  son start -d                        Start service as daemon
+  son cron import jobs.yaml           Import scheduled jobs
+  son telegram whoami                 Get your Telegram chat ID
 """)
         else:
-            console.print(f"""[bold]macbot[/bold] v{__version__} - LLM-powered agent for macOS automation
+            console.print(f"""[bold]son[/bold] v{__version__} - LLM-powered agent for macOS automation
 
 [bold]COMMANDS[/bold]
   run          Run a goal or ask a question
-  start        Start the macbot service (cron + telegram)
-  stop         Stop the macbot service
+  start        Start the service (cron + telegram)
+  stop         Stop the service
   status       Check service status
   doctor       Check system prerequisites
   onboard      Interactive setup wizard
@@ -2696,18 +2696,18 @@ def main() -> NoReturn:
   --help-all       Show all commands including admin tools
 
 [bold]GETTING STARTED[/bold]
-  macbot onboard                      Setup wizard (recommended for new users)
-  macbot run "Check my emails"        Run a goal
-  macbot doctor                       Verify setup
+  son onboard                         Setup wizard (recommended for new users)
+  son run "Check my emails"           Run a goal
+  son doctor                          Verify setup
 
-Use [bold]macbot --help-all[/bold] to see all commands.
-Use [bold]macbot <command> --help[/bold] for command details.
+Use [bold]son --help-all[/bold] to see all commands.
+Use [bold]son <command> --help[/bold] for command details.
 """)
         sys.exit(0)
 
     parser = argparse.ArgumentParser(
-        prog="macbot",
-        description="MacBot - LLM-powered agent for macOS automation",
+        prog="son",
+        description="Son of Simon - LLM-powered agent for macOS automation",
         add_help=False,  # We handle help ourselves
     )
     parser.add_argument("-h", "--help", action="store_true", help="Show help")
@@ -2727,11 +2727,11 @@ Use [bold]macbot <command> --help[/bold] for command details.
         description="Give the agent a goal to achieve. The agent will reason "
                     "about it and call tasks as needed.",
         epilog="""Examples:
-  macbot run "Check my emails"              Run a goal
-  macbot run "What's on my calendar?"       Ask a question
-  macbot run --list-jobs                    Show available jobs
-  macbot run -m                             Enter multiline prompt (Ctrl+D to end)
-  cat prompt.txt | macbot run -m            Run from file"""
+  son run "Check my emails"                 Run a goal
+  son run "What's on my calendar?"          Ask a question
+  son run --list-jobs                       Show available jobs
+  son run -m                                Enter multiline prompt (Ctrl+D to end)
+  cat prompt.txt | son run -m               Run from file"""
     )
     run_parser.add_argument(
         "goal", nargs="?", default=None,
@@ -2766,8 +2766,8 @@ Use [bold]macbot <command> --help[/bold] for command details.
     # Start command (unified service)
     start_parser = subparsers.add_parser(
         "start",
-        help="Start the macbot service (cron + telegram)",
-        description="Start the unified macbot service that runs scheduled jobs "
+        help="Start the Son of Simon service (cron + telegram)",
+        description="Start the unified Son of Simon service that runs scheduled jobs "
                     "and listens for Telegram messages."
     )
     start_parser.add_argument(
@@ -2787,8 +2787,8 @@ Use [bold]macbot <command> --help[/bold] for command details.
     # Stop command
     stop_parser = subparsers.add_parser(
         "stop",
-        help="Stop the macbot service",
-        description="Stop the running macbot service daemon."
+        help="Stop the service",
+        description="Stop the running service daemon."
     )
     stop_parser.set_defaults(func=cmd_stop)
 
@@ -2796,7 +2796,7 @@ Use [bold]macbot <command> --help[/bold] for command details.
     status_parser = subparsers.add_parser(
         "status",
         help="Check service status",
-        description="Show the status of the macbot service, cron jobs, and Telegram."
+        description="Show the status of the service, cron jobs, and Telegram."
     )
     status_parser.set_defaults(func=cmd_status)
 
@@ -2804,7 +2804,7 @@ Use [bold]macbot <command> --help[/bold] for command details.
     doctor_parser = subparsers.add_parser(
         "doctor",
         help="Check system prerequisites and configuration",
-        description="Verify that MacBot is properly configured and all "
+        description="Verify that Son of Simon is properly configured and all "
                     "prerequisites are met."
     )
     doctor_parser.add_argument(
@@ -2817,7 +2817,7 @@ Use [bold]macbot <command> --help[/bold] for command details.
     onboard_parser = subparsers.add_parser(
         "onboard",
         help="Interactive setup wizard for new users",
-        description="Step-by-step guide to set up MacBot: configure LLM provider, "
+        description="Step-by-step guide to set up Son of Simon: configure LLM provider, "
                     "grant macOS permissions, set up Telegram, and verify everything works."
     )
     onboard_parser.set_defaults(func=cmd_onboard)
@@ -2845,7 +2845,7 @@ Use [bold]macbot <command> --help[/bold] for command details.
         help=argparse.SUPPRESS,  # Admin command
         description="Execute a specific task directly without LLM involvement. "
                     "Useful for testing or scripting.",
-        epilog="Example: macbot task get_unread_emails count_only=true"
+        epilog="Example: son task get_unread_emails count_only=true"
     )
     task_parser.add_argument(
         "task_name",
@@ -2883,11 +2883,11 @@ Use [bold]macbot <command> --help[/bold] for command details.
         description="Run a goal or task on a repeating schedule. "
                     "Can run in foreground or as a background daemon.",
         epilog="""Examples:
-  macbot schedule --goal "Check emails" --interval 300
-  macbot schedule --goal "Check emails" --interval 300 --background
-  macbot schedule status
-  macbot schedule stop
-  macbot schedule log --follow"""
+  son schedule --goal "Check emails" --interval 300
+  son schedule --goal "Check emails" --interval 300 --background
+  son schedule status
+  son schedule stop
+  son schedule log --follow"""
     )
     schedule_subparsers = schedule_parser.add_subparsers(dest="schedule_command")
 
@@ -3026,7 +3026,7 @@ Use [bold]macbot <command> --help[/bold] for command details.
         "start",
         help="Start scheduler to run all registered jobs",
         description="Start the cron scheduler to execute all enabled jobs. "
-                    "Jobs must be imported first with 'macbot cron import'."
+                    "Jobs must be imported first with 'son cron import'."
     )
     cron_start.add_argument(
         "-b", "--background", action="store_true",
@@ -3090,7 +3090,7 @@ Use [bold]macbot <command> --help[/bold] for command details.
   1h30m   Last 1 hour 30 minutes
 
 Example:
-  macbot memory reset 1h      # Clear entries from last hour"""
+  son memory reset 1h         # Clear entries from last hour"""
     )
     memory_reset.add_argument(
         "time_range",
@@ -3130,10 +3130,10 @@ Skills are loaded from:
   - User: ~/.macbot/skills/
 
 Examples:
-  macbot skills                  List all skills
-  macbot skills show mail        Show details of mail skill
-  macbot skills disable mail     Disable mail skill
-  macbot skills enable mail      Enable mail skill"""
+  son skills                     List all skills
+  son skills show mail           Show details of mail skill
+  son skills disable mail        Disable mail skill
+  son skills enable mail         Enable mail skill"""
     )
     skills_subparsers = skills_parser.add_subparsers(dest="skills_command", metavar="SUBCOMMAND")
 
@@ -3219,16 +3219,16 @@ Examples:
         epilog="""Setup:
   1. Create a bot via @BotFather on Telegram
   2. export MACBOT_TELEGRAM_BOT_TOKEN='your-token'
-  3. macbot telegram whoami  # Get your chat ID
+  3. son telegram whoami     # Get your chat ID
   4. export MACBOT_TELEGRAM_CHAT_ID='your-chat-id'
-  5. macbot telegram start
+  5. son telegram start
 
 Examples:
-  macbot telegram start        Start in foreground
-  macbot telegram start -d     Start as daemon
-  macbot telegram status       Check service status
-  macbot telegram stop         Stop the daemon
-  macbot telegram send "Hi"    Send a test message"""
+  son telegram start           Start in foreground
+  son telegram start -d        Start as daemon
+  son telegram status          Check service status
+  son telegram stop            Stop the daemon
+  son telegram send "Hi"       Send a test message"""
     )
     telegram_subparsers = telegram_parser.add_subparsers(dest="telegram_command", metavar="SUBCOMMAND")
 
