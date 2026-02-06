@@ -1273,8 +1273,6 @@ def cmd_doctor(args: argparse.Namespace) -> None:
         check("API Key", False, "Not set",
               f"Set {key_name} or run 'son onboard' to configure")
 
-    check("Model", True, model)
-
     # Data directory
     data_dir = Path.home() / ".macbot"
     if data_dir.exists():
@@ -2637,6 +2635,60 @@ def cmd_telegram_whoami(args: argparse.Namespace) -> None:
         console.print("\n[dim]Stopped.[/dim]")
 
 
+def cmd_telegram_detect_chat_id(args: argparse.Namespace) -> None:
+    """Wait for a single Telegram message and print the chat ID.
+
+    Machine-readable output for the onboarding UI.
+    Prints CHAT_ID=<id> on success, or ERROR=<msg> on failure.
+    """
+    from macbot.telegram import TelegramBot
+
+    if not settings.telegram_bot_token:
+        print("ERROR=MACBOT_TELEGRAM_BOT_TOKEN not set")
+        sys.exit(1)
+
+    timeout = getattr(args, "timeout", 60)
+
+    async def _detect() -> str | None:
+        bot = TelegramBot(settings.telegram_bot_token)
+        try:
+            # Drain any old updates first
+            updates = await bot.get_updates(offset=None, timeout=0)
+            offset = None
+            if updates:
+                offset = updates[-1].update_id + 1
+
+            # Now wait for a fresh message
+            import time
+            start = time.time()
+            while time.time() - start < timeout:
+                remaining = max(1, int(timeout - (time.time() - start)))
+                poll_timeout = min(remaining, 15)
+                updates = await bot.get_updates(offset=offset, timeout=poll_timeout)
+                for update in updates:
+                    offset = update.update_id + 1
+                    if update.message:
+                        await bot.close()
+                        return str(update.message.chat_id)
+            await bot.close()
+            return None
+        except Exception as e:
+            await bot.close()
+            print(f"ERROR={e}")
+            sys.exit(1)
+
+    try:
+        chat_id = asyncio.run(_detect())
+        if chat_id:
+            print(f"CHAT_ID={chat_id}")
+        else:
+            print("ERROR=Timeout waiting for message")
+            sys.exit(1)
+    except KeyboardInterrupt:
+        print("ERROR=Cancelled")
+        sys.exit(1)
+
+
 def main() -> NoReturn:
     """Main entry point for Son of Simon CLI."""
     # Check for --help-all before argparse processes it
@@ -3281,6 +3333,19 @@ Examples:
         description="Helps you find your Telegram chat ID by listening for messages."
     )
     telegram_whoami.set_defaults(func=cmd_telegram_whoami)
+
+    # telegram detect-chat-id (machine-readable, used by onboarding UI)
+    telegram_detect = telegram_subparsers.add_parser(
+        "detect-chat-id",
+        help="Wait for a message and print the chat ID (machine-readable)",
+        description="Polls for a single incoming message and prints CHAT_ID=<id>. "
+                    "Used by the onboarding UI to auto-detect the user's chat ID."
+    )
+    telegram_detect.add_argument(
+        "--timeout", type=int, default=60,
+        help="Seconds to wait for a message (default: 60)"
+    )
+    telegram_detect.set_defaults(func=cmd_telegram_detect_chat_id)
 
     args = parser.parse_args()
     setup_logging(args.verbose)

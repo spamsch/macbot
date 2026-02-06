@@ -114,6 +114,38 @@ class MacbotService:
             self._chat_agents[chat_id] = Agent(self.registry)
         return self._chat_agents[chat_id]
 
+    def _save_chat_id(self, chat_id: str) -> None:
+        """Auto-save a detected Telegram chat ID to the config file.
+
+        Called on the first incoming message when MACBOT_TELEGRAM_CHAT_ID
+        is not set, so the user doesn't have to configure it manually.
+        """
+        env_file = Path.home() / ".macbot" / ".env"
+        try:
+            if env_file.exists():
+                content = env_file.read_text()
+            else:
+                content = ""
+
+            # Don't duplicate if already present
+            if f"MACBOT_TELEGRAM_CHAT_ID={chat_id}" in content:
+                return
+
+            # Remove any existing (empty) chat ID line
+            lines = [l for l in content.splitlines()
+                     if not l.strip().startswith("MACBOT_TELEGRAM_CHAT_ID=")]
+            lines.append(f"MACBOT_TELEGRAM_CHAT_ID={chat_id}")
+            env_file.write_text("\n".join(lines) + "\n")
+
+            # Update in-memory settings
+            settings.telegram_chat_id = chat_id
+            self.telegram_service.default_chat_id = chat_id
+
+            print(f"  ✓ Auto-saved Telegram chat ID: {chat_id}")
+            logger.info(f"Auto-saved MACBOT_TELEGRAM_CHAT_ID={chat_id}")
+        except Exception as e:
+            logger.error(f"Failed to auto-save chat ID: {e}")
+
     def _setup_cron(self) -> bool:
         """Set up the cron service.
 
@@ -167,6 +199,10 @@ class MacbotService:
             # Show incoming message in console
             print(f"\n[{timestamp}] 📩 Telegram: {text[:100]}{'...' if len(text) > 100 else ''}")
             logger.info(f"Telegram: Message from {chat_id}: {text[:50]}...")
+
+            # Auto-detect chat ID if not configured
+            if not settings.telegram_chat_id:
+                self._save_chat_id(chat_id)
 
             # Handle special commands
             if text.strip().lower() in ("/reset", "/clear", "/new"):

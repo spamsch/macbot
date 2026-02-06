@@ -2,7 +2,9 @@
   import { Button, Input } from "$lib/components/ui";
   import { invoke } from "@tauri-apps/api/core";
   import { open } from "@tauri-apps/plugin-shell";
-  import { MessageSquare, ExternalLink, Check, AlertCircle, ArrowRight, ArrowLeft, Info, Smartphone } from "lucide-svelte";
+  import { Command } from "@tauri-apps/plugin-shell";
+  import { resourceDir, join, dirname } from "@tauri-apps/api/path";
+  import { MessageSquare, ExternalLink, Check, AlertCircle, ArrowRight, ArrowLeft, Info, Smartphone, Loader2 } from "lucide-svelte";
   import { onboardingStore } from "$lib/stores/onboarding.svelte";
 
   interface Props {
@@ -15,6 +17,8 @@
   let botToken = $state("");
   let saving = $state(false);
   let configured = $state(onboardingStore.state.data.telegram.configured);
+  let chatIdDetected = $state(false);
+  let detectingChatId = $state(false);
   let error = $state<string | null>(null);
 
   async function openTelegram() {
@@ -63,6 +67,47 @@
       error = `Something went wrong: ${e}`;
     } finally {
       saving = false;
+    }
+  }
+
+  async function detectChatId() {
+    detectingChatId = true;
+    error = null;
+
+    try {
+      const resourcePath = await resourceDir();
+      const contentsPath = await dirname(resourcePath);
+      const sonPath = await join(contentsPath, "MacOS", "son");
+
+      // Run `son telegram detect-chat-id` which polls for a message and returns the chat ID
+      const command = Command.create("exec-sh", [
+        "-c",
+        `"${sonPath}" telegram detect-chat-id 2>&1`,
+      ]);
+      const result = await command.execute();
+      const output = result.stdout.trim();
+
+      // Parse the chat ID from the output (format: "CHAT_ID=12345")
+      const match = output.match(/CHAT_ID=(\d+)/);
+      if (match) {
+        const chatId = match[1];
+
+        // Write chat ID to config
+        let config = await invoke<string>("read_config");
+        const lines = config.split("\n").filter((line) => {
+          return !line.trim().startsWith("MACBOT_TELEGRAM_CHAT_ID=");
+        });
+        lines.push(`MACBOT_TELEGRAM_CHAT_ID=${chatId}`);
+        await invoke("write_config", { content: lines.join("\n") + "\n" });
+
+        chatIdDetected = true;
+      } else {
+        error = "No message received. You can try again, or skip and set it up later.";
+      }
+    } catch (e) {
+      error = `Detection failed: ${e}`;
+    } finally {
+      detectingChatId = false;
     }
   }
 
@@ -150,16 +195,57 @@
       {saving ? "Saving..." : "Save Bot Token"}
     </Button>
   {:else}
-    <!-- Success State -->
+    <!-- Token saved -->
     <div class="flex items-center gap-3 p-5 bg-success/10 rounded-xl border border-success/30 mb-6">
       <div class="w-10 h-10 rounded-full bg-success/20 flex items-center justify-center">
         <Check class="w-6 h-6 text-success" />
       </div>
       <div>
-        <p class="font-semibold text-success">Telegram connected!</p>
-        <p class="text-sm text-text-muted">Send a message to your bot to test it once setup is complete.</p>
+        <p class="font-semibold text-success">Bot token saved!</p>
+        <p class="text-sm text-text-muted">
+          {#if chatIdDetected}
+            Chat ID detected. You're all set!
+          {:else}
+            One more step — link your Telegram account below.
+          {/if}
+        </p>
       </div>
     </div>
+
+    <!-- Chat ID Detection -->
+    {#if !chatIdDetected}
+      <div class="mb-6 p-5 bg-bg-card rounded-xl border border-border">
+        <h3 class="font-semibold text-text mb-2">Link your Telegram account</h3>
+        <p class="text-sm text-text-muted mb-4">
+          Open Telegram and send any message (e.g. "hello") to your new bot,
+          then click the button below. This lets Son of Simon send you proactive
+          updates like heartbeat results.
+        </p>
+
+        <Button
+          onclick={detectChatId}
+          loading={detectingChatId}
+          disabled={detectingChatId}
+        >
+          {#if detectingChatId}
+            <Loader2 class="w-4 h-4 animate-spin" />
+            Waiting for your message...
+          {:else}
+            Detect My Chat ID
+          {/if}
+        </Button>
+      </div>
+    {:else}
+      <div class="flex items-center gap-3 p-5 bg-success/10 rounded-xl border border-success/30 mb-6">
+        <div class="w-10 h-10 rounded-full bg-success/20 flex items-center justify-center">
+          <Check class="w-6 h-6 text-success" />
+        </div>
+        <div>
+          <p class="font-semibold text-success">Chat ID linked!</p>
+          <p class="text-sm text-text-muted">Son of Simon can now send you proactive messages.</p>
+        </div>
+      </div>
+    {/if}
   {/if}
 
   {#if error && !configured}
