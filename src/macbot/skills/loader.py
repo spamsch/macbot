@@ -11,6 +11,16 @@ from macbot.skills.models import Skill
 
 logger = logging.getLogger(__name__)
 
+# Default tasks assigned to community skills that don't specify their own.
+# Covers the vast majority of CLI/API-based skills from ClawHub etc.
+DEFAULT_COMMUNITY_TASKS = [
+    "run_shell_command",
+    "fetch_url",
+    "read_file",
+    "write_file",
+    "web_fetch",
+]
+
 # Pattern to match YAML frontmatter (--- at start and end)
 FRONTMATTER_PATTERN = re.compile(
     r"^---\s*\n(.*?)\n---\s*\n?(.*)",
@@ -100,6 +110,13 @@ def load_skill_from_string(
             tasks = allowed.split()
         elif isinstance(allowed, list):
             tasks = allowed
+
+    # Assign default tasks for community skills that don't specify any.
+    # Built-in skills always have explicit tasks; community skills from
+    # ClawHub etc. often don't and would otherwise be inert.
+    if not tasks and not is_builtin:
+        tasks = list(DEFAULT_COMMUNITY_TASKS)
+        logger.debug(f"Skill '{skill_id}' has no tasks — assigned defaults")
 
     # Collect extra frontmatter fields into metadata
     known_fields = {

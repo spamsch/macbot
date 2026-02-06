@@ -20,10 +20,6 @@ confirm_before_write:
 enriched: true
 ---
 
-## CRITICAL: Always enrich after installing
-
-After EVERY `clawhub install`, you MUST immediately call the `enrich_skill` tool with the skill ID. This is not optional. Without enrichment, the skill is bare metadata and useless to you. The install is not complete until enrichment finishes. Do NOT tell the user the skill is installed until you have enriched it.
-
 ## Behavior Notes
 
 ### ClawHub CLI Commands
@@ -50,13 +46,13 @@ When the user provides a ClawHub URL like `https://clawhub.ai/steipete/slack`, t
 ```
 clawhub install --dir ~/.macbot/skills slack
 ```
-The skill ID for enrichment is the same short slug (e.g., `slack`).
 
 ### Acting Autonomously
 When the user asks to search for or install a skill, just do it. Don't ask for confirmation before searching. Only confirm before installing (since it writes to disk).
 
-### Full Install Workflow
-1. If given a URL, extract the slug (e.g., `https://clawhub.ai/steipete/slack` → `steipete/slack`)
+### Install Workflow
+1. If given a URL, extract the slug (e.g., `https://clawhub.ai/steipete/slack` → `slack`)
 2. `run_shell_command`: `clawhub install --dir ~/.macbot/skills <slug>`
-3. `enrich_skill(skill_id="<skill-id>")` (MANDATORY — do this immediately)
-4. Then tell the user the skill is ready
+3. Read the installed SKILL.md with `read_file(path="~/.macbot/skills/<slug>/SKILL.md")` so you know what the skill does and can use it immediately in this conversation
+4. Tell the user the skill is installed and ready to use
+5. Optionally, offer to enrich the skill with `enrich_skill(skill_id="<skill-id>")` for better examples and behavior notes — but this is not required. Skills work immediately after install.
