@@ -12,7 +12,7 @@
 
 ## Start here (early testers)
 
-If you're here from Reddit / HN, the fastest way to help is to get to a first "it worked" moment, then report friction.
+If you're here from a social media post, the fastest way to help is to get to a first "it worked" moment, then report friction.
 
 1. Download the latest `.dmg` from Releases and complete the setup wizard
 2. Grant the macOS permissions it asks for (especially **Automation**)
@@ -27,11 +27,11 @@ If you hit an error, jump to **FAQ** below and open an Issue/Discussion with the
 
 Son of Simon is an AI assistant for macOS that works directly with your built-in Apple apps — Mail, Calendar, Reminders, Notes, and Safari.
 
-Where many agent tools rely on browser automation or OAuth flows to access Gmail/Office 365, Son of Simon leans on Apple's native app integration. Add your account in Apple Mail/Calendar and the agent can use it.
+Where many agent tools rely on browser automation or OAuth flows to access Gmail or Office 365, Son of Simon leans on Apple's native app integration. Add your account in Apple Mail/Calendar and the agent can use it.
 
 Son of Simon does not require a separate local gateway service for normal use. That reduces moving parts and attack surface compared to gateway-based setups.
 
-Skills are compatible with the [AgentSkills standard](https://agentskills.io) used by OpenClaw, Claude Code, and Cursor — so community skills work across tools.
+Skills are compatible with the [AgentSkills standard](https://agentskills.io) used by OpenClaw, Claude Code, and Cursor — so community skills work across tools. Almost any skill from https://clawhub.ai will work.
 
 You do not need to code. Download the app, sign in, and start asking.
 
