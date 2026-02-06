@@ -2303,6 +2303,48 @@ def cmd_skills_disable(args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
+def cmd_skills_enrich(args: argparse.Namespace) -> None:
+    """Enrich a skill with AI-generated tasks, examples, and behavior notes."""
+    from macbot.skills import SkillsRegistry, enrich_skill, is_enriched
+
+    registry = SkillsRegistry()
+    skill = registry.get(args.skill_id)
+
+    if not skill:
+        console.print(f"[red]Skill not found:[/red] {args.skill_id}")
+        console.print("\nAvailable skills:")
+        for s in registry.list_skills():
+            console.print(f"  - {s.id}")
+        sys.exit(1)
+
+    force = getattr(args, "force", False)
+
+    if is_enriched(skill) and not force:
+        console.print(f"[green]Skill '{skill.id}' is already enriched.[/green] Use --force to re-enrich.")
+        return
+
+    if not skill.source_path:
+        console.print(f"[red]Cannot enrich built-in skill '{skill.id}' — no file on disk.[/red]")
+        console.print("Customize it first with: son skills show " + skill.id)
+        sys.exit(1)
+
+    console.print(f"[yellow]Enriching skill '{skill.id}'...[/yellow]")
+
+    try:
+        enriched = asyncio.get_event_loop().run_until_complete(
+            enrich_skill(skill, force=force)
+        )
+        console.print(f"[green]Enriched '{enriched.id}' successfully![/green]")
+        console.print(f"  Tasks: {', '.join(enriched.tasks) if enriched.tasks else '(none)'}")
+        console.print(f"  Examples: {len(enriched.examples)}")
+        console.print(f"  Body: {len(enriched.body)} chars")
+        if enriched.source_path:
+            console.print(f"  [dim]Written to: {enriched.source_path}[/dim]")
+    except Exception as e:
+        console.print(f"[red]Enrichment failed:[/red] {e}")
+        sys.exit(1)
+
+
 def cmd_skills_reload(args: argparse.Namespace) -> None:
     """Reload skills in the running service."""
     from macbot.service import get_service_pid
@@ -3143,6 +3185,22 @@ Examples:
         help="Skill ID to disable"
     )
     skills_disable.set_defaults(func=cmd_skills_disable)
+
+    # skills enrich
+    skills_enrich = skills_subparsers.add_parser(
+        "enrich",
+        help="Enrich a skill with AI-generated tasks, examples, and notes",
+        description="Use the LLM to add tasks, examples, and behavior notes to a bare skill."
+    )
+    skills_enrich.add_argument(
+        "skill_id",
+        help="Skill ID to enrich"
+    )
+    skills_enrich.add_argument(
+        "--force", action="store_true",
+        help="Re-enrich even if already enriched"
+    )
+    skills_enrich.set_defaults(func=cmd_skills_enrich)
 
     # skills reload
     skills_reload = skills_subparsers.add_parser(

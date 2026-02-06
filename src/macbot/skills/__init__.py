@@ -8,6 +8,7 @@ Key distinction:
 - Skills = Declarative guidance that improves reliability
 """
 
+from macbot.skills.enricher import enrich_skill, is_enriched
 from macbot.skills.loader import load_skill, load_skill_from_string
 from macbot.skills.models import Skill, SkillsConfig
 from macbot.skills.registry import SkillsRegistry
@@ -16,6 +17,8 @@ __all__ = [
     "Skill",
     "SkillsConfig",
     "SkillsRegistry",
+    "enrich_skill",
+    "is_enriched",
     "load_skill",
     "load_skill_from_string",
 ]
