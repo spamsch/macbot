@@ -73,6 +73,8 @@ First success (safe demo prompts):
   <img src="docs/images/dashboard.png" alt="Dashboard" width="500">
 </p>
 
+## Quick video showing interaction from Telegram
+
 <p align="center">
   <img src="docs/son-of-simon_preview_blur.gif" alt="Blur preview" width="500">
 </p>
