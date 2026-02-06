@@ -3353,7 +3353,7 @@ dependencies = [
 
 [[package]]
 name = "son-of-simon"
-version = "0.1.43"
+version = "0.1.44"
 dependencies = [
  "dirs 5.0.1",
  "macos-accessibility-client",
