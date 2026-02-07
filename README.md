@@ -201,7 +201,7 @@ Memory is stored locally under `~/.macbot/` (not in a cloud account). You can re
 
 ## Optional extras
 
-- **Microsoft Teams** — Ask the agent to "set up Teams". It registers an Azure AD app and authenticates you via browser. Supports multiple accounts (e.g., work + personal tenant). Requires `az` CLI (`brew install azure-cli`).
+- **Microsoft Teams** — Ask the agent to "set up Teams". The [Azure CLI](https://learn.microsoft.com/en-us/cli/azure/) (`brew install azure-cli`) handles the Azure AD app registration so you never need to navigate the Azure Portal. Supports multiple accounts (e.g., work + personal tenant). See [Teams setup guide](docs/TEAMS_SETUP.md) for details.
 - Paperless-ngx integration for documents
 - Time tracking
 - Scheduled jobs (daily or hourly tasks)
