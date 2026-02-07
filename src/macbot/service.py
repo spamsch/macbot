@@ -472,10 +472,19 @@ class MacbotService:
         executor.shutdown(wait=False)
 
     async def _run_interactive(self) -> None:
-        """Run interactive console input loop."""
+        """Run interactive console input loop with readline support."""
+        import readline
         from concurrent.futures import ThreadPoolExecutor
         from rich.console import Console
         from rich.markdown import Markdown
+
+        # Set up readline with persistent history
+        history_file = MACBOT_DIR / "input_history"
+        try:
+            readline.read_history_file(history_file)
+        except FileNotFoundError:
+            pass
+        readline.set_history_length(500)
 
         executor = ThreadPoolExecutor(max_workers=1)
         loop = asyncio.get_event_loop()
@@ -499,13 +508,13 @@ class MacbotService:
                 total = self._format_tokens(stats["session_total_tokens"])
 
                 if stats["session_total_tokens"] > 0:
-                    prompt = f"[dim](ctx:{ctx} total:{total})[/dim] [bold blue]→[/bold blue] "
+                    prompt = f"\x1b[2m(ctx:{ctx} total:{total})\x1b[0m \x1b[1;34m→\x1b[0m "
                 else:
-                    prompt = "[bold blue]→[/bold blue] "
+                    prompt = "\x1b[1;34m→\x1b[0m "
 
-                # Read input in a thread to not block the event loop
+                # Use input() instead of console.input() for readline support
                 user_input = await loop.run_in_executor(
-                    executor, lambda p=prompt: console.input(p).strip()
+                    executor, lambda p=prompt: input(p).strip()
                 )
 
                 if not user_input:
@@ -518,6 +527,7 @@ class MacbotService:
                         console.print(f"\n[dim]Session total: {stats['session_total_tokens']:,} tokens "
                                       f"(in: {stats['session_input_tokens']:,}, out: {stats['session_output_tokens']:,})[/dim]")
                     console.print("[dim][Stopping service...][/dim]")
+                    readline.write_history_file(history_file)
                     await self.stop()
                     break
 
@@ -558,8 +568,10 @@ class MacbotService:
                     console.print(f"\n[red]Error: {e}[/red]\n")
 
             except EOFError:
+                readline.write_history_file(history_file)
                 break
             except asyncio.CancelledError:
+                readline.write_history_file(history_file)
                 break
 
         executor.shutdown(wait=False)

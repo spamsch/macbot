@@ -873,6 +873,168 @@ class ListNotesTask(Task):
         return await run_script("notes/list-notes.sh", args)
 
 
+class ListNoteFoldersTask(Task):
+    """List all folders in Notes.app."""
+
+    @property
+    def name(self) -> str:
+        return "list_note_folders"
+
+    @property
+    def description(self) -> str:
+        return "List all folders in Notes.app with note counts."
+
+    async def execute(self) -> dict[str, Any]:
+        """List note folders.
+
+        Returns:
+            Dictionary with folder list and note counts.
+        """
+        return await run_script("notes/list-folders.sh", [])
+
+
+class CreateNoteFolderTask(Task):
+    """Create a new folder in Notes.app."""
+
+    @property
+    def name(self) -> str:
+        return "create_note_folder"
+
+    @property
+    def description(self) -> str:
+        return "Create a new folder in Notes.app. Optionally nest inside a parent folder."
+
+    async def execute(
+        self,
+        name: str,
+        parent: str | None = None,
+    ) -> dict[str, Any]:
+        """Create a note folder.
+
+        Args:
+            name: Name for the new folder.
+            parent: Parent folder name to nest inside (optional).
+
+        Returns:
+            Dictionary with creation result.
+        """
+        args = ["--name", name]
+        if parent:
+            args.extend(["--parent", parent])
+        return await run_script("notes/create-folder.sh", args)
+
+
+class DeleteNoteFolderTask(Task):
+    """Delete a folder in Notes.app."""
+
+    @property
+    def name(self) -> str:
+        return "delete_note_folder"
+
+    @property
+    def description(self) -> str:
+        return "Delete a folder in Notes.app. Folder must be empty (move or delete notes first)."
+
+    async def execute(self, name: str) -> dict[str, Any]:
+        """Delete a note folder.
+
+        Args:
+            name: Name of the folder to delete.
+
+        Returns:
+            Dictionary with deletion result.
+        """
+        return await run_script("notes/delete-folder.sh", ["--name", name])
+
+
+class RenameNoteFolderTask(Task):
+    """Rename a folder in Notes.app."""
+
+    @property
+    def name(self) -> str:
+        return "rename_note_folder"
+
+    @property
+    def description(self) -> str:
+        return "Rename a folder in Notes.app."
+
+    async def execute(self, name: str, new_name: str) -> dict[str, Any]:
+        """Rename a note folder.
+
+        Args:
+            name: Current folder name.
+            new_name: New folder name.
+
+        Returns:
+            Dictionary with rename result.
+        """
+        return await run_script("notes/rename-folder.sh", ["--name", name, "--new-name", new_name])
+
+
+class MoveNoteTask(Task):
+    """Move a note to a different folder in Notes.app."""
+
+    @property
+    def name(self) -> str:
+        return "move_note"
+
+    @property
+    def description(self) -> str:
+        return "Move a note to a different folder in Notes.app. Searches by title (partial match)."
+
+    async def execute(
+        self,
+        title: str,
+        to: str,
+        folder: str | None = None,
+    ) -> dict[str, Any]:
+        """Move a note.
+
+        Args:
+            title: Title (or partial title) of the note to move.
+            to: Destination folder name.
+            folder: Source folder to search in (optional, searches all if omitted).
+
+        Returns:
+            Dictionary with move result.
+        """
+        args = ["--title", title, "--to", to]
+        if folder:
+            args.extend(["--from", folder])
+        return await run_script("notes/move-note.sh", args)
+
+
+class DeleteNoteTask(Task):
+    """Delete a note in Notes.app."""
+
+    @property
+    def name(self) -> str:
+        return "delete_note"
+
+    @property
+    def description(self) -> str:
+        return "Delete a note in Notes.app. Searches by title (partial match). Moves to Recently Deleted."
+
+    async def execute(
+        self,
+        title: str,
+        folder: str | None = None,
+    ) -> dict[str, Any]:
+        """Delete a note.
+
+        Args:
+            title: Title (or partial title) of the note to delete.
+            folder: Folder to search in (optional, searches all if omitted).
+
+        Returns:
+            Dictionary with deletion result.
+        """
+        args = ["--title", title]
+        if folder:
+            args.extend(["--folder", folder])
+        return await run_script("notes/delete-note.sh", args)
+
+
 # =============================================================================
 # SAFARI TASKS
 # =============================================================================
@@ -1267,6 +1429,12 @@ def register_macos_tasks(registry) -> None:
     registry.register(CreateNoteTask())
     registry.register(SearchNotesTask())
     registry.register(ListNotesTask())
+    registry.register(ListNoteFoldersTask())
+    registry.register(CreateNoteFolderTask())
+    registry.register(DeleteNoteFolderTask())
+    registry.register(RenameNoteFolderTask())
+    registry.register(MoveNoteTask())
+    registry.register(DeleteNoteTask())
 
     # Safari tasks
     registry.register(GetCurrentPageTask())
