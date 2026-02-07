@@ -8,12 +8,12 @@ apps:
 tasks:
   - spotlight_search
 examples:
+  - "What files did I work on today?"
+  - "Which documents did I open this week?"
   - "Find PDFs containing budget"
   - "Search for files named meeting notes"
   - "Find documents modified in the last 3 days"
-  - "Search for images in my Downloads folder"
   - "Find spreadsheets about revenue"
-  - "Look for presentations created this week"
 safe_defaults:
   limit: 20
   days: 30
@@ -27,18 +27,28 @@ requires_permissions: []
 
 `spotlight_search` uses macOS Spotlight (mdfind) to search the system's pre-built file index. Searches are extremely fast (milliseconds) because they query an existing index rather than scanning files.
 
+### Recently Used Files
+
+Use `recently_used=True` to find files the user actually opened/worked on. This uses macOS's `kMDItemLastUsedDate` tracking, which records when files were opened by any application.
+
+- **"what did I work on today"** -> `spotlight_search(recently_used=True, exclude_apps=True, days=1)`
+- **"files I opened this week"** -> `spotlight_search(recently_used=True, exclude_apps=True, days=7)`
+- **"recent PDFs"** -> `spotlight_search(recently_used=True, content_type="pdf", days=7)`
+
+Always use `exclude_apps=True` with `recently_used` unless the user specifically asks about applications. Without it, results are cluttered with system apps.
+
 ### Important: Does NOT Search Mail.app
 
 Mail.app uses Core Spotlight, a separate private index that is NOT accessible via `mdfind`. To search emails in Mail.app, always use `search_emails` (AppleScript-based). This tool can find `.eml` files stored on disk (e.g., in OneDrive, Downloads), but not messages in Mail.app mailboxes.
 
 ### File and Document Search
 
-This is the primary use case. Search by:
+Search by:
 - `file_name` — file name pattern (partial match, case-insensitive)
 - `query` — full-text content search across file contents
 - `body` — alias for content text search
 - `content_type` — filter by file type
-- `days` — limit to recently modified files
+- `days` — limit to recently modified files (or recently opened when `recently_used=True`)
 - `directory` — restrict search to a specific directory
 
 ### Content Types
@@ -54,18 +64,14 @@ This is the primary use case. Search by:
 
 ### Common Patterns
 
+- **"what did I work on"** -> `spotlight_search(recently_used=True, exclude_apps=True, days=1)`
+- **"files I opened this week"** -> `spotlight_search(recently_used=True, exclude_apps=True, days=7)`
 - **"find PDF named X"** -> `spotlight_search(file_name="X", content_type="pdf")`
 - **"documents modified today"** -> `spotlight_search(content_type="document", days=1)`
 - **"search files for X in Downloads"** -> `spotlight_search(query="X", directory="~/Downloads")`
-- **"find images larger than..."** -> `spotlight_search(content_type="image", days=7)` (then check sizes in results)
 - **"search all spreadsheets for budget"** -> `spotlight_search(query="budget", content_type="spreadsheet")`
-- **"find recent presentations"** -> `spotlight_search(content_type="presentation", days=14)`
-
-### Email-Related Parameters
-
-The `sender`, `recipient`, `subject`, `unread`, `flagged`, and `has_attachments` parameters search Spotlight email metadata attributes. These only work for `.eml` files stored on disk (e.g., saved emails, OneDrive archives), NOT for Mail.app mailbox messages.
+- **"find recent presentations"** -> `spotlight_search(recently_used=True, content_type="presentation", days=14)`
 
 ### Output Format
 
-**For files:** Shows Name, Path, Type, Size, and Modified date.
-**For emails (.eml):** Shows Subject, From, Date, Status, Message-ID, and Attachments (when metadata is available).
+**For files:** Shows Name, Path, Type, Size, Modified date, and Last opened date (when available).

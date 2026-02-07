@@ -1053,9 +1053,9 @@ class SpotlightSearchTask(Task):
     def description(self) -> str:
         return (
             "Fast indexed search using macOS Spotlight (mdfind). "
-            "Much faster than search_emails for finding emails by body text or across all mailboxes. "
-            "Returns Message-IDs that can be used with search_emails, move_email, and download_attachments. "
-            "Also searches files and documents on disk by name, content, or type."
+            "Searches files and documents on disk by name, content, or type. "
+            "Use recently_used=True to find files the user recently opened (answers 'what did I work on'). "
+            "Can also find .eml files on disk (but NOT Mail.app inbox — use search_emails for that)."
         )
 
     async def execute(
@@ -1068,6 +1068,8 @@ class SpotlightSearchTask(Task):
         body: str | None = None,
         file_name: str | None = None,
         days: int | None = None,
+        recently_used: bool = False,
+        exclude_apps: bool = False,
         unread: bool = False,
         flagged: bool = False,
         has_attachments: bool = False,
@@ -1085,6 +1087,8 @@ class SpotlightSearchTask(Task):
             body: Search email body or file content text (fast indexed search).
             file_name: Search by file/document name pattern.
             days: Only return results from the last N days.
+            recently_used: Search by last-opened date instead of modification date. Use with days to find recently opened files. Defaults days to 1 if not specified.
+            exclude_apps: Exclude application bundles from results. Useful with recently_used to show only documents/files.
             unread: Only return unread emails.
             flagged: Only return flagged emails.
             has_attachments: Only return emails with attachments.
@@ -1094,7 +1098,7 @@ class SpotlightSearchTask(Task):
         Returns:
             Dictionary with search results including metadata.
         """
-        if not any([query, sender, recipient, subject, body, file_name, unread, flagged, has_attachments]):
+        if not any([query, sender, recipient, subject, body, file_name, recently_used, unread, flagged, has_attachments]):
             return {"success": False, "error": "Must specify at least one search criterion"}
 
         args = []
@@ -1114,6 +1118,10 @@ class SpotlightSearchTask(Task):
             args.extend(["--name", file_name])
         if days:
             args.extend(["--days", str(days)])
+        if recently_used:
+            args.append("--last-used")
+        if exclude_apps:
+            args.append("--exclude-apps")
         if unread:
             args.append("--unread")
         if flagged:

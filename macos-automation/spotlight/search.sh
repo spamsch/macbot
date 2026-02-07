@@ -18,6 +18,8 @@ EMAIL_SUBJECT=""
 BODY_TEXT=""
 FILE_NAME=""
 DAYS=""
+LAST_USED=false
+EXCLUDE_APPS=false
 UNREAD_ONLY=false
 FLAGGED_ONLY=false
 HAS_ATTACHMENTS=false
@@ -35,6 +37,8 @@ while [[ $# -gt 0 ]]; do
         --body)    BODY_TEXT="$2"; shift 2 ;;
         --name)    FILE_NAME="$2"; shift 2 ;;
         --days)    DAYS="$2"; shift 2 ;;
+        --last-used) LAST_USED=true; shift ;;
+        --exclude-apps) EXCLUDE_APPS=true; shift ;;
         --unread)  UNREAD_ONLY=true; shift ;;
         --flagged) FLAGGED_ONLY=true; shift ;;
         --has-attachments) HAS_ATTACHMENTS=true; shift ;;
@@ -48,9 +52,15 @@ done
 if [[ -z "$SEARCH_QUERY" && -z "$EMAIL_FROM" && -z "$EMAIL_TO" && \
       -z "$EMAIL_SUBJECT" && -z "$BODY_TEXT" && -z "$FILE_NAME" && \
       -z "$CONTENT_TYPE" && -z "$DAYS" && \
+      "$LAST_USED" == false && \
       "$UNREAD_ONLY" == false && "$FLAGGED_ONLY" == false && \
       "$HAS_ATTACHMENTS" == false ]]; then
-    error_exit "Must specify at least one search criterion (--query, --type, --from, --subject, --body, --name, --days, --unread, --flagged, --has-attachments)"
+    error_exit "Must specify at least one search criterion (--query, --type, --from, --subject, --body, --name, --days, --last-used, --unread, --flagged, --has-attachments)"
+fi
+
+# --last-used requires --days to define the time window
+if [[ "$LAST_USED" == true && -z "$DAYS" ]]; then
+    DAYS=1
 fi
 
 # Build mdfind query from parameters
@@ -104,7 +114,9 @@ build_query() {
     if [[ -n "$DAYS" ]]; then
         local cutoff
         cutoff=$(date -v-"${DAYS}"d "+%Y-%m-%dT00:00:00Z")
-        if [[ "$CONTENT_TYPE" == "email" || "$CONTENT_TYPE" == "mail" || \
+        if $LAST_USED; then
+            parts+=("kMDItemLastUsedDate >= \$time.iso(${cutoff})")
+        elif [[ "$CONTENT_TYPE" == "email" || "$CONTENT_TYPE" == "mail" || \
               -n "$EMAIL_FROM" || -n "$EMAIL_TO" || -n "$EMAIL_SUBJECT" || \
               "$UNREAD_ONLY" == true || "$FLAGGED_ONLY" == true ]]; then
             parts+=("com_apple_mail_dateReceived >= \$time.iso(${cutoff})")
@@ -112,6 +124,8 @@ build_query() {
             parts+=("kMDItemContentModificationDate >= \$time.iso(${cutoff})")
         fi
     fi
+
+    # Note: --exclude-apps is handled in post-processing (mdfind doesn't support !=)
 
     # Email status filters
     if $UNREAD_ONLY; then
@@ -264,6 +278,7 @@ format_file() {
         -name kMDItemContentType \
         -name kMDItemFSSize \
         -name kMDItemContentModificationDate \
+        -name kMDItemLastUsedDate \
         "$file" 2>/dev/null | awk -v idx="$idx" -v path="$file" '
     /^kMDItemDisplayName/ {
         sub(/^[^=]+= /, "")
@@ -283,6 +298,10 @@ format_file() {
         sub(/^[^=]+= /, "")
         date_mod = $0
     }
+    /^kMDItemLastUsedDate/ {
+        sub(/^[^=]+= /, "")
+        last_used = $0
+    }
 
     END {
         if (name == "" || name == "(null)") {
@@ -301,6 +320,7 @@ format_file() {
         if (content_type != "" && content_type != "(null)") printf "Type: %s\n", content_type
         if (size_str != "") printf "Size: %s\n", size_str
         if (date_mod != "" && date_mod != "(null)") printf "Modified: %s\n", date_mod
+        if (last_used != "" && last_used != "(null)") printf "Last opened: %s\n", last_used
         printf "\n"
     }
     '
@@ -325,21 +345,30 @@ else
     error_exit "No search query could be built"
 fi
 
-# Get total count
-TOTAL=$(mdfind -count "${MDFIND_ARGS[@]}" 2>/dev/null)
-echo "Found $TOTAL results (showing up to $LIMIT)"
-echo ""
-
-if [[ "$TOTAL" -eq 0 ]]; then
-    echo "No results found."
-    exit 0
+# Get results and display count
+if ! $EXCLUDE_APPS; then
+    TOTAL=$(mdfind -count "${MDFIND_ARGS[@]}" 2>/dev/null)
+    echo "Found $TOTAL results (showing up to $LIMIT)"
+    echo ""
+    if [[ "$TOTAL" -eq 0 ]]; then
+        echo "No results found."
+        exit 0
+    fi
 fi
 
-# Collect results (limited)
+# Collect results (limited), optionally filtering out apps
 RESULTS=()
-while IFS= read -r rLine; do
-    RESULTS+=("$rLine")
-done < <(mdfind "${MDFIND_ARGS[@]}" 2>/dev/null | head -n "$LIMIT")
+if $EXCLUDE_APPS; then
+    while IFS= read -r rLine; do
+        RESULTS+=("$rLine")
+    done < <(mdfind "${MDFIND_ARGS[@]}" 2>/dev/null | grep -v -E '\.(app|prefPane|appex|pluginkit)(/|$)' | head -n "$LIMIT")
+    echo "Found ${#RESULTS[@]} files (excluding apps, showing up to $LIMIT)"
+    echo ""
+else
+    while IFS= read -r rLine; do
+        RESULTS+=("$rLine")
+    done < <(mdfind "${MDFIND_ARGS[@]}" 2>/dev/null | head -n "$LIMIT")
+fi
 
 # Determine if results are emails based on type or parameters used
 IS_EMAIL=false
