@@ -450,6 +450,18 @@ On subsequent requests for the same site, **check memory first** (`memory_list`)
                 condensed.append(msg)
                 i += 1
 
+        # Remove dangling tool_calls at the end (from cancelled requests).
+        # An assistant message with tool_calls must be followed by tool
+        # responses for every call — if not, the API rejects the request.
+        while condensed:
+            last = condensed[-1]
+            if last.role == "tool":
+                condensed.pop()
+            elif last.role == "assistant" and last.tool_calls:
+                condensed.pop()
+            else:
+                break
+
         self.messages = condensed
 
     async def run_single_task(
