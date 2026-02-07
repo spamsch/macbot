@@ -24,14 +24,43 @@ You do not need to code. Download the app, sign in, and start asking.
 
 ## What it can do
 
-- Summarize your inbox and find important emails
-- Create calendar events and reminders
-- Search your notes
-- Open and control Safari tabs
-- Fill out simple web forms (bookings, purchases, etc.)
-- Send and receive messages over Telegram (text or voice)
-- Run daily or weekly routines (optional)
-- Heartbeat — a prompt that runs every 30 minutes while the service is active
+**Mail** — search, read, send, archive, download attachments across all accounts
+
+**Calendar & Reminders** — create events, check your schedule, set reminders, mark them done
+
+**Notes** — create, search, organize into folders, move and delete notes
+
+**Safari & Browser** — open URLs, read pages, click buttons, fill forms, take screenshots, run JavaScript
+
+**WhatsApp** — read chats, search messages, send replies via `whatsapp-cli`
+
+**Telegram** — send and receive messages (text or voice), use as remote control for the agent
+
+**Spotlight** — find files by name, content, type, or recently opened
+
+**Paperless-ngx** — search, upload, download, and tag documents
+
+**Web** — Google search, fetch URLs, read Hacker News
+
+**Files** — read, write, and search files on disk
+
+**Memory** — remembers facts, preferences, and lessons across sessions
+
+### Complex workflows
+
+Because it chains tools automatically, you can ask for things like:
+
+- *"My mom sent me her vacation dates by email — add them to my calendar"* — searches mail, extracts dates, creates calendar events
+- *"Summarize my unread emails and send me a Telegram message with the highlights"* — reads inbox, summarizes, sends via Telegram
+- *"Find the PDF invoice from last week and upload it to Paperless"* — searches Spotlight, reads the file, uploads to Paperless-ngx
+- *"Check my reminders, mark the ones I've done, and create notes for the rest"* — lists reminders, completes some, creates notes
+- *"What did Frank say on WhatsApp about the contract? Reply that I'll review it tomorrow"* — searches WhatsApp messages, sends reply
+- *"Book the 3pm slot on that website I have open in Safari"* — reads the open tab, navigates the form, fills it out
+
+### Background service
+
+- **Cron jobs** — run any prompt on a schedule (daily inbox summary, weekly review, etc.)
+- **Heartbeat** — a configurable prompt that runs periodically while the service is active (`~/.macbot/heartbeat.md`)
 
 ## How it works (simple version)
 
@@ -112,7 +141,7 @@ OpenRouter gives you access to dozens of models with a single API key. Good if y
 
 **Memory** — Edit `~/.macbot/memory.yaml` from the dashboard (Brain icon) or any text editor. This file is loaded into every agent interaction as persistent context. Use it to store preferences, facts, or instructions the agent should always know.
 
-**Heartbeat** — Edit `~/.macbot/heartbeat.md` from the dashboard (Heart icon). When `son start` is running, this prompt executes every 30 minutes during active hours (7 AM - 11 PM). If the file is empty or missing, nothing happens. Results are sent to Telegram if configured.
+**Heartbeat** — Edit `~/.macbot/heartbeat.md` from the dashboard (Heart icon). When `son start` is running, this prompt executes periodically during active hours. If the file is empty or missing, nothing happens. Results are sent to Telegram if configured. Configurable via `MACBOT_HEARTBEAT_INTERVAL` (default: 1800s), `MACBOT_HEARTBEAT_ACTIVE_START` (default: 7), and `MACBOT_HEARTBEAT_ACTIVE_END` (default: 23).
 
 Use it for recurring checks like:
 - Scan Mail for unread messages and flag anything urgent
