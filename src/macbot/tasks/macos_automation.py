@@ -1335,6 +1335,95 @@ class SpotlightSearchTask(Task):
 
 
 # =============================================================================
+# SHORTCUTS TASKS
+# =============================================================================
+
+class ListShortcutsTask(Task):
+    """List available macOS Shortcuts."""
+
+    @property
+    def name(self) -> str:
+        return "list_shortcuts"
+
+    @property
+    def description(self) -> str:
+        return (
+            "List available shortcuts from the macOS Shortcuts app. "
+            "Can filter by folder or list folders."
+        )
+
+    async def execute(
+        self,
+        folder_name: str | None = None,
+        list_folders: bool = False
+    ) -> dict[str, Any]:
+        """List shortcuts.
+
+        Args:
+            folder_name: Only list shortcuts in this folder.
+            list_folders: List shortcut folders instead of shortcuts.
+
+        Returns:
+            Dictionary with shortcut list.
+        """
+        args = []
+        if list_folders:
+            args.append("--folders")
+        elif folder_name:
+            args.extend(["--folder", folder_name])
+
+        return await run_script("shortcuts/list-shortcuts.sh", args)
+
+
+class RunShortcutTask(Task):
+    """Run a macOS Shortcut by name."""
+
+    @property
+    def name(self) -> str:
+        return "run_shortcut"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Run a shortcut from the macOS Shortcuts app by name. "
+            "Shortcuts can automate third-party apps, HomeKit, Focus modes, Music, and more. "
+            "Use list_shortcuts first to see available shortcuts."
+        )
+
+    async def execute(
+        self,
+        shortcut_name: str,
+        input_text: str | None = None
+    ) -> dict[str, Any]:
+        """Run a shortcut.
+
+        Args:
+            shortcut_name: Name of the shortcut to run.
+            input_text: Optional text input to pass to the shortcut.
+
+        Returns:
+            Dictionary with shortcut output.
+        """
+        args = ["--name", shortcut_name]
+
+        if input_text:
+            # Write input to a temp file and pass as --input
+            import tempfile
+            tmp = tempfile.NamedTemporaryFile(
+                mode="w", suffix=".txt", prefix="shortcut-input-", delete=False
+            )
+            try:
+                tmp.write(input_text)
+                tmp.close()
+                args.extend(["--input", tmp.name])
+                return await run_script("shortcuts/run-shortcut.sh", args, timeout=60)
+            finally:
+                os.unlink(tmp.name)
+        else:
+            return await run_script("shortcuts/run-shortcut.sh", args, timeout=60)
+
+
+# =============================================================================
 # WEB TASKS
 # =============================================================================
 
@@ -1444,6 +1533,10 @@ def register_macos_tasks(registry) -> None:
 
     # Spotlight tasks
     registry.register(SpotlightSearchTask())
+
+    # Shortcuts tasks
+    registry.register(ListShortcutsTask())
+    registry.register(RunShortcutTask())
 
     # Web tasks
     registry.register(GetHackerNewsTask())
