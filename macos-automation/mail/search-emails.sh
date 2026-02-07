@@ -233,38 +233,76 @@ tell application "Mail"
                     set mbMsgs to messages of mb
                 end if
 
-                repeat with msg in mbMsgs
-                    set includeMsg to true
-
-                    -- Check sender filter
-                    if "$SENDER_ESCAPED" is not "" then
-                        try
-                            if sender of msg does not contain "$SENDER_ESCAPED" then
-                                set includeMsg to false
-                            end if
-                        on error
-                            set includeMsg to false
-                        end try
-                    end if
-
-                    -- Check subject filter
-                    if includeMsg and "$SUBJECT_ESCAPED" is not "" then
-                        try
-                            if subject of msg does not contain "$SUBJECT_ESCAPED" then
-                                set includeMsg to false
-                            end if
-                        on error
-                            set includeMsg to false
-                        end try
-                    end if
-
-                    if includeMsg then
-                        set end of matchingMsgs to msg
-                        if (count of matchingMsgs) >= $LIMIT then
-                            exit repeat
+                set msgCount to count of mbMsgs
+                if msgCount is 0 then
+                    -- Skip empty mailbox
+                else if "$SENDER_ESCAPED" is "" and "$SUBJECT_ESCAPED" is "" then
+                    -- No sender/subject filter: take messages up to limit
+                    repeat with i from 1 to msgCount
+                        if (count of matchingMsgs) >= $LIMIT then exit repeat
+                        set end of matchingMsgs to item i of mbMsgs
+                    end repeat
+                else
+                    -- Bulk-fetch sender and/or subject lists in single Apple Events (much faster than per-message)
+                    try
+                        if "$SENDER_ESCAPED" is not "" then
+                            set senderList to sender of mbMsgs
+                        else
+                            set senderList to {}
                         end if
-                    end if
-                end repeat
+                        if "$SUBJECT_ESCAPED" is not "" then
+                            set subjectList to subject of mbMsgs
+                        else
+                            set subjectList to {}
+                        end if
+
+                        -- Filter using in-memory lists (no Apple Events in the loop)
+                        repeat with i from 1 to msgCount
+                            set includeMsg to true
+                            if "$SENDER_ESCAPED" is not "" then
+                                if item i of senderList does not contain "$SENDER_ESCAPED" then
+                                    set includeMsg to false
+                                end if
+                            end if
+                            if includeMsg and "$SUBJECT_ESCAPED" is not "" then
+                                if item i of subjectList does not contain "$SUBJECT_ESCAPED" then
+                                    set includeMsg to false
+                                end if
+                            end if
+                            if includeMsg then
+                                set end of matchingMsgs to item i of mbMsgs
+                                if (count of matchingMsgs) >= $LIMIT then exit repeat
+                            end if
+                        end repeat
+                    on error errMsg
+                        -- Fallback to per-message filtering if bulk fetch fails
+                        repeat with msg in mbMsgs
+                            set includeMsg to true
+                            if "$SENDER_ESCAPED" is not "" then
+                                try
+                                    if sender of msg does not contain "$SENDER_ESCAPED" then
+                                        set includeMsg to false
+                                    end if
+                                on error
+                                    set includeMsg to false
+                                end try
+                            end if
+                            if includeMsg and "$SUBJECT_ESCAPED" is not "" then
+                                try
+                                    if subject of msg does not contain "$SUBJECT_ESCAPED" then
+                                        set includeMsg to false
+                                    end if
+                                on error
+                                    set includeMsg to false
+                                end try
+                            end if
+                            if includeMsg then
+                                set end of matchingMsgs to msg
+                                if (count of matchingMsgs) >= $LIMIT then exit repeat
+                            end if
+                        end repeat
+                    end try
+                end if
             end if
 
             if (count of matchingMsgs) >= $LIMIT then

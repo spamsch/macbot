@@ -23,9 +23,6 @@ MACBOT_DIR = Path.home() / ".macbot"
 PID_FILE = MACBOT_DIR / "service.pid"
 LOG_FILE = MACBOT_DIR / "service.log"
 HEARTBEAT_FILE = MACBOT_DIR / "heartbeat.md"
-HEARTBEAT_INTERVAL = 1800  # 30 minutes
-HEARTBEAT_ACTIVE_START = 7   # 7 AM
-HEARTBEAT_ACTIVE_END = 23    # 11 PM
 
 
 def get_service_pid() -> int | None:
@@ -324,15 +321,15 @@ class MacbotService:
         await self.telegram_service.start()
 
     async def _run_heartbeat(self) -> None:
-        """Run the heartbeat loop every 30 minutes.
+        """Run the heartbeat loop at the configured interval.
 
         Reads ~/.macbot/heartbeat.md and executes its content as a prompt.
         If the file doesn't exist or is empty, just prints 'heartbeat'.
-        Only runs during active hours (7 AM - 11 PM) to save API costs.
+        Only runs during active hours to save API costs.
         """
         while self._running:
             try:
-                await asyncio.sleep(HEARTBEAT_INTERVAL)
+                await asyncio.sleep(settings.heartbeat_interval)
             except asyncio.CancelledError:
                 return
 
@@ -340,8 +337,8 @@ class MacbotService:
             timestamp = now.strftime("%H:%M:%S")
 
             # Skip outside active hours
-            if not (HEARTBEAT_ACTIVE_START <= now.hour < HEARTBEAT_ACTIVE_END):
-                logger.debug(f"Heartbeat: Skipping outside active hours ({HEARTBEAT_ACTIVE_START}:00-{HEARTBEAT_ACTIVE_END}:00)")
+            if not (settings.heartbeat_active_start <= now.hour < settings.heartbeat_active_end):
+                logger.debug(f"Heartbeat: Skipping outside active hours ({settings.heartbeat_active_start}:00-{settings.heartbeat_active_end}:00)")
                 continue
 
             try:
@@ -585,7 +582,7 @@ class MacbotService:
         has_telegram = self._setup_telegram()
 
         # Heartbeat always runs
-        logger.info("Starting heartbeat (every 30 minutes)")
+        logger.info(f"Starting heartbeat (every {settings.heartbeat_interval}s)")
         self._tasks.append(asyncio.create_task(self._run_heartbeat()))
 
         if has_cron:
@@ -698,7 +695,7 @@ def run_service(daemon: bool = False, verbose: bool = False, foreground: bool = 
     from macbot import __version__
     console.print(f"[bold]Starting Son of Simon[/bold] v{__version__}...\n")
 
-    console.print(f"  [green]✓[/green] Heartbeat: every 30 minutes, {HEARTBEAT_ACTIVE_START}:00-{HEARTBEAT_ACTIVE_END}:00 (~/.macbot/heartbeat.md)")
+    console.print(f"  [green]✓[/green] Heartbeat: every {settings.heartbeat_interval // 60} minutes, {settings.heartbeat_active_start}:00-{settings.heartbeat_active_end}:00 (~/.macbot/heartbeat.md)")
 
     if has_cron:
         console.print(f"  [green]✓[/green] Scheduled Tasks: {status['cron']['jobs_enabled']} active")

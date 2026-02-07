@@ -123,6 +123,20 @@ Before starting a task, check `get_agent_memory` to see recent context and avoid
         description="Warning threshold for queue wait time in milliseconds",
     )
 
+    # Heartbeat settings
+    heartbeat_interval: int = Field(
+        default=1800,
+        description="Heartbeat interval in seconds (default: 1800 = 30 minutes)",
+    )
+    heartbeat_active_start: int = Field(
+        default=7,
+        description="Heartbeat active hours start (24h format, default: 7 = 7 AM)",
+    )
+    heartbeat_active_end: int = Field(
+        default=23,
+        description="Heartbeat active hours end (24h format, default: 23 = 11 PM)",
+    )
+
     # Cron settings
     cron_storage_path: Path | None = Field(
         default=None,

@@ -23,54 +23,59 @@ requires_permissions: []
 
 ### CRITICAL: Every command MUST use `-store ~/.macbot/whatsapp`
 
-The `-store` flag is MANDATORY on every `whatsapp-cli` invocation. Without it the CLI uses a different default location and will find no session, no contacts, and no messages.
+The `-store` flag is MANDATORY on every `whatsapp-cli` invocation and **MUST come immediately after `whatsapp-cli`, before any subcommand**. Without it the CLI uses a different default location and will find no session, no contacts, and no messages.
 
-**Copy-paste these exact templates — do NOT remove `-store ~/.macbot/whatsapp`:**
+**Copy-paste these exact templates — do NOT remove or reorder `-store ~/.macbot/whatsapp`:**
 
 ```
 # Sync (MUST use timeout — sync never exits on its own)
-timeout 10 whatsapp-cli sync -store ~/.macbot/whatsapp
+timeout 10 whatsapp-cli -store ~/.macbot/whatsapp sync
 
 # List chats
-whatsapp-cli chats list -store ~/.macbot/whatsapp
+whatsapp-cli -store ~/.macbot/whatsapp chats list
 
 # List chats filtered
-whatsapp-cli chats list -store ~/.macbot/whatsapp --query "NAME"
+whatsapp-cli -store ~/.macbot/whatsapp chats list --query "NAME"
 
 # List messages from a chat
-whatsapp-cli messages list -store ~/.macbot/whatsapp --chat JID --limit 30
+whatsapp-cli -store ~/.macbot/whatsapp messages list --chat JID --limit 30
 
 # List recent messages across all chats
-whatsapp-cli messages list -store ~/.macbot/whatsapp --limit 20
+whatsapp-cli -store ~/.macbot/whatsapp messages list --limit 20
 
 # Search messages
-whatsapp-cli messages search -store ~/.macbot/whatsapp --query "TERM"
+whatsapp-cli -store ~/.macbot/whatsapp messages search --query "TERM"
 
 # Search contacts
-whatsapp-cli contacts search -store ~/.macbot/whatsapp --query "NAME"
+whatsapp-cli -store ~/.macbot/whatsapp contacts search --query "NAME"
 
 # Send message
-whatsapp-cli send -store ~/.macbot/whatsapp --to JID --message "TEXT"
+whatsapp-cli -store ~/.macbot/whatsapp send --to JID --message "TEXT"
 
 # Auth (first-time setup)
-whatsapp-cli auth -store ~/.macbot/whatsapp
+whatsapp-cli -store ~/.macbot/whatsapp auth
 ```
 
 ### Tool
 All commands use `run_shell_command` to invoke `whatsapp-cli`.
 
 ### Authentication
-- First-time setup: `whatsapp-cli auth -store ~/.macbot/whatsapp`
+- First-time setup: `whatsapp-cli -store ~/.macbot/whatsapp auth`
 - This displays a QR code the user must scan with WhatsApp on their phone
 - Session persists ~20 days before re-authentication is needed
 - If any command fails with an auth error, tell the user to run auth again
 
 ### Syncing Messages
-- Sync runs **forever** until killed — it never exits on its own. **NEVER run `whatsapp-cli sync` without wrapping it in `timeout`.**
-- Use: `timeout 10 whatsapp-cli sync -store ~/.macbot/whatsapp` (10 seconds is enough to pull new messages)
-- Messages are stored locally in a SQLite database at `~/.macbot/whatsapp/messages.db`
-- **Always run sync before querying** when the user asks for "latest", "new", "recent", or "unread" messages
+- Sync runs **forever** until killed — it never exits on its own.
+- **ALWAYS use the unix `timeout` command:** `timeout 10 whatsapp-cli -store ~/.macbot/whatsapp sync`
+- Do NOT rely on the run_shell_command timeout parameter — you MUST prepend `timeout 10` to the command string itself.
+- **Always sync before querying** when the user asks for "latest", "new", "recent", or "unread" messages
 - If message queries return empty results, run sync and retry
+
+### Be Proactive
+- When the user asks about a contact (e.g. "messages from Frank"), search contacts AND chats in parallel to find the JID faster
+- When summarising messages, add your own interpretation of what the conversation means and suggest possible follow-up actions the user might want to take
+- If a message references something actionable (meeting, deadline, document), proactively suggest creating a reminder or calendar event
 
 ### Listing Chats
 - Pagination: `--limit 20 --page 0`

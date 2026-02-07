@@ -32,9 +32,26 @@ requires_permissions:
 
 ## Behavior Notes
 
+### Performance: Two-Phase Search Pattern
+Email search can be slow (10-30s) because Mail.app processes messages one by one.
+**Always use a two-phase approach to minimize search time:**
+
+1. **Phase 1 — Find (headers only):** Search with the most specific filters possible, `with_content=false` (default), small `limit` (5), and narrow `days` (7 unless user says otherwise). Combine `sender` AND `subject` in a single call when both are known.
+2. **Phase 2 — Read (by message_id):** Once you find the right email, fetch its content with `message_id` + `with_content=true`. Message-ID lookup is near-instant (<1s).
+
+**Bad:** `search_emails(subject="Ferien", days=30, with_content=True)` → slow (30s+, fetches all bodies)
+**Good:** `search_emails(subject="Ferien", sender="mom", days=7, limit=5)` → fast headers → then `search_emails(message_id="<id>", with_content=True)` → instant
+
+### Search Optimization Rules
+- **Combine filters:** Use both `sender` + `subject` in one call instead of two separate searches
+- **Narrow date range:** Use `days=7` by default, only widen if nothing found
+- **Small limit:** Use `limit=5` for targeted searches (default 20 is too many for exploration)
+- **Specify account:** If the user context implies which account, use the `account` parameter to halve search time
+- **Never use `with_content=true` on broad searches** — it adds seconds per result
+
 ### Search Strategy
-- Start with the most specific search first (sender, subject, or account)
-- Only expand search if initial query returns nothing
+- Start with the most specific search first (sender + subject + narrow days)
+- Only expand search (wider days, remove filters) if initial query returns nothing
 - Use `today_only=true` for "today's emails" requests
 - Use the `account` parameter when user says "from X account" (not sender)
 
@@ -44,9 +61,8 @@ requires_permissions:
 - For bulk operations, show count and ask for confirmation
 
 ### Reading Email Content
-- Use `with_content=true` only when the user wants to read the email body
-- Default searches return headers only for efficiency
-- For tracking numbers or specific content, enable `with_content`
+- **Never use `with_content=true` on the initial search** — search headers first, then read by message_id
+- For tracking numbers or specific content, use the two-phase pattern above
 
 ### Handling Multiple Accounts
 - "emails from X account" means emails RECEIVED BY that account (any sender)
