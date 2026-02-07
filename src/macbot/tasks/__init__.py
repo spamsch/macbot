@@ -45,6 +45,7 @@ from macbot.tasks import (
     macos_automation,
     shell_command,
     system_info,
+    teams,
     time_utils,
 )
 
@@ -67,6 +68,7 @@ __all__ = [
     "macos_automation",
     "shell_command",
     "system_info",
+    "teams",
     "time_utils",
 ]
 
@@ -131,5 +133,9 @@ def create_default_registry() -> TaskRegistry:
     # Register skill enrichment task
     from macbot.tasks.skill_enrich import register_skill_enrich_tasks
     register_skill_enrich_tasks(registry)
+
+    # Register Microsoft Teams tasks
+    from macbot.tasks.teams import register_teams_tasks
+    register_teams_tasks(registry)
 
     return registry

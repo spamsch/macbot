@@ -10,6 +10,11 @@
 
 ---
 
+## Why
+
+Your Mac is already set up. Why should an AI make you do it again with OAuth and gateways?
+
+
 ## What is this?
 
 Son of Simon is an AI assistant for macOS that works directly with your built-in Apple apps — Mail, Calendar, Reminders, Notes, and Safari.
@@ -35,6 +40,8 @@ You do not need to code. Download the app, sign in, and start asking.
 **WhatsApp** — read chats, search messages, send replies via `whatsapp-cli`
 
 **Telegram** — send and receive messages (text or voice), use as remote control for the agent
+
+**Microsoft Teams** — list teams and channels, read and send channel and chat messages (multi-account)
 
 **Spotlight** — find files by name, content, type, or recently opened
 
@@ -196,6 +203,7 @@ Memory is stored locally under `~/.macbot/` (not in a cloud account). You can re
 
 ## Optional extras
 
+- **Microsoft Teams** — Ask the agent to "set up Teams". It registers an Azure AD app and authenticates you via browser. Supports multiple accounts (e.g., work + personal tenant). Requires `az` CLI (`brew install azure-cli`).
 - Paperless-ngx integration for documents
 - Time tracking
 - Scheduled jobs (daily or hourly tasks)

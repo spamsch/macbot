@@ -36,6 +36,7 @@ dependencies = [
     "filelock>=3.0.0",
     "pyyaml>=6.0.0",
     "python-telegram-bot>=21.0",
+    "msal>=1.28.0",
 ]
 
 [project.optional-dependencies]
