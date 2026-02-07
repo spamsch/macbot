@@ -19,6 +19,7 @@ CONCEPTS:
 
 import argparse
 import asyncio
+import json
 import logging
 import os
 import signal
@@ -255,10 +256,70 @@ def _show_tasks_summary(registry) -> None:
     console.print()
 
 
+async def stdio_loop(agent: Agent, verbose: bool = False) -> None:
+    """Run a chat loop over stdio using JSON-lines protocol.
+
+    Input (stdin):  {"type": "message", "text": "..."}
+    Output (stdout): {"type": "chunk", "text": "..."}
+                     {"type": "done"}
+                     {"type": "error", "text": "..."}
+    """
+    def _emit(obj: dict) -> None:
+        sys.stdout.write(json.dumps(obj) + "\n")
+        sys.stdout.flush()
+
+    _emit({"type": "ready"})
+
+    loop = asyncio.get_event_loop()
+    while True:
+        try:
+            raw = await loop.run_in_executor(None, sys.stdin.readline)
+            if not raw:
+                # EOF — stdin closed
+                break
+
+            raw = raw.strip()
+            if not raw:
+                continue
+
+            try:
+                msg = json.loads(raw)
+            except json.JSONDecodeError:
+                _emit({"type": "error", "text": "Invalid JSON input"})
+                continue
+
+            if msg.get("type") != "message":
+                _emit({"type": "error", "text": f"Unknown message type: {msg.get('type')}"})
+                continue
+
+            text = msg.get("text", "").strip()
+            if not text:
+                _emit({"type": "error", "text": "Empty message"})
+                continue
+
+            try:
+                result = await agent.run(
+                    text, verbose=verbose, stream=False,
+                    continue_conversation=True, on_event=_emit,
+                )
+                _emit({"type": "chunk", "text": result})
+            except Exception as e:
+                _emit({"type": "error", "text": str(e)})
+
+            _emit({"type": "done"})
+
+        except KeyboardInterrupt:
+            break
+
+
 def cmd_chat(args: argparse.Namespace) -> None:
     """Start an interactive chat session with the agent."""
     registry = create_default_registry()
     agent = Agent(registry)
+
+    if getattr(args, "stdio", False):
+        asyncio.run(stdio_loop(agent, verbose=args.verbose))
+        return
 
     console.print(Panel(
         f"[bold]Son of Simon[/bold] v{__version__}\n\n"
@@ -2888,6 +2949,10 @@ Use [bold]son <command> --help[/bold] for command details.
     chat_parser.add_argument(
         "-v", "--verbose", action="store_true",
         help="Show detailed output including tool calls"
+    )
+    chat_parser.add_argument(
+        "--stdio", action="store_true",
+        help="Use JSON-lines protocol over stdin/stdout (for app integration)"
     )
     chat_parser.set_defaults(func=cmd_chat)
 

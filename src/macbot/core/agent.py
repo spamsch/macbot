@@ -11,6 +11,7 @@ The agent follows a ReAct-style pattern:
 import json
 import logging
 import platform
+from collections.abc import Callable
 from typing import Any
 
 from rich.console import Console
@@ -80,6 +81,7 @@ class Agent:
         verbose: bool = False,
         stream: bool = True,
         continue_conversation: bool = False,
+        on_event: Callable[[dict[str, Any]], None] | None = None,
     ) -> str:
         """Run the agent loop to achieve a goal.
 
@@ -89,6 +91,7 @@ class Agent:
             stream: Whether to stream LLM responses
             continue_conversation: If True, append to existing messages instead of resetting.
                                    Useful for multi-turn conversations (e.g., Telegram chat).
+            on_event: Optional callback for agent events (tool_call, tool_result).
 
         Returns:
             The final response from the agent
@@ -146,7 +149,7 @@ class Agent:
                                 console.print(f"{prefix}{ts}[/dim]")
                             else:
                                 console.print(f"[dim]          {ts}[/dim]")
-                await self._execute_tool_calls(response, verbose)
+                await self._execute_tool_calls(response, verbose, on_event=on_event)
             else:
                 # No tool calls means the agent has finished
                 return response.content or "Task completed."
@@ -295,7 +298,10 @@ On subsequent requests for the same site, **check memory first** (`memory_list`)
         return response
 
     async def _execute_tool_calls(
-        self, response: LLMResponse, verbose: bool = False
+        self,
+        response: LLMResponse,
+        verbose: bool = False,
+        on_event: Callable[[dict[str, Any]], None] | None = None,
     ) -> None:
         """Execute tool calls from the LLM response."""
         # Add assistant message with tool calls to history
@@ -320,9 +326,32 @@ On subsequent requests for the same site, **check memory first** (`memory_list`)
                             val_str = val_str[:60] + "..."
                         console.print(f"    {k}: {val_str}")
 
+            # Emit tool_call event
+            if on_event:
+                args_summary = {}
+                for k, v in (tool_call.arguments or {}).items():
+                    v_str = str(v)
+                    if len(v_str) > 100:
+                        v_str = v_str[:97] + "..."
+                    args_summary[k] = v_str
+                on_event({
+                    "type": "tool_call",
+                    "name": tool_call.name,
+                    "arguments": args_summary,
+                })
+
             result = await self.task_registry.execute(
                 tool_call.name, **tool_call.arguments
             )
+
+            # Emit tool_result event
+            if on_event:
+                on_event({
+                    "type": "tool_result",
+                    "name": tool_call.name,
+                    "success": result.success,
+                    "error": result.error if not result.success else None,
+                })
 
             if verbose:
                 if result.success:

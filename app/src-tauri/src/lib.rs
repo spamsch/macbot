@@ -1,18 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-use std::sync::Mutex;
 use tauri::RunEvent;
-
-// State for managing the running service
-pub struct ServiceState {
-    pub running: bool,
-}
-
-impl Default for ServiceState {
-    fn default() -> Self {
-        Self { running: false }
-    }
-}
 
 // Onboarding state structure
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -186,25 +174,12 @@ fn check_accessibility_permission() -> bool {
     }
 }
 
-// Get service running state
-#[tauri::command]
-fn get_service_state(state: tauri::State<'_, Mutex<ServiceState>>) -> bool {
-    state.lock().unwrap().running
-}
-
-// Set service running state
-#[tauri::command]
-fn set_service_running(running: bool, state: tauri::State<'_, Mutex<ServiceState>>) {
-    state.lock().unwrap().running = running;
-}
-
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_fs::init())
-        .manage(Mutex::new(ServiceState::default()))
         .invoke_handler(tauri::generate_handler![
             read_onboarding_state,
             write_onboarding_state,
@@ -212,8 +187,6 @@ pub fn run() {
             write_config,
             open_system_preferences,
             check_accessibility_permission,
-            get_service_state,
-            set_service_running,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

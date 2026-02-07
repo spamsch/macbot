@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>Son of Simon needs to send Apple Events to automate Mail, Calendar, Reminders, Notes, and Safari on your behalf.</string>
+	<key>NSCalendarsFullAccessUsageDescription</key>
+	<string>Son of Simon needs full access to your calendars to read and create events.</string>
+	<key>NSRemindersFullAccessUsageDescription</key>
+	<string>Son of Simon needs full access to your reminders to read, create, and complete items.</string>
+	<key>NSContactsUsageDescription</key>
+	<string>Son of Simon needs access to your contacts for mail and calendar operations.</string>
+</dict>
+</plist>

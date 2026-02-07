@@ -15,8 +15,6 @@
     STEP_LABELS,
     type Step,
   } from "$lib/stores/onboarding.svelte";
-  import { serviceStore } from "$lib/stores/service.svelte";
-
   let showDashboard = $state(false);
   let currentStep = $derived(onboardingStore.state.current_step as Step);
   let currentStepIndex = $derived(STEPS.indexOf(currentStep));
@@ -25,8 +23,6 @@
     await onboardingStore.load();
     if (onboardingStore.state.completed) {
       showDashboard = true;
-      // Auto-start service when dashboard loads
-      serviceStore.start();
     }
   });
 
@@ -40,7 +36,6 @@
 
   function launchDashboard() {
     showDashboard = true;
-    serviceStore.start();
   }
 </script>
 
