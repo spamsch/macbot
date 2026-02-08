@@ -37,7 +37,7 @@ For a detailed comparison with OpenClaw, see [docs/COMPARISON.md](docs/COMPARISO
 
 **WhatsApp** — read chats, search messages, send replies via `whatsapp-cli`
 
-**Telegram** — send and receive messages (text or voice), use as remote control for the agent
+**Telegram** — send and receive messages (text or voice), use as remote control for the agent. Voice messages (both transcription and voice replies) require an OpenAI API key.
 
 **Microsoft Teams** — list teams and channels, read and send channel and chat messages (multi-account)
 
