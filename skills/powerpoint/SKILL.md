@@ -8,6 +8,7 @@ tasks:
   - run_shell_command
   - read_file
   - spotlight_search
+essential_tasks: []
 examples:
   - "Summarize this PowerPoint presentation"
   - "What are the key points in slides.pptx?"

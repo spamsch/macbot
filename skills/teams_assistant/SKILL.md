@@ -15,6 +15,7 @@ tasks:
   - teams_list_chats
   - teams_read_chat_messages
   - teams_send_chat_message
+essential_tasks: []
 examples:
   - "Set up Teams integration"
   - "List my Teams"

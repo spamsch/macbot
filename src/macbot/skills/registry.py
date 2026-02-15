@@ -137,12 +137,23 @@ class SkillsRegistry:
         ext_name = extension.name if extension.name != extension.id else base.name
         ext_description = extension.description if extension.description else base.description
 
+        # Merge essential_tasks: if both define it, merge and dedupe;
+        # if only one defines it, use that; if neither, None
+        merged_essential: list[str] | None = None
+        if base.essential_tasks is not None and extension.essential_tasks is not None:
+            merged_essential = dedupe_list(base.essential_tasks + extension.essential_tasks)
+        elif base.essential_tasks is not None:
+            merged_essential = base.essential_tasks
+        elif extension.essential_tasks is not None:
+            merged_essential = extension.essential_tasks
+
         return Skill(
             id=base.id,
             name=ext_name,
             description=ext_description,
             apps=dedupe_list(base.apps + extension.apps),
             tasks=dedupe_list(base.tasks + extension.tasks),
+            essential_tasks=merged_essential,
             examples=base.examples + extension.examples,  # Allow duplicates for examples
             safe_defaults={**base.safe_defaults, **extension.safe_defaults},
             confirm_before_write=dedupe_list(base.confirm_before_write + extension.confirm_before_write),
@@ -293,11 +304,14 @@ class SkillsRegistry:
         self._save_config()
         return True
 
-    def get_all_tool_schemas(self, task_registry: TaskRegistry) -> list[dict[str, Any]]:
+    def get_all_tool_schemas(
+        self, task_registry: TaskRegistry, compact: bool = False,
+    ) -> list[dict[str, Any]]:
         """Get tool schemas for all enabled skills.
 
         Args:
             task_registry: Registry of available tasks.
+            compact: If True, use essential_tasks; skip skills with empty essential_tasks.
 
         Returns:
             List of tool schemas (deduplicated by name).
@@ -306,7 +320,10 @@ class SkillsRegistry:
         seen: set[str] = set()
 
         for skill in self.list_enabled_skills():
-            for schema in skill.get_tool_schemas(task_registry):
+            # In compact mode, skip skills whose effective task list is empty
+            if compact and not skill.get_effective_tasks(compact=True):
+                continue
+            for schema in skill.get_tool_schemas(task_registry, compact=compact):
                 name = schema.get("name", "")
                 if name and name not in seen:
                     schemas.append(schema)
@@ -337,6 +354,9 @@ class SkillsRegistry:
 
         for skill in sorted(enabled, key=lambda s: s.name):
             if compact:
+                # Skip skills with empty effective tasks in compact mode
+                if not skill.get_effective_tasks(compact=True):
+                    continue
                 lines.append(skill.format_for_prompt_compact())
             else:
                 lines.append(skill.format_for_prompt(task_registry))

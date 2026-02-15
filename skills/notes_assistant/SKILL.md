@@ -15,6 +15,10 @@ tasks:
   - delete_note
   - rename_note_folder
   - delete_note_folder
+essential_tasks:
+  - search_notes
+  - read_note
+  - create_note
 examples:
   - "Search my notes for the wifi password"
   - "Create a note about today's meeting"

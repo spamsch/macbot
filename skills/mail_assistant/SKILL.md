@@ -11,6 +11,10 @@ tasks:
   - download_attachments
   - get_unread_emails
   - mark_emails_read
+essential_tasks:
+  - search_emails
+  - get_unread_emails
+  - send_email
 examples:
   - "Summarize unread emails from today"
   - "Find emails from UPS and show tracking numbers"

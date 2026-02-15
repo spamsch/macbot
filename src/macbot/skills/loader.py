@@ -118,11 +118,18 @@ def load_skill_from_string(
         tasks = list(DEFAULT_COMMUNITY_TASKS)
         logger.debug(f"Skill '{skill_id}' has no tasks — assigned defaults")
 
+    # Parse essential_tasks (subset for compact context profiles)
+    essential_tasks: list[str] | None = None
+    if "essential_tasks" in frontmatter:
+        raw = frontmatter["essential_tasks"]
+        # Explicit empty list means "exclude in compact mode"
+        essential_tasks = ensure_list(raw) if raw is not None else []
+
     # Collect extra frontmatter fields into metadata
     known_fields = {
-        "id", "name", "description", "apps", "tasks", "examples",
-        "safe_defaults", "confirm_before_write", "requires_permissions",
-        "extends", "allowed-tools",
+        "id", "name", "description", "apps", "tasks", "essential_tasks",
+        "examples", "safe_defaults", "confirm_before_write",
+        "requires_permissions", "extends", "allowed-tools",
     }
     metadata = {k: v for k, v in frontmatter.items() if k not in known_fields}
 
@@ -133,6 +140,7 @@ def load_skill_from_string(
         description=frontmatter["description"],
         apps=ensure_list(frontmatter.get("apps")),
         tasks=tasks,
+        essential_tasks=essential_tasks,
         examples=ensure_list(frontmatter.get("examples")),
         safe_defaults=frontmatter.get("safe_defaults") or {},
         confirm_before_write=ensure_list(frontmatter.get("confirm_before_write")),

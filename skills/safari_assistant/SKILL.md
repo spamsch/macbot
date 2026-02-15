@@ -11,6 +11,10 @@ tasks:
   - extract_safari_links
   - web_search
   - web_fetch
+essential_tasks:
+  - open_url_in_safari
+  - web_search
+  - web_fetch
 examples:
   - "Open GitHub in Safari"
   - "Show me my open tabs"

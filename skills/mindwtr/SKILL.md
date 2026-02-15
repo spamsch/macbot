@@ -22,6 +22,7 @@ tasks:
   - mindwtr_update_checklist
   - mindwtr_list_tags
   - mindwtr_search
+essential_tasks: []
 examples:
   - "Add a task to buy groceries tomorrow"
   - "Show me my next actions"

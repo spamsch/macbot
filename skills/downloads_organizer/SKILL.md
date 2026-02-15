@@ -8,6 +8,7 @@ tasks:
   - list_directory
   - run_shell_command
   - spotlight_search
+essential_tasks: []
 examples:
   - "Organize my Downloads folder"
   - "Clean up Downloads"

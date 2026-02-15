@@ -8,6 +8,9 @@ tasks:
   - send_imessage
   - list_imessage_chats
   - search_imessages
+essential_tasks:
+  - send_imessage
+  - search_imessages
 examples:
   - "Send a message to +15551234567 saying hello"
   - "Show my recent chats"

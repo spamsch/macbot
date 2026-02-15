@@ -20,6 +20,7 @@ tasks:
   - browser_press_key
   - browser_visual_snapshot
   - analyze_screenshot
+essential_tasks: []
 examples:
   - "Book a table at Restaurant XYZ for Friday at 7pm"
   - "Make a reservation for 2 people tomorrow night"
