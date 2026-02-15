@@ -164,25 +164,25 @@ class TaskRegistry:
         """
         return [task.to_tool_schema() for task in self._tasks.values()]
 
-    async def execute(self, name: str, **kwargs: Any) -> TaskResult:
+    async def execute(self, task_name: str, **kwargs: Any) -> TaskResult:
         """Execute a task by name.
 
         Args:
-            name: Name of the task to execute.
+            task_name: Name of the task to execute.
             **kwargs: Arguments to pass to the task.
 
         Returns:
             TaskResult with success status and output or error.
         """
-        task = self.get(name)
+        task = self.get(task_name)
         if task is None:
-            return TaskResult(success=False, error=f"Task '{name}' not found")
+            return TaskResult(success=False, error=f"Task '{task_name}' not found")
 
         try:
             output = await task.execute(**kwargs)
             return TaskResult(success=True, output=output)
         except Exception as e:
-            logger.exception(f"Error executing task '{name}'")
+            logger.exception(f"Error executing task '{task_name}'")
             return TaskResult(success=False, error=str(e))
 
     def __len__(self) -> int:
