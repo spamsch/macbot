@@ -1,7 +1,5 @@
-- **New Contacts automation** — Create, retrieve, and search contacts plus list contact groups via AppleScript
-- **New Messages automation** — Send messages, list chats, and search messages across conversations
-- **New System Controls automation** — Control volume, Bluetooth, WiFi, Do Not Disturb, dark mode, and view system status
-- **Account-based calendar disambiguation** — All calendar tools now distinguish between calendars with the same name across different accounts
-- **Folder access permission check** — Added permission verification for Documents, Downloads, and Desktop folders in onboarding
-- **Context window overflow protection** — Automatically trim conversation history to prevent exceeding LLM context limits
-- **Auto-generated release notes** — Release process now generates release notes via Claude
+- **Things3 Integration** — Full automation support for creating, listing, and managing projects and todos with AppleScript bridges and search capabilities
+- **Mindwtr GTD Integration** — Direct sync with Mindwtr files including section management and checklist support, now optional via `MACBOT_MINDWTR_DATA_PATH`
+- **Improved Pico Integration** — Reduced tool count from 88 to 24 via essential_tasks filtering and fixed protocol-token tool calling
+- **Skills System Enhancements** — Updated skill metadata and improved loader logic to better support new integrations
+- **Documentation** — Added comprehensive guides for Things3 and Mindwtr integrations
