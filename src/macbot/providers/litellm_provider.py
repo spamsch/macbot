@@ -174,34 +174,58 @@ class LiteLLMProvider(LLMProvider):
         # Build messages in OpenAI format (LiteLLM uses this internally)
         litellm_messages: list[dict[str, Any]] = []
 
+        # Some local model servers (e.g. Pico) don't support tool_call /
+        # tool roles in their chat templates.  For those models we flatten
+        # tool exchanges into plain assistant/user messages.
+        flatten_tools = self.model.startswith("ollama_chat/")
+
         if system_prompt:
             litellm_messages.append({"role": "system", "content": system_prompt})
 
         for msg in messages:
             if msg.role == "assistant" and msg.tool_calls:
-                # Assistant message with tool calls
-                litellm_messages.append({
-                    "role": "assistant",
-                    "content": msg.content,
-                    "tool_calls": [
-                        {
-                            "id": tc.id,
-                            "type": "function",
-                            "function": {
-                                "name": tc.name,
-                                "arguments": json.dumps(tc.arguments),
-                            },
-                        }
-                        for tc in msg.tool_calls
-                    ],
-                })
+                if flatten_tools:
+                    # Convert tool calls to plain text the model can understand
+                    parts = []
+                    if msg.content:
+                        parts.append(msg.content)
+                    for tc in msg.tool_calls:
+                        args_str = json.dumps(tc.arguments) if tc.arguments else "{}"
+                        parts.append(f"<|channel|>commentary to=functions.{tc.name} "
+                                     f"<|constrain|>json<|message|>{args_str}<|end|>")
+                    litellm_messages.append({
+                        "role": "assistant",
+                        "content": "\n".join(parts),
+                    })
+                else:
+                    litellm_messages.append({
+                        "role": "assistant",
+                        "content": msg.content,
+                        "tool_calls": [
+                            {
+                                "id": tc.id,
+                                "type": "function",
+                                "function": {
+                                    "name": tc.name,
+                                    "arguments": json.dumps(tc.arguments),
+                                },
+                            }
+                            for tc in msg.tool_calls
+                        ],
+                    })
             elif msg.role == "tool":
-                # Tool result message
-                litellm_messages.append({
-                    "role": "tool",
-                    "tool_call_id": msg.tool_call_id,
-                    "content": msg.content or "",
-                })
+                if flatten_tools:
+                    # Convert tool result to a user message
+                    litellm_messages.append({
+                        "role": "user",
+                        "content": f"[Tool result: {msg.content or ''}]",
+                    })
+                else:
+                    litellm_messages.append({
+                        "role": "tool",
+                        "tool_call_id": msg.tool_call_id,
+                        "content": msg.content or "",
+                    })
             else:
                 # Pass content as-is — LiteLLM/OpenAI natively support
                 # content block arrays for multimodal messages
@@ -350,6 +374,12 @@ class LiteLLMProvider(LLMProvider):
             )
 
         content = "".join(content_chunks) if content_chunks else None
+
+        # Fallback: extract tool calls from protocol tokens when the API
+        # didn't return structured tool_calls (common with local models).
+        if not tool_calls and content:
+            tool_calls = self._extract_tool_calls_from_protocol(content)
+
         if content:
             content = self._strip_protocol_tokens(content)
 
@@ -359,6 +389,47 @@ class LiteLLMProvider(LLMProvider):
             stop_reason=finish_reason,
             usage=usage,
         )
+
+    @staticmethod
+    def _extract_tool_calls_from_protocol(text: str) -> list[ToolCall]:
+        """Extract tool calls from model protocol tokens.
+
+        Some local models (e.g. gpt-oss via Pico) embed function calls in
+        protocol tokens instead of using the OpenAI tool_calls format:
+            <|channel|>commentary to=functions.NAME <|constrain|>json<|message|>ARGS
+
+        This parses those into proper ToolCall objects.
+        """
+        calls: list[ToolCall] = []
+        # Match: to=functions.NAME ... <|constrain|>json<|message|>ARGS
+        pattern = re.compile(
+            r"to=functions\.(\w+)\s*"           # function name
+            r"<\|constrain\|>json<\|message\|>"  # delimiter
+            r"(.*?)"                              # JSON arguments
+            r"(?:<\|end\|>|<\|start\|>|$)",       # end of block
+            re.DOTALL,
+        )
+        for match in pattern.finditer(text):
+            name = match.group(1)
+            raw_args = match.group(2).strip()
+            arguments: dict[str, Any] = {}
+            if raw_args:
+                try:
+                    arguments = json.loads(raw_args)
+                except json.JSONDecodeError:
+                    # Try to fix truncated JSON
+                    if not raw_args.endswith("}"):
+                        raw_args += "}"
+                    try:
+                        arguments = json.loads(raw_args)
+                    except json.JSONDecodeError:
+                        arguments = {"raw": raw_args}
+            calls.append(ToolCall(
+                id=f"call_{name}_{len(calls)}",
+                name=name,
+                arguments=arguments,
+            ))
+        return calls
 
     @staticmethod
     def _strip_protocol_tokens(text: str) -> str:
@@ -425,6 +496,12 @@ class LiteLLMProvider(LLMProvider):
                 )
 
         content = message.content
+
+        # Fallback: extract tool calls from protocol tokens when the API
+        # didn't return structured tool_calls (common with local models).
+        if not tool_calls and content:
+            tool_calls = self._extract_tool_calls_from_protocol(content)
+
         if content:
             content = self._strip_protocol_tokens(content)
 

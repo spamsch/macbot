@@ -9,6 +9,9 @@ tasks:
   - get_week_events
   - create_calendar_event
   - list_calendars
+essential_tasks:
+  - get_today_events
+  - create_calendar_event
 examples:
   - "What's on my calendar today?"
   - "Show me my schedule for this week"

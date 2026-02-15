@@ -16,6 +16,10 @@ tasks:
   - list_things_projects
   - create_things_project
   - list_things_tags
+essential_tasks:
+  - show_things_today
+  - create_things_todo
+  - complete_things_todo
 examples:
   - "Show my Things today list"
   - "What's in my Things inbox?"

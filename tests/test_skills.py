@@ -1085,3 +1085,417 @@ Use git commands to manage repositories.
         assert skill is not None
         assert skill.name == "git-helper"
         assert skill.metadata["license"] == "MIT"
+
+
+class TestEssentialTasks:
+    """Tests for the essential_tasks field and compact mode behavior."""
+
+    def test_parse_essential_tasks_present(self) -> None:
+        """Test parsing a skill with essential_tasks defined."""
+        content = """---
+id: test
+name: Test
+description: Test
+tasks:
+  - task_a
+  - task_b
+  - task_c
+essential_tasks:
+  - task_a
+  - task_b
+---
+"""
+        skill = load_skill_from_string(content, is_builtin=True)
+
+        assert skill.essential_tasks == ["task_a", "task_b"]
+
+    def test_parse_essential_tasks_absent(self) -> None:
+        """Test that missing essential_tasks defaults to None."""
+        content = """---
+id: test
+name: Test
+description: Test
+tasks:
+  - task_a
+---
+"""
+        skill = load_skill_from_string(content, is_builtin=True)
+
+        assert skill.essential_tasks is None
+
+    def test_parse_essential_tasks_empty_list(self) -> None:
+        """Test parsing essential_tasks as an explicit empty list."""
+        content = """---
+id: test
+name: Test
+description: Test
+tasks:
+  - task_a
+essential_tasks: []
+---
+"""
+        skill = load_skill_from_string(content, is_builtin=True)
+
+        assert skill.essential_tasks == []
+
+    def test_get_effective_tasks_compact_with_essential(self) -> None:
+        """Test get_effective_tasks returns essential_tasks in compact mode."""
+        skill = Skill(
+            id="test", name="Test", description="Test",
+            tasks=["task_a", "task_b", "task_c"],
+            essential_tasks=["task_a"],
+        )
+
+        assert skill.get_effective_tasks(compact=True) == ["task_a"]
+
+    def test_get_effective_tasks_compact_without_essential(self) -> None:
+        """Test get_effective_tasks falls back to tasks when essential_tasks is None."""
+        skill = Skill(
+            id="test", name="Test", description="Test",
+            tasks=["task_a", "task_b"],
+            essential_tasks=None,
+        )
+
+        assert skill.get_effective_tasks(compact=True) == ["task_a", "task_b"]
+
+    def test_get_effective_tasks_compact_empty_essential(self) -> None:
+        """Test get_effective_tasks returns empty list when essential_tasks is []."""
+        skill = Skill(
+            id="test", name="Test", description="Test",
+            tasks=["task_a", "task_b"],
+            essential_tasks=[],
+        )
+
+        assert skill.get_effective_tasks(compact=True) == []
+
+    def test_get_effective_tasks_non_compact(self) -> None:
+        """Test get_effective_tasks always returns full tasks when not compact."""
+        skill = Skill(
+            id="test", name="Test", description="Test",
+            tasks=["task_a", "task_b", "task_c"],
+            essential_tasks=["task_a"],
+        )
+
+        assert skill.get_effective_tasks(compact=False) == ["task_a", "task_b", "task_c"]
+
+    def test_get_tool_schemas_compact(self) -> None:
+        """Test get_tool_schemas uses essential_tasks in compact mode."""
+        task_registry = create_default_registry()
+
+        skill = Skill(
+            id="test", name="Test", description="Test",
+            tasks=["get_system_info", "get_current_time"],
+            essential_tasks=["get_current_time"],
+        )
+
+        schemas = skill.get_tool_schemas(task_registry, compact=True)
+
+        assert len(schemas) == 1
+        assert schemas[0]["name"] == "get_current_time"
+
+    def test_get_tool_schemas_non_compact(self) -> None:
+        """Test get_tool_schemas uses full tasks when compact=False."""
+        task_registry = create_default_registry()
+
+        skill = Skill(
+            id="test", name="Test", description="Test",
+            tasks=["get_system_info", "get_current_time"],
+            essential_tasks=["get_current_time"],
+        )
+
+        schemas = skill.get_tool_schemas(task_registry, compact=False)
+
+        assert len(schemas) == 2
+
+    def test_registry_get_all_tool_schemas_compact_excludes_empty(self, tmp_path: Path) -> None:
+        """Test that get_all_tool_schemas(compact=True) excludes skills with empty essential_tasks."""
+        task_registry = create_default_registry()
+
+        builtin_dir = tmp_path / "builtin"
+
+        # Skill with essential_tasks=[]  (should be excluded)
+        excluded_dir = builtin_dir / "excluded"
+        excluded_dir.mkdir(parents=True)
+        (excluded_dir / "SKILL.md").write_text("""---
+id: excluded
+name: Excluded
+description: Should be excluded in compact mode
+tasks:
+  - get_system_info
+essential_tasks: []
+---
+""")
+        # Skill with essential_tasks subset (should be included)
+        included_dir = builtin_dir / "included"
+        included_dir.mkdir(parents=True)
+        (included_dir / "SKILL.md").write_text("""---
+id: included
+name: Included
+description: Included in compact mode
+tasks:
+  - get_system_info
+  - get_current_time
+essential_tasks:
+  - get_current_time
+---
+""")
+        registry = SkillsRegistry(
+            builtin_dir=builtin_dir,
+            user_dir=tmp_path / "user",
+            config_file=tmp_path / "config.json",
+        )
+
+        schemas = registry.get_all_tool_schemas(task_registry, compact=True)
+
+        names = [s["name"] for s in schemas]
+        assert "get_current_time" in names
+        # get_system_info should NOT be present because the only skill that has it
+        # in full tasks has essential_tasks=[], and the included skill only has
+        # get_current_time in essential_tasks
+        assert "get_system_info" not in names
+
+    def test_registry_get_all_tool_schemas_non_compact_includes_all(self, tmp_path: Path) -> None:
+        """Test that get_all_tool_schemas(compact=False) includes all enabled skills."""
+        task_registry = create_default_registry()
+
+        builtin_dir = tmp_path / "builtin"
+
+        skill_dir = builtin_dir / "skill1"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text("""---
+id: skill1
+name: Skill 1
+description: Test
+tasks:
+  - get_system_info
+essential_tasks: []
+---
+""")
+        registry = SkillsRegistry(
+            builtin_dir=builtin_dir,
+            user_dir=tmp_path / "user",
+            config_file=tmp_path / "config.json",
+        )
+
+        schemas = registry.get_all_tool_schemas(task_registry, compact=False)
+
+        names = [s["name"] for s in schemas]
+        assert "get_system_info" in names
+
+    def test_format_for_prompt_compact_excludes_empty_essential(self, tmp_path: Path) -> None:
+        """Test that format_for_prompt(compact=True) excludes skills with empty essential_tasks."""
+        builtin_dir = tmp_path / "builtin"
+
+        excluded_dir = builtin_dir / "excluded"
+        excluded_dir.mkdir(parents=True)
+        (excluded_dir / "SKILL.md").write_text("""---
+id: excluded
+name: Excluded Skill
+description: Should not appear
+tasks:
+  - some_task
+essential_tasks: []
+---
+""")
+        included_dir = builtin_dir / "included"
+        included_dir.mkdir(parents=True)
+        (included_dir / "SKILL.md").write_text("""---
+id: included
+name: Included Skill
+description: Should appear
+tasks:
+  - task_a
+  - task_b
+essential_tasks:
+  - task_a
+---
+""")
+        registry = SkillsRegistry(
+            builtin_dir=builtin_dir,
+            user_dir=tmp_path / "user",
+            config_file=tmp_path / "config.json",
+        )
+
+        formatted = registry.format_for_prompt(compact=True)
+
+        assert "Included Skill" in formatted
+        assert "Excluded Skill" not in formatted
+
+    def test_format_for_prompt_compact_shows_essential_tools(self, tmp_path: Path) -> None:
+        """Test that compact prompt shows essential_tasks, not full tasks."""
+        builtin_dir = tmp_path / "builtin"
+
+        skill_dir = builtin_dir / "test"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text("""---
+id: test
+name: Test Skill
+description: Test
+tasks:
+  - task_a
+  - task_b
+  - task_c
+essential_tasks:
+  - task_a
+---
+""")
+        registry = SkillsRegistry(
+            builtin_dir=builtin_dir,
+            user_dir=tmp_path / "user",
+            config_file=tmp_path / "config.json",
+        )
+
+        formatted = registry.format_for_prompt(compact=True)
+
+        assert "task_a" in formatted
+        assert "task_b" not in formatted
+        assert "task_c" not in formatted
+
+    def test_merge_skill_propagates_essential_tasks_both(self, tmp_path: Path) -> None:
+        """Test _merge_skill merges essential_tasks when both skills define it."""
+        builtin_dir = tmp_path / "builtin"
+        base_dir = builtin_dir / "base"
+        base_dir.mkdir(parents=True)
+        (base_dir / "SKILL.md").write_text("""---
+id: base
+name: Base Skill
+description: Base
+tasks:
+  - task_a
+  - task_b
+essential_tasks:
+  - task_a
+---
+""")
+        user_dir = tmp_path / "user"
+        ext_dir = user_dir / "ext"
+        ext_dir.mkdir(parents=True)
+        (ext_dir / "SKILL.md").write_text("""---
+id: ext
+extends: base
+name: ext
+description: Extension
+tasks:
+  - task_c
+essential_tasks:
+  - task_c
+---
+""")
+        registry = SkillsRegistry(
+            builtin_dir=builtin_dir,
+            user_dir=user_dir,
+            config_file=tmp_path / "config.json",
+        )
+
+        skill = registry.get("base")
+        assert skill is not None
+        assert skill.essential_tasks == ["task_a", "task_c"]
+
+    def test_merge_skill_propagates_essential_tasks_base_only(self, tmp_path: Path) -> None:
+        """Test _merge_skill uses base essential_tasks when extension doesn't define it."""
+        builtin_dir = tmp_path / "builtin"
+        base_dir = builtin_dir / "base"
+        base_dir.mkdir(parents=True)
+        (base_dir / "SKILL.md").write_text("""---
+id: base
+name: Base Skill
+description: Base
+tasks:
+  - task_a
+essential_tasks:
+  - task_a
+---
+""")
+        user_dir = tmp_path / "user"
+        ext_dir = user_dir / "ext"
+        ext_dir.mkdir(parents=True)
+        (ext_dir / "SKILL.md").write_text("""---
+id: ext
+extends: base
+name: ext
+description: Extension
+tasks:
+  - task_b
+---
+""")
+        registry = SkillsRegistry(
+            builtin_dir=builtin_dir,
+            user_dir=user_dir,
+            config_file=tmp_path / "config.json",
+        )
+
+        skill = registry.get("base")
+        assert skill is not None
+        assert skill.essential_tasks == ["task_a"]
+
+    def test_merge_skill_propagates_essential_tasks_neither(self, tmp_path: Path) -> None:
+        """Test _merge_skill leaves essential_tasks as None when neither defines it."""
+        builtin_dir = tmp_path / "builtin"
+        base_dir = builtin_dir / "base"
+        base_dir.mkdir(parents=True)
+        (base_dir / "SKILL.md").write_text("""---
+id: base
+name: Base Skill
+description: Base
+tasks:
+  - task_a
+---
+""")
+        user_dir = tmp_path / "user"
+        ext_dir = user_dir / "ext"
+        ext_dir.mkdir(parents=True)
+        (ext_dir / "SKILL.md").write_text("""---
+id: ext
+extends: base
+name: ext
+description: Extension
+tasks:
+  - task_b
+---
+""")
+        registry = SkillsRegistry(
+            builtin_dir=builtin_dir,
+            user_dir=user_dir,
+            config_file=tmp_path / "config.json",
+        )
+
+        skill = registry.get("base")
+        assert skill is not None
+        assert skill.essential_tasks is None
+
+    def test_all_builtin_essential_tasks_are_subset_of_tasks(self) -> None:
+        """Verify all built-in essential_tasks are a subset of tasks."""
+        builtin_dir = get_builtin_skills_dir()
+        registry = SkillsRegistry(
+            builtin_dir=builtin_dir,
+            user_dir=Path("/nonexistent"),
+            config_file=Path("/tmp/test_skills_config_essential.json"),
+        )
+
+        for skill in registry.list_skills():
+            if not skill.is_builtin or skill.essential_tasks is None:
+                continue
+            for task_name in skill.essential_tasks:
+                assert task_name in skill.tasks, (
+                    f"Skill '{skill.id}' has essential_task '{task_name}' "
+                    f"not in tasks list: {skill.tasks}"
+                )
+
+    def test_all_builtin_essential_tasks_exist_in_registry(self) -> None:
+        """Verify all built-in essential_tasks reference actually existing tasks."""
+        task_registry = create_default_registry()
+        builtin_dir = get_builtin_skills_dir()
+        registry = SkillsRegistry(
+            builtin_dir=builtin_dir,
+            user_dir=Path("/nonexistent"),
+            config_file=Path("/tmp/test_skills_config_essential2.json"),
+        )
+
+        for skill in registry.list_skills():
+            if not skill.is_builtin or not skill.enabled or skill.essential_tasks is None:
+                continue
+            for task_name in skill.essential_tasks:
+                task = task_registry.get(task_name)
+                assert task is not None, (
+                    f"Skill '{skill.id}' essential_task '{task_name}' not found in task registry"
+                )

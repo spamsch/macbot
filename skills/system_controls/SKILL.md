@@ -12,6 +12,8 @@ tasks:
   - set_volume
   - toggle_dark_mode
   - toggle_dnd
+essential_tasks:
+  - get_system_status
 examples:
   - "Turn off WiFi"
   - "Set volume to 50%"

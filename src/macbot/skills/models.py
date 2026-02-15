@@ -34,6 +34,11 @@ class Skill(BaseModel):
         default_factory=list,
         description="Task names this skill provides guidance for",
     )
+    essential_tasks: list[str] | None = Field(
+        default=None,
+        description="Subset of tasks for compact/minimal context profiles (Pico). "
+        "None = fall back to full tasks list; [] = exclude skill entirely in compact mode.",
+    )
 
     # Guidance content
     examples: list[str] = Field(
@@ -85,17 +90,34 @@ class Skill(BaseModel):
         description="Whether this skill is currently enabled",
     )
 
-    def get_tool_schemas(self, task_registry: TaskRegistry) -> list[dict[str, Any]]:
+    def get_effective_tasks(self, compact: bool = False) -> list[str]:
+        """Return the task list appropriate for the context profile.
+
+        Args:
+            compact: If True, prefer essential_tasks when available.
+
+        Returns:
+            Task name list. When compact=True and essential_tasks is not None,
+            returns essential_tasks; otherwise returns full tasks list.
+        """
+        if compact and self.essential_tasks is not None:
+            return self.essential_tasks
+        return self.tasks
+
+    def get_tool_schemas(
+        self, task_registry: TaskRegistry, compact: bool = False,
+    ) -> list[dict[str, Any]]:
         """Get tool schemas for tasks this skill references.
 
         Args:
             task_registry: Registry of available tasks.
+            compact: If True, use essential_tasks when available.
 
         Returns:
             List of tool schemas for the skill's tasks.
         """
         schemas = []
-        for task_name in self.tasks:
+        for task_name in self.get_effective_tasks(compact):
             task = task_registry.get(task_name)
             if task:
                 schemas.append(task.to_tool_schema())
@@ -139,12 +161,14 @@ class Skill(BaseModel):
 
         Returns only essential info: name, description, tools, defaults,
         and confirmation rules. No examples, no body.
+        Uses essential_tasks when available.
         """
+        effective = self.get_effective_tasks(compact=True)
         lines = [f"### {self.name}"]
         lines.append(self.description)
 
-        if self.tasks:
-            lines.append(f"**Tools:** {', '.join(self.tasks)}")
+        if effective:
+            lines.append(f"**Tools:** {', '.join(effective)}")
 
         if self.safe_defaults:
             defaults_str = ", ".join(f"{k}={v}" for k, v in self.safe_defaults.items())

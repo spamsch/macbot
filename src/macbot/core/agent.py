@@ -367,7 +367,7 @@ On subsequent requests for the same site, **check memory first** (`memory_list`)
             return self.task_registry.get_tool_schemas()
 
         # compact/minimal: use only tools from enabled skills
-        schemas = self.skills_registry.get_all_tool_schemas(self.task_registry)
+        schemas = self.skills_registry.get_all_tool_schemas(self.task_registry, compact=True)
 
         if profile in ("compact", "minimal"):
             # Strip parameter descriptions to save tokens

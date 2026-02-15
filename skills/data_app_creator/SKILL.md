@@ -12,6 +12,7 @@ tasks:
   - web_fetch
   - fetch_url
   - web_search
+essential_tasks: []
 examples:
   - "Create a dashboard from my bank statement CSV"
   - "Build an app to explore this spending data"

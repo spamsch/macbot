@@ -9,6 +9,9 @@ tasks:
   - list_reminders
   - complete_reminder
   - get_due_today_reminders
+essential_tasks:
+  - create_reminder
+  - list_reminders
 examples:
   - "Remind me to call mom at 5pm"
   - "Add a reminder to buy groceries tomorrow morning"

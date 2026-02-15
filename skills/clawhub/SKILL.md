@@ -5,6 +5,7 @@ description: Search, install, and manage community skills from the ClawHub regis
 tasks:
   - run_shell_command
   - enrich_skill
+essential_tasks: []
 examples:
   - "Search ClawHub for a Slack skill"
   - "Install the weather skill from ClawHub"
