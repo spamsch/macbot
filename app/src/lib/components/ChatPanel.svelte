@@ -21,6 +21,9 @@
     Wrench,
     Check,
     X,
+    Plus,
+    Clock,
+    ChevronDown,
   } from "lucide-svelte";
 
   interface Props {
@@ -33,6 +36,7 @@
   let inputText = $state("");
   let inputEl: HTMLTextAreaElement | undefined = $state();
   let transcriptEl: HTMLDivElement | undefined = $state();
+  let showHistory = $state(false);
 
   // Track previous message count to detect new messages vs streaming updates
   let prevMessageCount = $state(0);
@@ -61,6 +65,23 @@
           });
         }
       }
+    }
+  });
+
+  // Auto-grow textarea based on content
+  $effect(() => {
+    // Track inputText to re-run on changes
+    const _ = inputText;
+    if (inputEl) {
+      inputEl.style.height = "auto";
+      inputEl.style.height = inputEl.scrollHeight + "px";
+    }
+  });
+
+  // Load conversation list when panel becomes visible
+  $effect(() => {
+    if (visible) {
+      chatStore.loadConversations();
     }
   });
 
@@ -106,6 +127,31 @@
   function formatTime(ts: number): string {
     return new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   }
+
+  function formatDate(ts: number): string {
+    const d = new Date(ts);
+    const now = new Date();
+    const diffMs = now.getTime() - d.getTime();
+    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+    if (diffDays === 0) return "Today";
+    if (diffDays === 1) return "Yesterday";
+    if (diffDays < 7) return d.toLocaleDateString([], { weekday: "short" });
+    return d.toLocaleDateString([], { month: "short", day: "numeric" });
+  }
+
+  function handleNewChat() {
+    chatStore.newConversation();
+    showHistory = false;
+  }
+
+  async function handleLoadConversation(id: string) {
+    await chatStore.loadConversation(id);
+    showHistory = false;
+  }
+
+  async function handleDeleteConversation() {
+    await chatStore.deleteConversation(chatStore.conversationId);
+  }
 </script>
 
 {#if visible}
@@ -137,8 +183,46 @@
               {statusLabel(chatStore.connectionState)}
             </span>
           </div>
+          <!-- History dropdown toggle -->
+          {#if chatStore.conversations.length > 0}
+            <div class="relative">
+              <button
+                type="button"
+                class="flex items-center gap-1 px-2 py-1 text-xs text-text-muted hover:text-text hover:bg-bg-input rounded-lg transition-colors"
+                onclick={() => showHistory = !showHistory}
+                title="Conversation history"
+              >
+                <Clock class="w-3.5 h-3.5" />
+                <span>History</span>
+                <ChevronDown class="w-3 h-3 transition-transform {showHistory ? 'rotate-180' : ''}" />
+              </button>
+              {#if showHistory}
+                <div class="absolute top-full left-0 mt-1 w-64 max-h-80 overflow-y-auto bg-bg-card border border-border rounded-xl shadow-lg z-10">
+                  {#each chatStore.conversations as conv (conv.id)}
+                    <button
+                      type="button"
+                      class="w-full text-left px-3 py-2 hover:bg-bg-input transition-colors border-b border-border/50 last:border-b-0
+                        {conv.id === chatStore.conversationId ? 'bg-primary/10' : ''}"
+                      onclick={() => handleLoadConversation(conv.id)}
+                    >
+                      <div class="text-sm text-text truncate">{conv.title || "Untitled"}</div>
+                      <div class="text-[10px] text-text-muted">{formatDate(conv.updatedAt)}</div>
+                    </button>
+                  {/each}
+                </div>
+              {/if}
+            </div>
+          {/if}
         </div>
         <div class="flex items-center gap-1">
+          <button
+            type="button"
+            class="p-2 hover:bg-bg-input rounded-lg transition-colors text-text-muted hover:text-text"
+            onclick={handleNewChat}
+            title="New chat"
+          >
+            <Plus class="w-4 h-4" />
+          </button>
           {#if chatStore.connectionState === "error" || chatStore.connectionState === "disconnected"}
             <button
               type="button"
@@ -153,8 +237,8 @@
             <button
               type="button"
               class="p-2 hover:bg-bg-input rounded-lg transition-colors text-text-muted hover:text-text"
-              onclick={() => chatStore.clear()}
-              title="Clear transcript"
+              onclick={handleDeleteConversation}
+              title="Delete conversation"
             >
               <Trash2 class="w-4 h-4" />
             </button>
@@ -264,7 +348,7 @@
       <div class="border-t border-border p-4">
         <div class="flex gap-2">
           <textarea
-            class="flex-1 bg-bg-input border border-border rounded-xl px-3 py-2 text-sm text-text resize-none focus:outline-none focus:ring-2 focus:ring-primary/50 min-h-[40px] max-h-[120px]"
+            class="flex-1 bg-bg-input border border-border rounded-xl px-3 py-2 text-sm text-text resize-none focus:outline-none focus:ring-2 focus:ring-primary/50 min-h-[40px] max-h-[200px] overflow-y-auto"
             placeholder={chatStore.connectionState === "connected" ? "Type a message..." : "Connecting..."}
             disabled={chatStore.connectionState !== "connected" || chatStore.isStreaming}
             bind:value={inputText}
