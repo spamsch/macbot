@@ -1,5 +1,6 @@
 import { Command, type Child } from "@tauri-apps/plugin-shell";
-import { resourceDir, join, dirname } from "@tauri-apps/api/path";
+import { resourceDir, join, dirname, homeDir } from "@tauri-apps/api/path";
+import { readTextFile, writeTextFile, exists, mkdir, readDir, remove } from "@tauri-apps/plugin-fs";
 
 export interface ToolCall {
   name: string;
@@ -26,6 +27,21 @@ export interface AppPermissions {
   Safari: boolean;
 }
 
+export interface ConversationSummary {
+  id: string;
+  title: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+interface ConversationFile {
+  id: string;
+  title: string;
+  createdAt: number;
+  updatedAt: number;
+  messages: ChatMessage[];
+}
+
 type ConnectionState = "disconnected" | "connecting" | "connected" | "error";
 
 class ChatStore {
@@ -37,8 +53,12 @@ class ChatStore {
   private _telegramAssistantId: string | null = null;
   private _buffer = "";
   private _sonPath: string | null = null;
+  private _historyDir: string | null = null;
   private _permissions = $state<AppPermissions | null>(null);
   private _checkingPermissions = $state(false);
+  private _conversationId = $state<string>(crypto.randomUUID());
+  private _conversations = $state<ConversationSummary[]>([]);
+  private _conversationTitle = $state<string>("");
 
   get messages() {
     return this._messages;
@@ -66,6 +86,147 @@ class ChatStore {
 
   get checkingPermissions() {
     return this._checkingPermissions;
+  }
+
+  get conversationId() {
+    return this._conversationId;
+  }
+
+  get conversations() {
+    return this._conversations;
+  }
+
+  get conversationTitle() {
+    return this._conversationTitle;
+  }
+
+  private async getHistoryDir(): Promise<string> {
+    if (this._historyDir) return this._historyDir;
+    const home = await homeDir();
+    this._historyDir = await join(home, ".macbot", "chat-history");
+    return this._historyDir;
+  }
+
+  async saveConversation() {
+    if (this._messages.length === 0) return;
+
+    try {
+      const dir = await this.getHistoryDir();
+      await mkdir(dir, { recursive: true });
+
+      // Auto-generate title from first user message
+      if (!this._conversationTitle) {
+        const firstUser = this._messages.find((m) => m.role === "user");
+        if (firstUser) {
+          this._conversationTitle = firstUser.text.slice(0, 50).trim();
+          if (firstUser.text.length > 50) this._conversationTitle += "...";
+        }
+      }
+
+      const now = Date.now();
+      const data: ConversationFile = {
+        id: this._conversationId,
+        title: this._conversationTitle,
+        createdAt: this._messages[0]?.timestamp ?? now,
+        updatedAt: now,
+        messages: this._messages,
+      };
+
+      const filePath = await join(dir, `${this._conversationId}.json`);
+      await writeTextFile(filePath, JSON.stringify(data));
+
+      // Update summary in conversations list
+      const idx = this._conversations.findIndex((c) => c.id === this._conversationId);
+      const summary: ConversationSummary = {
+        id: data.id,
+        title: data.title,
+        createdAt: data.createdAt,
+        updatedAt: data.updatedAt,
+      };
+      if (idx !== -1) {
+        this._conversations[idx] = summary;
+      } else {
+        this._conversations = [summary, ...this._conversations];
+      }
+    } catch (e) {
+      console.error("Failed to save conversation:", e);
+    }
+  }
+
+  async loadConversations() {
+    try {
+      const dir = await this.getHistoryDir();
+      if (!(await exists(dir))) {
+        this._conversations = [];
+        return;
+      }
+
+      const entries = await readDir(dir);
+      const summaries: ConversationSummary[] = [];
+
+      for (const entry of entries) {
+        if (!entry.name?.endsWith(".json")) continue;
+        try {
+          const filePath = await join(dir, entry.name);
+          const content = await readTextFile(filePath);
+          const data = JSON.parse(content) as ConversationFile;
+          summaries.push({
+            id: data.id,
+            title: data.title,
+            createdAt: data.createdAt,
+            updatedAt: data.updatedAt,
+          });
+        } catch {
+          // Skip malformed files
+        }
+      }
+
+      summaries.sort((a, b) => b.updatedAt - a.updatedAt);
+      this._conversations = summaries;
+    } catch (e) {
+      console.error("Failed to load conversations:", e);
+    }
+  }
+
+  async loadConversation(id: string) {
+    try {
+      const dir = await this.getHistoryDir();
+      const filePath = await join(dir, `${id}.json`);
+      const content = await readTextFile(filePath);
+      const data = JSON.parse(content) as ConversationFile;
+
+      this._conversationId = data.id;
+      this._conversationTitle = data.title;
+      this._messages = data.messages;
+      this._currentAssistantId = null;
+    } catch (e) {
+      console.error("Failed to load conversation:", e);
+    }
+  }
+
+  newConversation() {
+    this._messages = [];
+    this._conversationId = crypto.randomUUID();
+    this._conversationTitle = "";
+    this._currentAssistantId = null;
+  }
+
+  async deleteConversation(id: string) {
+    try {
+      const dir = await this.getHistoryDir();
+      const filePath = await join(dir, `${id}.json`);
+      if (await exists(filePath)) {
+        await remove(filePath);
+      }
+      this._conversations = this._conversations.filter((c) => c.id !== id);
+
+      // If deleting the active conversation, start a new one
+      if (this._conversationId === id) {
+        this.newConversation();
+      }
+    } catch (e) {
+      console.error("Failed to delete conversation:", e);
+    }
   }
 
   private async getSonPath(): Promise<string> {
@@ -197,8 +358,7 @@ class ChatStore {
   }
 
   clear() {
-    this._messages = [];
-    this._currentAssistantId = null;
+    this.newConversation();
   }
 
   private _handleStdout(raw: string) {
@@ -350,6 +510,7 @@ class ChatStore {
               };
             }
             this._currentAssistantId = null;
+            this.saveConversation();
           }
           break;
 
@@ -366,6 +527,7 @@ class ChatStore {
               };
             }
             this._currentAssistantId = null;
+            this.saveConversation();
           } else {
             this._addSystemMessage(`Error: ${msg.text as string}`);
           }
