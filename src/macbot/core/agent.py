@@ -61,6 +61,10 @@ class Agent:
         self.messages: list[Message] = []
         self.iteration = 0
 
+        # Hybrid routing state
+        self._current_model: str = self.config.get_model()
+        self._routing_engine = self._create_routing_engine()
+
         # Ensure well-known directories exist
         from macbot.core.preferences import CorePreferences
         self._preferences = CorePreferences()
@@ -85,6 +89,60 @@ class Agent:
         api_base = self.config.get_api_base_for_model(model)
 
         return LiteLLMProvider(model=model, api_key=api_key, api_base=api_base)
+
+    def _create_routing_engine(self):
+        """Create a RoutingEngine if routing.json exists."""
+        try:
+            from macbot.core.routing import RoutingEngine, DEFAULT_CONFIG_PATH
+            if DEFAULT_CONFIG_PATH.exists():
+                engine = RoutingEngine(
+                    skills_registry=self.skills_registry,
+                )
+                if engine.has_routes:
+                    logger.info("Hybrid routing enabled with %d route(s)", len(engine.config.routes))
+                    return engine
+        except Exception as e:
+            logger.debug("Routing engine not available: %s", e)
+        return None
+
+    def _maybe_switch_model(self, tool_calls) -> None:
+        """Switch model based on routing rules if applicable.
+
+        Called after tool execution each turn. If a route matches the
+        tools that were just called, switches to that route's model.
+        If no route matches, resets to the default model so routing
+        is truly per-turn (not sticky).
+        """
+        if self._routing_engine is None or not self._routing_engine.has_routes:
+            return
+
+        if not tool_calls:
+            return
+
+        tool_names = [tc.name for tc in tool_calls]
+        new_model = self._routing_engine.resolve(tool_names)
+
+        # No match → fall back to the configured default model
+        if new_model is None:
+            new_model = self.config.get_model()
+
+        if new_model != self._current_model:
+            logger.info("Switching model: %s → %s", self._current_model, new_model)
+            self._current_model = new_model
+            api_key = self.config.get_api_key_for_model(new_model)
+            api_base = self.config.get_api_base_for_model(new_model)
+            self.provider = LiteLLMProvider(model=new_model, api_key=api_key, api_base=api_base)
+
+    def _get_effective_profile(self) -> str:
+        """Get the context profile, accounting for hybrid routing model switches.
+
+        If context_profile is not 'auto', returns it directly.
+        Otherwise infers from the current model: pico → 'compact', else → 'full'.
+        """
+        if self.config.context_profile != "auto":
+            return self.config.context_profile
+        provider = self._current_model.split("/")[0] if "/" in self._current_model else "openai"
+        return "compact" if provider == "pico" else "full"
 
     async def run(
         self,
@@ -166,6 +224,7 @@ class Agent:
                             else:
                                 console.print(f"[dim]          {ts}[/dim]")
                 await self._execute_tool_calls(response, verbose, on_event=on_event)
+                self._maybe_switch_model(response.tool_calls)
             else:
                 # No tool calls means the agent has finished
                 # Store the final response so multi-turn conversations include it
@@ -184,7 +243,7 @@ class Agent:
         if self._system_prompt_override is not None:
             return self._system_prompt_override + "\n" + self._build_system_context()
 
-        profile = self.config.get_context_profile()
+        profile = self._get_effective_profile()
         if profile == "compact":
             return self._build_compact_system_prompt()
         elif profile == "minimal":
@@ -361,7 +420,7 @@ On subsequent requests for the same site, **check memory first** (`memory_list`)
 
     def _get_tool_schemas(self) -> list[dict[str, Any]]:
         """Get tool schemas appropriate for the current context profile."""
-        profile = self.config.get_context_profile()
+        profile = self._get_effective_profile()
 
         if profile == "full":
             return self.task_registry.get_tool_schemas()
@@ -385,7 +444,7 @@ On subsequent requests for the same site, **check memory first** (`memory_list`)
         Preserves the first user message (the goal) and keeps
         tool_call/tool_result pairs together.
         """
-        profile = self.config.get_context_profile()
+        profile = self._get_effective_profile()
 
         if profile == "full":
             return messages
@@ -632,7 +691,7 @@ On subsequent requests for the same site, **check memory first** (`memory_list`)
         else:
             text = f"Error: {result.error}"
 
-        profile = self.config.get_context_profile()
+        profile = self._get_effective_profile()
         max_chars = {"compact": 2000, "minimal": 500}.get(profile)
 
         if max_chars and len(text) > max_chars:

@@ -1543,12 +1543,27 @@ def cmd_doctor(args: argparse.Namespace) -> None:
         api_key = settings.get_api_key_for_model()
         key_name = f"MACBOT_{provider.upper()}_API_KEY"
 
+        # Determine key source (Keychain vs .env)
+        key_source_label = ""
+        try:
+            from macbot.core.keychain import ACCOUNT_MAP, get_key_source
+            account = ACCOUNT_MAP.get(provider, f"{provider}_api_key")
+            env_value = getattr(settings, account, "")
+            source = get_key_source(account, env_value)
+            if source == "keychain":
+                key_source_label = " (from Keychain)"
+            elif source == "env":
+                key_source_label = " (from .env)"
+            results["config"]["api_key_source"] = source
+        except Exception:
+            pass
+
         if api_key:
             masked = api_key[:8] + "..." + api_key[-4:] if len(api_key) > 12 else "***"
-            check("API Key", True, f"{masked}")
+            check("API Key", True, f"{masked}{key_source_label}")
         else:
             check("API Key", False, "Not set",
-                  f"Set {key_name} or run 'son onboard' to configure")
+                  f"Set {key_name}, run 'son config set-key {provider}', or run 'son onboard'")
 
     # Data directory
     data_dir = Path.home() / ".macbot"
@@ -2756,6 +2771,194 @@ def cmd_skills_reload(args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
+# Config commands (Keychain API key management)
+
+def cmd_config_set_key(args: argparse.Namespace) -> None:
+    """Store an API key in macOS Keychain."""
+    from macbot.core.keychain import ACCOUNT_MAP, set_keychain
+
+    provider = args.provider.lower()
+    if provider not in ACCOUNT_MAP:
+        console.print(f"[red]Unknown provider:[/red] {provider}")
+        console.print(f"  Available: {', '.join(sorted(ACCOUNT_MAP))}")
+        sys.exit(1)
+
+    account = ACCOUNT_MAP[provider]
+
+    if args.key:
+        key = args.key
+    else:
+        import getpass
+        key = getpass.getpass(f"Enter API key for {provider}: ")
+        if not key:
+            console.print("[red]No key provided.[/red]")
+            sys.exit(1)
+
+    if set_keychain(account, key):
+        console.print(f"[green]✓[/green] Stored {provider} key in Keychain")
+    else:
+        console.print(f"[red]✗[/red] Failed to store key in Keychain")
+        sys.exit(1)
+
+
+def cmd_config_get_key(args: argparse.Namespace) -> None:
+    """Show the source and masked value of an API key."""
+    from macbot.core.keychain import ACCOUNT_MAP, get_key_source, get_keychain
+
+    provider = args.provider.lower()
+    if provider not in ACCOUNT_MAP:
+        console.print(f"[red]Unknown provider:[/red] {provider}")
+        console.print(f"  Available: {', '.join(sorted(ACCOUNT_MAP))}")
+        sys.exit(1)
+
+    account = ACCOUNT_MAP[provider]
+    env_value = getattr(settings, account, "")
+    source = get_key_source(account, env_value)
+
+    if source == "keychain":
+        value = get_keychain(account) or ""
+        masked = value[:8] + "..." + value[-4:] if len(value) > 12 else "***"
+        console.print(f"  Provider: [bold]{provider}[/bold]")
+        console.print(f"  Source:   [green]Keychain[/green]")
+        console.print(f"  Key:      {masked}")
+    elif source == "env":
+        masked = env_value[:8] + "..." + env_value[-4:] if len(env_value) > 12 else "***"
+        console.print(f"  Provider: [bold]{provider}[/bold]")
+        console.print(f"  Source:   [yellow].env[/yellow]")
+        console.print(f"  Key:      {masked}")
+    else:
+        console.print(f"  Provider: [bold]{provider}[/bold]")
+        console.print(f"  Source:   [red]Not configured[/red]")
+
+
+def cmd_config_delete_key(args: argparse.Namespace) -> None:
+    """Remove an API key from macOS Keychain."""
+    from macbot.core.keychain import ACCOUNT_MAP, delete_keychain
+
+    provider = args.provider.lower()
+    if provider not in ACCOUNT_MAP:
+        console.print(f"[red]Unknown provider:[/red] {provider}")
+        console.print(f"  Available: {', '.join(sorted(ACCOUNT_MAP))}")
+        sys.exit(1)
+
+    account = ACCOUNT_MAP[provider]
+
+    if delete_keychain(account):
+        console.print(f"[green]✓[/green] Removed {provider} key from Keychain")
+    else:
+        console.print(f"[yellow]![/yellow] No Keychain entry found for {provider}")
+
+
+def cmd_config_list_keys(args: argparse.Namespace) -> None:
+    """Show all provider API keys with source and status."""
+    from macbot.core.keychain import ACCOUNT_MAP, get_key_source, get_keychain
+
+    table = Table(title="API Key Status")
+    table.add_column("Provider", style="cyan")
+    table.add_column("Source", style="white")
+    table.add_column("Status", style="white")
+
+    for provider, account in sorted(ACCOUNT_MAP.items()):
+        env_value = getattr(settings, account, "")
+        source = get_key_source(account, env_value)
+
+        if source == "keychain":
+            value = get_keychain(account) or ""
+            masked = value[:8] + "..." + value[-4:] if len(value) > 12 else "***"
+            table.add_row(provider, "[green]Keychain[/green]", masked)
+        elif source == "env":
+            masked = env_value[:8] + "..." + env_value[-4:] if len(env_value) > 12 else "***"
+            table.add_row(provider, "[yellow].env[/yellow]", masked)
+        else:
+            table.add_row(provider, "[dim]none[/dim]", "[dim]Not configured[/dim]")
+
+    console.print(table)
+
+
+# Routing commands
+
+def cmd_routing_list(args: argparse.Namespace) -> None:
+    """List all routing rules."""
+    from macbot.core.routing import RoutingEngine
+
+    engine = RoutingEngine()
+
+    if not engine.has_routes:
+        console.print("[dim]No routes configured.[/dim]")
+        console.print(f"[dim]Create {Path.home() / '.macbot' / 'routing.json'} to enable hybrid routing.[/dim]")
+        return
+
+    if getattr(args, "json", False):
+        console.print(engine.config.model_dump_json(indent=2))
+        return
+
+    table = Table(title="Routing Rules (first match wins)")
+    table.add_column("#", style="dim")
+    table.add_column("Name", style="cyan")
+    table.add_column("Skills", style="white")
+    table.add_column("Model", style="green")
+
+    for i, route in enumerate(engine.config.routes, 1):
+        table.add_row(str(i), route.name, ", ".join(route.skills), route.model)
+
+    console.print(table)
+
+
+def cmd_routing_test(args: argparse.Namespace) -> None:
+    """Test which route would match a set of tools."""
+    from macbot.core.routing import RoutingEngine
+    from macbot.skills.registry import get_default_registry
+
+    skills_reg = get_default_registry()
+    engine = RoutingEngine(skills_registry=skills_reg)
+
+    if not engine.has_routes:
+        console.print("[dim]No routes configured.[/dim]")
+        return
+
+    tool_names = args.tools
+    result = engine.resolve(tool_names)
+
+    console.print(f"  Tools:  {', '.join(tool_names)}")
+    if result:
+        # Find the matching route name
+        for route in engine.config.routes:
+            route_skills = set(route.skills)
+            active_skills: set[str] = set()
+            for tool_name in tool_names:
+                for skill in skills_reg.list_enabled_skills():
+                    if tool_name in skill.tasks:
+                        active_skills.add(skill.id)
+            if route_skills & active_skills:
+                console.print(f"  Route:  [green]{route.name}[/green]")
+                break
+        console.print(f"  Model:  [green]{result}[/green]")
+    else:
+        console.print(f"  Result: [dim]No matching route (default model)[/dim]")
+
+
+def cmd_routing_validate(args: argparse.Namespace) -> None:
+    """Validate routing rules against available skills and API keys."""
+    from macbot.core.routing import RoutingEngine
+    from macbot.skills.registry import get_default_registry
+
+    skills_reg = get_default_registry()
+    engine = RoutingEngine(skills_registry=skills_reg)
+
+    if not engine.has_routes:
+        console.print("[dim]No routes configured.[/dim]")
+        return
+
+    warnings = engine.validate(settings=settings)
+
+    if warnings:
+        console.print(f"[yellow]Found {len(warnings)} issue(s):[/yellow]")
+        for w in warnings:
+            console.print(f"  [yellow]![/yellow] {w}")
+    else:
+        console.print(f"[green]✓[/green] All {len(engine.config.routes)} route(s) valid")
+
+
 # Telegram commands
 TELEGRAM_PID_FILE = MACBOT_DIR / "telegram.pid"
 TELEGRAM_LOG_FILE = MACBOT_DIR / "telegram.log"
@@ -3109,6 +3312,8 @@ def main() -> NoReturn:
   task         Execute a task directly (no LLM)
   tasks        List available tasks
   skills       Manage agent skills
+  config       Manage API keys (Keychain storage)
+  routing      Manage hybrid model routing
   cron         Manage scheduled jobs
   memory       Manage agent memory
   telegram     Telegram bot commands
@@ -3669,6 +3874,82 @@ Examples:
     )
     skills_reload.set_defaults(func=cmd_skills_reload)
 
+    # Config command group (Keychain API key management)
+    config_parser = subparsers.add_parser(
+        "config",
+        help=argparse.SUPPRESS,  # Admin command
+        description="Manage API keys stored in macOS Keychain.",
+        epilog="""Examples:
+  son config set-key anthropic       Store key (prompts for input)
+  son config set-key openai sk-...   Store key directly
+  son config get-key anthropic       Show source and masked key
+  son config delete-key anthropic    Remove from Keychain
+  son config list-keys               Show all providers"""
+    )
+    config_subparsers = config_parser.add_subparsers(dest="config_command", metavar="SUBCOMMAND")
+
+    config_set = config_subparsers.add_parser(
+        "set-key", help="Store an API key in macOS Keychain"
+    )
+    config_set.add_argument("provider", help="Provider name (anthropic, openai, openrouter, etc.)")
+    config_set.add_argument("key", nargs="?", default=None, help="API key (prompts if omitted)")
+    config_set.set_defaults(func=cmd_config_set_key)
+
+    config_get = config_subparsers.add_parser(
+        "get-key", help="Show source and masked value of an API key"
+    )
+    config_get.add_argument("provider", help="Provider name")
+    config_get.set_defaults(func=cmd_config_get_key)
+
+    config_del = config_subparsers.add_parser(
+        "delete-key", help="Remove an API key from Keychain"
+    )
+    config_del.add_argument("provider", help="Provider name")
+    config_del.set_defaults(func=cmd_config_delete_key)
+
+    config_list = config_subparsers.add_parser(
+        "list-keys", help="Show all providers with key source and status"
+    )
+    config_list.set_defaults(func=cmd_config_list_keys)
+
+    # Routing command group (hybrid model routing)
+    routing_parser = subparsers.add_parser(
+        "routing",
+        help=argparse.SUPPRESS,  # Admin command
+        description="Manage hybrid routing rules for per-turn model switching.",
+        epilog="""Routing lets different skills use different LLM models.
+Config file: ~/.macbot/routing.json
+
+Examples:
+  son routing list                Show all routes
+  son routing test search_emails  Test which route matches
+  son routing validate            Check routes against skills and keys"""
+    )
+    routing_subparsers = routing_parser.add_subparsers(dest="routing_command", metavar="SUBCOMMAND")
+
+    routing_list = routing_subparsers.add_parser(
+        "list", help="List all routing rules"
+    )
+    routing_list.add_argument(
+        "--json", action="store_true",
+        help="Output as JSON"
+    )
+    routing_list.set_defaults(func=cmd_routing_list)
+
+    routing_test = routing_subparsers.add_parser(
+        "test", help="Test which route would match given tools"
+    )
+    routing_test.add_argument(
+        "tools", nargs="+",
+        help="Tool names to test (e.g. search_emails get_today_events)"
+    )
+    routing_test.set_defaults(func=cmd_routing_test)
+
+    routing_validate = routing_subparsers.add_parser(
+        "validate", help="Validate routes against available skills and keys"
+    )
+    routing_validate.set_defaults(func=cmd_routing_validate)
+
     # Telegram command group
     telegram_parser = subparsers.add_parser(
         "telegram",
@@ -3789,6 +4070,16 @@ Examples:
     if args.command == "skills" and args.skills_command is None:
         # Default to list command
         cmd_skills_list(args)
+        sys.exit(0)
+
+    # Handle config subcommands - default to list-keys when no subcommand
+    if args.command == "config" and args.config_command is None:
+        cmd_config_list_keys(args)
+        sys.exit(0)
+
+    # Handle routing subcommands - default to list when no subcommand
+    if args.command == "routing" and args.routing_command is None:
+        cmd_routing_list(args)
         sys.exit(0)
 
     # Handle telegram subcommands

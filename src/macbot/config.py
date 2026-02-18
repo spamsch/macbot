@@ -254,8 +254,29 @@ Before starting a task, check `get_agent_memory` to see recent context and avoid
         """
         return self.model.split("/")[0] if "/" in self.model else "openai"
 
+    def _resolve_key(self, field_name: str, env_value: str) -> str:
+        """Resolve an API key, checking Keychain first then .env.
+
+        Args:
+            field_name: Keychain account name (e.g. 'anthropic_api_key')
+            env_value: The value from the .env / Settings field
+
+        Returns:
+            The resolved key (Keychain wins) or the env_value as fallback.
+        """
+        try:
+            from macbot.core.keychain import get_keychain
+            kc_value = get_keychain(field_name)
+            if kc_value:
+                return kc_value
+        except Exception:
+            pass
+        return env_value
+
     def get_api_key_for_model(self, model: str | None = None) -> str | None:
         """Get the API key for a model's provider.
+
+        Checks macOS Keychain first, falls back to .env value.
 
         Args:
             model: Model string (defaults to current model)
@@ -270,9 +291,9 @@ Before starting a task, check `get_agent_memory` to see recent context and avoid
             return None
 
         key_map = {
-            "anthropic": self.anthropic_api_key,
-            "openai": self.openai_api_key,
-            "openrouter": self.openrouter_api_key,
+            "anthropic": self._resolve_key("anthropic_api_key", self.anthropic_api_key),
+            "openai": self._resolve_key("openai_api_key", self.openai_api_key),
+            "openrouter": self._resolve_key("openrouter_api_key", self.openrouter_api_key),
         }
         return key_map.get(provider)
 

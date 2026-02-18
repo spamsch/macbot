@@ -1,6 +1,7 @@
 <script lang="ts">
   import { Button, Input } from "$lib/components/ui";
   import { invoke } from "@tauri-apps/api/core";
+  import { Command } from "@tauri-apps/plugin-shell";
   import { open } from "@tauri-apps/plugin-shell";
   import { Key, Check, ExternalLink, AlertCircle, ArrowRight, ArrowLeft, Info } from "lucide-svelte";
   import { onboardingStore } from "$lib/stores/onboarding.svelte";
@@ -233,6 +234,22 @@
       lines.push(`MACBOT_MODEL=${selectedModel}`);
 
       await invoke("write_config", { content: lines.join("\n") + "\n" });
+
+      // Also store API key in macOS Keychain (preferred source)
+      if (!currentProvider.isLocal && apiKey.trim()) {
+        try {
+          const cmd = Command.create("security", [
+            "add-generic-password",
+            "-a", `${provider}_api_key`,
+            "-s", "son-of-simon",
+            "-w", apiKey.trim(),
+            "-U",
+          ]);
+          await cmd.execute();
+        } catch {
+          // Keychain save is best-effort; .env write already succeeded
+        }
+      }
 
       verified = true;
       await onboardingStore.updateApiKey({
