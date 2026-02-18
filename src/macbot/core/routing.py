@@ -25,6 +25,7 @@ class Route(BaseModel):
     name: str
     skills: list[str] = Field(default_factory=list)
     model: str
+    keywords: list[str] = Field(default_factory=list)
 
 
 class RoutingConfig(BaseModel):
@@ -136,6 +137,39 @@ class RoutingEngine:
                     route.model,
                 )
                 return route.model
+
+        return None
+
+    def resolve_intent(self, user_message: str) -> str | None:
+        """Pre-route based on keyword matching against the user message.
+
+        Scans routes in order. The first route that has any keyword
+        matching (case-insensitive substring) in the user message wins.
+        Routes without keywords are skipped.
+
+        Args:
+            user_message: The raw user message text.
+
+        Returns:
+            Model string if a keyword matches, None otherwise.
+        """
+        if not self._config.routes or not user_message:
+            return None
+
+        message_lower = user_message.lower()
+
+        for route in self._config.routes:
+            if not route.keywords:
+                continue
+            for keyword in route.keywords:
+                if keyword.lower() in message_lower:
+                    logger.info(
+                        "Intent pre-route '%s' matched keyword '%s' → model: %s",
+                        route.name,
+                        keyword,
+                        route.model,
+                    )
+                    return route.model
 
         return None
 

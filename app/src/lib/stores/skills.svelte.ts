@@ -157,6 +157,21 @@ const BUILTIN_SKILLS: Omit<Skill, "enabled" | "source_path">[] = [
     safe_defaults: { dir: "~/.macbot/skills" },
     confirm_before_write: ["install skill", "update all skills"],
   },
+  {
+    id: "image_generation",
+    name: "Image Generation",
+    description: "Generate images from text descriptions using models with native image generation (e.g. Gemini).",
+    is_builtin: true,
+    apps: [],
+    tasks: [],
+    examples: [
+      "Generate an image of a sunset over mountains",
+      "Create a picture of a cartoon cat wearing a hat",
+      "Draw a logo for my coffee shop",
+    ],
+    safe_defaults: {},
+    confirm_before_write: [],
+  },
 ];
 
 class SkillsStore {

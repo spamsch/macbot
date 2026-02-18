@@ -42,6 +42,10 @@ class Settings(BaseSettings):
         default="",
         description="OpenRouter API key (for openrouter/* models)",
     )
+    gemini_api_key: str = Field(
+        default="",
+        description="Google Gemini API key (for gemini/* models)",
+    )
 
     # Pico AI Server settings (local inference)
     pico_api_base: str = Field(
@@ -294,6 +298,7 @@ Before starting a task, check `get_agent_memory` to see recent context and avoid
             "anthropic": self._resolve_key("anthropic_api_key", self.anthropic_api_key),
             "openai": self._resolve_key("openai_api_key", self.openai_api_key),
             "openrouter": self._resolve_key("openrouter_api_key", self.openrouter_api_key),
+            "gemini": self._resolve_key("gemini_api_key", self.gemini_api_key),
         }
         return key_map.get(provider)
 

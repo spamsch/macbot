@@ -241,6 +241,113 @@ class TestRoutingEngine:
         assert engine.resolve(["search_emails"]) == "pico/llama3.2"
         assert engine.resolve(["get_today_events"]) == "pico/llama3.2"
 
+    # --- resolve_intent tests ---
+
+    def test_resolve_intent_keyword_match(self, tmp_path: Path) -> None:
+        """Keyword in user message → returns the route's model."""
+        config_path = tmp_path / "routing.json"
+        config_path.write_text(json.dumps({
+            "routes": [
+                {
+                    "name": "Image Gen",
+                    "skills": ["image_generation"],
+                    "model": "gemini/gemini-2.5-flash",
+                    "keywords": ["generate image", "create picture", "draw"],
+                },
+            ]
+        }))
+
+        engine = RoutingEngine(config_path=config_path)
+        assert engine.resolve_intent("Please generate image of a cat") == "gemini/gemini-2.5-flash"
+
+    def test_resolve_intent_no_keywords(self, tmp_path: Path) -> None:
+        """Routes without keywords → resolve_intent returns None."""
+        config_path = tmp_path / "routing.json"
+        config_path.write_text(json.dumps({
+            "routes": [
+                {"name": "Mail", "skills": ["mail_assistant"], "model": "pico/llama3.2"},
+            ]
+        }))
+
+        engine = RoutingEngine(config_path=config_path)
+        assert engine.resolve_intent("search my emails") is None
+
+    def test_resolve_intent_case_insensitive(self, tmp_path: Path) -> None:
+        """Keyword matching is case-insensitive."""
+        config_path = tmp_path / "routing.json"
+        config_path.write_text(json.dumps({
+            "routes": [
+                {
+                    "name": "Image Gen",
+                    "skills": [],
+                    "model": "gemini/gemini-2.5-flash",
+                    "keywords": ["generate image"],
+                },
+            ]
+        }))
+
+        engine = RoutingEngine(config_path=config_path)
+        assert engine.resolve_intent("GENERATE IMAGE of a dog") == "gemini/gemini-2.5-flash"
+        assert engine.resolve_intent("Generate Image please") == "gemini/gemini-2.5-flash"
+
+    def test_resolve_intent_first_match_wins(self, tmp_path: Path) -> None:
+        """First route with a matching keyword wins."""
+        config_path = tmp_path / "routing.json"
+        config_path.write_text(json.dumps({
+            "routes": [
+                {
+                    "name": "Route A",
+                    "skills": [],
+                    "model": "gemini/gemini-2.5-flash",
+                    "keywords": ["draw"],
+                },
+                {
+                    "name": "Route B",
+                    "skills": [],
+                    "model": "openai/gpt-5.2",
+                    "keywords": ["draw"],
+                },
+            ]
+        }))
+
+        engine = RoutingEngine(config_path=config_path)
+        assert engine.resolve_intent("draw a cat") == "gemini/gemini-2.5-flash"
+
+    def test_resolve_intent_empty_message(self, tmp_path: Path) -> None:
+        """Empty user message → None."""
+        config_path = tmp_path / "routing.json"
+        config_path.write_text(json.dumps({
+            "routes": [
+                {
+                    "name": "Image Gen",
+                    "skills": [],
+                    "model": "gemini/gemini-2.5-flash",
+                    "keywords": ["generate image"],
+                },
+            ]
+        }))
+
+        engine = RoutingEngine(config_path=config_path)
+        assert engine.resolve_intent("") is None
+
+    def test_keywords_backward_compatible(self, tmp_path: Path) -> None:
+        """Old routing.json without keywords field still loads correctly."""
+        config_path = tmp_path / "routing.json"
+        config_path.write_text(json.dumps({
+            "routes": [
+                {"name": "Mail", "skills": ["mail_assistant"], "model": "pico/llama3.2"},
+            ]
+        }))
+
+        engine = RoutingEngine(config_path=config_path)
+        assert engine.has_routes
+        # resolve_intent returns None since no keywords are defined
+        assert engine.resolve_intent("anything") is None
+        # resolve still works for tool-based routing
+        skills_reg = self._make_skills_registry({"mail_assistant": ["search_emails"]})
+        engine = RoutingEngine(config_path=config_path, skills_registry=skills_reg)
+        assert engine.resolve(["search_emails"]) == "pico/llama3.2"
+
     def test_validate_warns_disabled_skill(self, tmp_path: Path) -> None:
         """Validates warns about skills that exist but are disabled."""
         config_path = tmp_path / "routing.json"

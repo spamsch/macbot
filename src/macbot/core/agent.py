@@ -177,6 +177,17 @@ class Agent:
             self.messages = [Message(role="user", content=goal)]
         self.iteration = 0
 
+        # Intent-based pre-routing: check keywords before the first LLM call
+        if self._routing_engine is not None and self._routing_engine.has_routes:
+            goal_text = goal if isinstance(goal, str) else Message(role="user", content=goal).content_text
+            intent_model = self._routing_engine.resolve_intent(goal_text or "")
+            if intent_model and intent_model != self._current_model:
+                logger.info("Intent pre-routing: %s → %s", self._current_model, intent_model)
+                self._current_model = intent_model
+                api_key = self.config.get_api_key_for_model(intent_model)
+                api_base = self.config.get_api_base_for_model(intent_model)
+                self.provider = LiteLLMProvider(model=intent_model, api_key=api_key, api_base=api_base)
+
         if verbose:
             goal_preview = goal if isinstance(goal, str) else Message(role="user", content=goal).content_text
             console.print(Panel(f"[bold]Goal:[/bold] {goal_preview}", title="Agent Started"))

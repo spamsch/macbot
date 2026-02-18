@@ -19,6 +19,7 @@ ACCOUNT_MAP: dict[str, str] = {
     "anthropic": "anthropic_api_key",
     "openai": "openai_api_key",
     "openrouter": "openrouter_api_key",
+    "gemini": "gemini_api_key",
     "paperless": "paperless_api_token",
     "telegram": "telegram_bot_token",
 }

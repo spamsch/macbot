@@ -5,6 +5,7 @@ export interface Route {
   name: string;
   skills: string[];
   model: string;
+  keywords: string[];
 }
 
 interface RoutingConfig {
@@ -60,7 +61,12 @@ class RoutingStore {
       if (await exists(filePath)) {
         const content = await readTextFile(filePath);
         const parsed: RoutingConfig = JSON.parse(content);
-        this._routes = parsed.routes || [];
+        this._routes = (parsed.routes || []).map((r: Partial<Route>) => ({
+          name: r.name ?? "",
+          skills: r.skills ?? [],
+          model: r.model ?? "",
+          keywords: r.keywords ?? [],
+        }));
       } else {
         this._routes = [];
       }
@@ -102,7 +108,7 @@ class RoutingStore {
   addRoute() {
     this._routes = [
       ...this._routes,
-      { name: "New Route", skills: [], model: "" },
+      { name: "New Route", skills: [], model: "", keywords: [] },
     ];
     this._dirty = true;
   }
