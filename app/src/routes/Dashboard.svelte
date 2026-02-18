@@ -43,6 +43,7 @@
   let showHeartbeat = $state(false);
   let showRouting = $state(false);
   let showChat = $state(false);
+  let customModelFlags = $state<Record<number, boolean>>({});
   let selectedSkill = $state<Skill | null>(null);
   let editingSkill = $state<Skill | null>(null);
   let config = $state<Record<string, string>>({});
@@ -109,7 +110,16 @@
   function toggleRouting() {
     showRouting = !showRouting;
     if (showRouting) {
-      routingStore.load();
+      skillsStore.load();
+      routingStore.load().then(() => {
+        const flags: Record<number, boolean> = {};
+        routingStore.routes.forEach((route, i) => {
+          if (route.model && !knownModelIds.has(route.model)) {
+            flags[i] = true;
+          }
+        });
+        customModelFlags = flags;
+      });
     }
   }
 
@@ -160,6 +170,7 @@
 
   function getModelDisplay(model: string): string {
     if (model.startsWith("pico/")) return `Pico (${model.split("/").pop()})`;
+    if (model.startsWith("gemini/")) return `Gemini (${model.split("/").pop()})`;
     if (model.startsWith("openrouter/")) {
       // e.g. "openrouter/deepseek/deepseek-v3.2-20251201" -> "OpenRouter (deepseek-v3.2-20251201)"
       const parts = model.split("/");
@@ -273,6 +284,17 @@
       ],
     },
     {
+      id: "gemini",
+      name: "Google Gemini",
+      keyPrefix: "AI",
+      envPrefixed: "MACBOT_GEMINI_API_KEY",
+      envStandard: "GEMINI_API_KEY",
+      models: [
+        { id: "gemini/gemini-2.5-flash", name: "Gemini 2.5 Flash", tag: "Fast & cheap" },
+        { id: "gemini/gemini-2.5-pro", name: "Gemini 2.5 Pro", tag: "Recommended" },
+      ],
+    },
+    {
       id: "pico",
       name: "Pico (Local)",
       keyPrefix: "",
@@ -287,6 +309,8 @@
       ],
     },
   ];
+
+  const knownModelIds = new Set(providers.flatMap((p) => p.models.map((m) => m.id)));
 
   // Settings panel state
   let settingsProvider = $state("anthropic");
@@ -309,6 +333,11 @@
   let needsRestart = $state(false);
 
   const settingsCurrentProvider = $derived(providers.find((p) => p.id === settingsProvider)!);
+  const configuredProviders = $derived(providers.filter(p =>
+    p.isLocal
+      ? !!config.MACBOT_PICO_API_BASE
+      : !!config[p.envPrefixed]
+  ));
   const settingsCurrentModels = $derived(
     settingsProvider === "pico" && picoModels.length > 0
       ? picoModels
@@ -365,6 +394,8 @@
         settingsProvider = "openai";
       } else if (config.MACBOT_OPENROUTER_API_KEY) {
         settingsProvider = "openrouter";
+      } else if (config.MACBOT_GEMINI_API_KEY) {
+        settingsProvider = "gemini";
       }
 
       // Pre-populate model
@@ -426,10 +457,9 @@
     try {
       const updates: Record<string, string> = {};
       const removeKeys: string[] = [
-        "MACBOT_ANTHROPIC_API_KEY", "ANTHROPIC_API_KEY",
-        "MACBOT_OPENAI_API_KEY", "OPENAI_API_KEY",
-        "MACBOT_OPENROUTER_API_KEY", "OPENROUTER_API_KEY",
-        "MACBOT_PICO_API_BASE",
+        settingsCurrentProvider.envPrefixed,
+        settingsCurrentProvider.envStandard,
+        ...(settingsCurrentProvider.isLocal ? ["MACBOT_PICO_API_BASE"] : []),
         "MACBOT_MODEL", "MODEL",
       ];
 
@@ -458,7 +488,7 @@
       // Also store API key in macOS Keychain (preferred source)
       if (!settingsCurrentProvider.isLocal && settingsApiKey.trim()) {
         try {
-          const providerName = settingsCurrentProvider.value;
+          const providerName = settingsCurrentProvider.id;
           const cmd = Command.create("security", [
             "add-generic-password",
             "-a", `${providerName}_api_key`,
@@ -538,24 +568,22 @@
           </div>
         </div>
 
-        <!-- API Key / Local Server -->
+        <!-- API Keys -->
         <div class="flex items-center gap-3 p-3 bg-bg-card rounded-xl border border-border">
           <Key class="w-5 h-5 text-primary" />
           <div class="flex-1">
-            <p class="text-xs text-text-muted">{config.MACBOT_PICO_API_BASE ? "Local Server" : "API Key"}</p>
-            <p class="text-sm font-medium text-text font-mono">
-              {#if config.MACBOT_PICO_API_BASE}
-                {config.MACBOT_PICO_API_BASE}
-              {:else if config.MACBOT_OPENAI_API_KEY}
-                {maskApiKey(config.MACBOT_OPENAI_API_KEY)}
-              {:else if config.MACBOT_ANTHROPIC_API_KEY}
-                {maskApiKey(config.MACBOT_ANTHROPIC_API_KEY)}
-              {:else if config.MACBOT_OPENROUTER_API_KEY}
-                {maskApiKey(config.MACBOT_OPENROUTER_API_KEY)}
-              {:else}
+            <p class="text-xs text-text-muted">API Keys</p>
+            <div class="text-sm font-medium text-text font-mono">
+              {#if configuredProviders.length === 0}
                 Not configured
+              {:else}
+                {#each configuredProviders as ck}
+                  <span class="block">
+                    {ck.name}: {ck.isLocal ? config.MACBOT_PICO_API_BASE : maskApiKey(config[ck.envPrefixed])}
+                  </span>
+                {/each}
               {/if}
-            </p>
+            </div>
           </div>
         </div>
 
@@ -754,6 +782,17 @@
               {/each}
             </select>
           </div>
+
+          <!-- Configured providers -->
+          {#if configuredProviders.length > 0}
+            <div class="flex flex-wrap gap-1.5 mb-3">
+              {#each configuredProviders as cp}
+                <span class="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full bg-success/10 text-success border border-success/20">
+                  <Check class="w-3 h-3" /> {cp.name}
+                </span>
+              {/each}
+            </div>
+          {/if}
 
           <!-- Model dropdown -->
           <div class="mb-3">
@@ -1183,9 +1222,21 @@ Be concise. Skip anything that's purely informational with no action required.`)
         </button>
       </div>
 
-      <p class="text-xs text-text-muted px-6 pt-2">
-        Route different skills to different models. First matching route wins. No routes = default model for everything.
-      </p>
+      <div class="text-xs text-text-muted px-6 pt-2 space-y-2">
+        <p>Route different skills to different models. First matching route wins. Use <strong class="text-text">keywords</strong> for intent pre-routing (matches before the first LLM call).</p>
+
+        <details class="group">
+          <summary class="cursor-pointer text-primary hover:underline">How to set up a provider (e.g. Gemini, DeepSeek)</summary>
+          <ol class="mt-1.5 ml-4 list-decimal space-y-1 text-text-muted">
+            <li>Get an API key — for Gemini or DeepSeek or sign up at <strong class="text-text">openrouter.ai</strong> and copy your key.</li>
+            <li>Open <button type="button" class="text-primary hover:underline inline" onclick={() => { showRouting = false; toggleSettings(); }}>Settings</button>, pick the provider (e.g. "OpenRouter"), paste the key, and save. The key is stored in your <strong class="text-text">macOS Keychain</strong>.</li>
+            <li>Come back here, add a route, pick skills and choose the model from the dropdown.</li>
+          </ol>
+          <p class="mt-1.5"><strong class="text-text">Pico (Local)</strong> models run on your machine via Ollama — no API key needed.</p>
+        </details>
+
+        <p>Default model: <code class="text-text bg-bg-input px-1 py-0.5 rounded text-[11px]">{config.MACBOT_MODEL || 'not set'}</code></p>
+      </div>
 
       <div class="flex-1 flex flex-col p-6 gap-4 min-h-0 overflow-y-auto">
         {#if routingStore.loading}
@@ -1202,11 +1253,13 @@ Be concise. Skip anything that's purely informational with no action required.`)
             <div class="p-4 bg-bg-input border border-border rounded-xl space-y-3">
               <div class="flex items-center gap-2">
                 <input
+                  id="route-name-{i}"
                   type="text"
                   class="flex-1 bg-bg border border-border rounded-lg px-3 py-1.5 text-sm text-text focus:outline-none focus:ring-2 focus:ring-primary/50"
                   value={route.name}
                   oninput={(e) => routingStore.updateRoute(i, { name: e.currentTarget.value })}
                   placeholder="Route name"
+                  aria-label="Route name"
                 />
                 <div class="flex items-center gap-1">
                   <button
@@ -1236,27 +1289,91 @@ Be concise. Skip anything that's purely informational with no action required.`)
               </div>
 
               <div>
-                <label class="text-xs text-text-muted block mb-1">Skills (comma-separated IDs)</label>
-                <input
-                  type="text"
-                  class="w-full bg-bg border border-border rounded-lg px-3 py-1.5 text-sm text-text font-mono focus:outline-none focus:ring-2 focus:ring-primary/50"
-                  value={route.skills.join(", ")}
-                  oninput={(e) => routingStore.updateRoute(i, {
-                    skills: e.currentTarget.value.split(",").map((s) => s.trim()).filter(Boolean)
-                  })}
-                  placeholder="mail_assistant, calendar_assistant"
-                />
+                <span class="text-xs text-text-muted block mb-1.5">Skills</span>
+                {#if skillsStore.skills.length === 0}
+                  <p class="text-xs text-text-muted italic">Loading skills...</p>
+                {:else}
+                  <div class="flex flex-wrap gap-1.5">
+                    {#each skillsStore.skills.filter(s => s.enabled) as skill}
+                      <button
+                        type="button"
+                        class="px-2.5 py-1 rounded-full text-xs font-medium transition-colors
+                               {route.skills.includes(skill.id)
+                                 ? 'bg-primary text-white'
+                                 : 'bg-bg border border-border text-text-muted hover:text-text'}"
+                        onclick={() => {
+                          const skills = route.skills.includes(skill.id)
+                            ? route.skills.filter(s => s !== skill.id)
+                            : [...route.skills, skill.id];
+                          routingStore.updateRoute(i, { skills });
+                        }}
+                      >
+                        {skill.name}
+                      </button>
+                    {/each}
+                  </div>
+                {/if}
               </div>
 
               <div>
-                <label class="text-xs text-text-muted block mb-1">Model</label>
+                <label class="text-xs text-text-muted block mb-1" for="route-keywords-{i}">Keywords (for intent pre-routing)</label>
                 <input
+                  id="route-keywords-{i}"
                   type="text"
-                  class="w-full bg-bg border border-border rounded-lg px-3 py-1.5 text-sm text-text font-mono focus:outline-none focus:ring-2 focus:ring-primary/50"
-                  value={route.model}
-                  oninput={(e) => routingStore.updateRoute(i, { model: e.currentTarget.value })}
-                  placeholder="pico/llama3.2 or anthropic/claude-sonnet-4-5"
+                  class="w-full bg-bg border border-border rounded-lg px-3 py-1.5 text-sm text-text focus:outline-none focus:ring-2 focus:ring-primary/50"
+                  value={route.keywords.join(", ")}
+                  oninput={(e) => {
+                    const keywords = e.currentTarget.value
+                      .split(",")
+                      .map((k: string) => k.trim())
+                      .filter((k: string) => k.length > 0);
+                    routingStore.updateRoute(i, { keywords });
+                  }}
+                  placeholder="e.g. generate image, create picture, draw"
+                  aria-label="Keywords for intent pre-routing"
                 />
+                <p class="text-[10px] text-text-muted mt-0.5">Comma-separated. Matches trigger this route before the first LLM call.</p>
+              </div>
+
+              <div>
+                <label class="text-xs text-text-muted block mb-1" for="route-model-{i}">Model</label>
+                <select
+                  id="route-model-{i}"
+                  value={customModelFlags[i] ? '__custom__' : route.model}
+                  onchange={(e) => {
+                    if (e.currentTarget.value === '__custom__') {
+                      customModelFlags = { ...customModelFlags, [i]: true };
+                    } else {
+                      customModelFlags = { ...customModelFlags, [i]: false };
+                      routingStore.updateRoute(i, { model: e.currentTarget.value });
+                    }
+                  }}
+                  class="w-full bg-bg border border-border rounded-lg px-3 py-1.5 text-sm text-text focus:outline-none focus:ring-2 focus:ring-primary/50"
+                >
+                  {#if !route.model}
+                    <option value="" disabled selected>Select a model...</option>
+                  {/if}
+                  {#each providers as p}
+                    <optgroup label={p.name}>
+                      {#each p.models as m}
+                        <option value={m.id}>{m.name}{m.tag ? ` — ${m.tag}` : ''}</option>
+                      {/each}
+                    </optgroup>
+                  {/each}
+                  <optgroup label="Other">
+                    <option value="__custom__">Custom model ID...</option>
+                  </optgroup>
+                </select>
+                {#if customModelFlags[i]}
+                  <input
+                    type="text"
+                    class="w-full mt-1.5 bg-bg border border-border rounded-lg px-3 py-1.5 text-sm text-text font-mono focus:outline-none focus:ring-2 focus:ring-primary/50"
+                    value={route.model}
+                    oninput={(e) => routingStore.updateRoute(i, { model: e.currentTarget.value })}
+                    placeholder="provider/model-name"
+                    aria-label="Custom model ID"
+                  />
+                {/if}
               </div>
             </div>
           {/each}
