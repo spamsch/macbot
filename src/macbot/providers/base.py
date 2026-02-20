@@ -116,7 +116,12 @@ class LLMProvider(ABC):
             elif isinstance(msg.content, list):
                 for block in msg.content:
                     if isinstance(block, dict):
-                        total_chars += len(str(block))
+                        if block.get("type") == "image_url":
+                            # Estimate ~1000 tokens (~3000 chars) per image
+                            # instead of stringifying the base64 data
+                            total_chars += 3000
+                        else:
+                            total_chars += len(str(block))
             if msg.tool_calls:
                 for tc in msg.tool_calls:
                     total_chars += len(tc.name) + len(str(tc.arguments))
@@ -125,12 +130,14 @@ class LLMProvider(ABC):
         return total_chars // 3
 
     @abstractmethod
-    def format_tool_result(self, tool_call_id: str, result: str) -> Message:
+    def format_tool_result(
+        self, tool_call_id: str, result: str | list[dict[str, Any]]
+    ) -> Message:
         """Format a tool result as a message.
 
         Args:
             tool_call_id: ID of the tool call
-            result: Result from the tool execution
+            result: Result from the tool execution (string or content blocks)
 
         Returns:
             Formatted message for the conversation

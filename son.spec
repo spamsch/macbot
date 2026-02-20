@@ -130,6 +130,8 @@ a = Analysis(
         'tiktoken',
         'tiktoken_ext',
         'tiktoken_ext.openai_public',
+        'fitz',
+        'pymupdf',
     ],
     hookspath=[],
     hooksconfig={},

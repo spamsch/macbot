@@ -682,12 +682,15 @@ On subsequent requests for the same site, **check memory first** (`memory_list`)
                     console.print(f"[red]  ✗ {tool_call.name} failed ({elapsed_str}):[/red] {result.error}")
 
             # Format and add tool result to messages
-            result_str = self._format_tool_result(result)
-            tool_msg = self.provider.format_tool_result(tool_call.id, result_str)
+            result_content = self._format_tool_result(result)
+            tool_msg = self.provider.format_tool_result(tool_call.id, result_content)
             self.messages.append(tool_msg)
 
-    def _format_tool_result(self, result: TaskResult) -> str:
-        """Format a task result as a string for the LLM.
+    def _format_tool_result(self, result: TaskResult) -> str | list[dict[str, Any]]:
+        """Format a task result for the LLM.
+
+        Returns a string for text results, or a list of content blocks for
+        multimodal results (e.g., PDF page images).
 
         Applies truncation based on context profile:
         - full: no truncation
@@ -695,6 +698,21 @@ On subsequent requests for the same site, **check memory first** (`memory_list`)
         - minimal: max 500 chars
         """
         if result.success:
+            # Check for multimodal PDF image output
+            if (
+                isinstance(result.output, dict)
+                and result.output.get("type") == "pdf_images"
+            ):
+                blocks: list[dict[str, Any]] = [
+                    {"type": "text", "text": result.output.get("text", "PDF document")}
+                ]
+                for b64_image in result.output.get("images", []):
+                    blocks.append({
+                        "type": "image_url",
+                        "image_url": {"url": f"data:image/png;base64,{b64_image}"},
+                    })
+                return blocks
+
             if isinstance(result.output, (dict, list)):
                 text = json.dumps(result.output)
             else:
