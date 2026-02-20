@@ -57,11 +57,21 @@ class OpenAIProvider(LLMProvider):
                 }
                 openai_messages.append(openai_msg)
             elif msg.role == "tool":
-                # Tool result message
+                # Tool result message — OpenAI doesn't support images in tool results
+                if isinstance(msg.content, list):
+                    # Extract text blocks only
+                    text_parts = [
+                        block["text"]
+                        for block in msg.content
+                        if isinstance(block, dict) and block.get("type") == "text"
+                    ]
+                    tool_content = "\n".join(text_parts) if text_parts else ""
+                else:
+                    tool_content = msg.content or ""
                 openai_messages.append({
                     "role": "tool",
                     "tool_call_id": msg.tool_call_id,
-                    "content": msg.content or "",
+                    "content": tool_content,
                 })
             else:
                 # Pass content as-is — OpenAI natively supports
@@ -206,7 +216,9 @@ class OpenAIProvider(LLMProvider):
             usage=usage,
         )
 
-    def format_tool_result(self, tool_call_id: str, result: str) -> Message:
+    def format_tool_result(
+        self, tool_call_id: str, result: str | list[dict[str, Any]]
+    ) -> Message:
         """Format a tool result for OpenAI's format."""
         # OpenAI expects tool results as tool messages with tool_call_id
         return Message(role="tool", content=result, tool_call_id=tool_call_id)

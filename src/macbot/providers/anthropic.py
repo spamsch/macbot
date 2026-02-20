@@ -43,16 +43,53 @@ class AnthropicProvider(LLMProvider):
                 anthropic_messages.append({"role": "assistant", "content": content_blocks})
             elif msg.role == "tool":
                 # Tool result - Anthropic expects this as a user message with tool_result block
-                anthropic_messages.append({
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "tool_result",
-                            "tool_use_id": msg.tool_call_id,
-                            "content": msg.content or "",
-                        }
-                    ],
-                })
+                if isinstance(msg.content, list):
+                    # Multimodal tool result — convert content blocks to Anthropic format
+                    anthropic_tool_content: list[dict[str, Any]] = []
+                    for block in msg.content:
+                        if block.get("type") == "text":
+                            anthropic_tool_content.append(
+                                {"type": "text", "text": block["text"]}
+                            )
+                        elif block.get("type") == "image_url":
+                            url = block["image_url"]["url"]
+                            if url.startswith("data:"):
+                                header, b64_data = url.split(",", 1)
+                                media_type = header.split(":")[1].split(";")[0]
+                                anthropic_tool_content.append({
+                                    "type": "image",
+                                    "source": {
+                                        "type": "base64",
+                                        "media_type": media_type,
+                                        "data": b64_data,
+                                    },
+                                })
+                            else:
+                                anthropic_tool_content.append({
+                                    "type": "image",
+                                    "source": {"type": "url", "url": url},
+                                })
+                    anthropic_messages.append({
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": msg.tool_call_id,
+                                "content": anthropic_tool_content,
+                            }
+                        ],
+                    })
+                else:
+                    anthropic_messages.append({
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": msg.tool_call_id,
+                                "content": msg.content or "",
+                            }
+                        ],
+                    })
             else:
                 if isinstance(msg.content, list):
                     # Convert OpenAI-format content blocks to Anthropic format
@@ -192,7 +229,9 @@ class AnthropicProvider(LLMProvider):
             usage=usage,
         )
 
-    def format_tool_result(self, tool_call_id: str, result: str) -> Message:
+    def format_tool_result(
+        self, tool_call_id: str, result: str | list[dict[str, Any]]
+    ) -> Message:
         """Format a tool result for Anthropic's format."""
         # Use unified Message format - conversion to Anthropic's format happens in chat()
         return Message(role="tool", content=result, tool_call_id=tool_call_id)

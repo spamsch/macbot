@@ -122,10 +122,20 @@ class LiteLLMProvider(LLMProvider):
                         ],
                     })
                 elif msg.role == "tool":
+                    # Extract text-only for token estimation
+                    if isinstance(msg.content, list):
+                        text_parts = [
+                            block["text"]
+                            for block in msg.content
+                            if isinstance(block, dict) and block.get("type") == "text"
+                        ]
+                        est_content = "\n".join(text_parts) if text_parts else ""
+                    else:
+                        est_content = msg.content or ""
                     litellm_messages.append({
                         "role": "tool",
                         "tool_call_id": msg.tool_call_id,
-                        "content": msg.content or "",
+                        "content": est_content,
                     })
                 else:
                     litellm_messages.append({
@@ -215,17 +225,28 @@ class LiteLLMProvider(LLMProvider):
                         ],
                     })
             elif msg.role == "tool":
+                # Extract text-only content for tool results (images not supported)
+                if isinstance(msg.content, list):
+                    text_parts = [
+                        block["text"]
+                        for block in msg.content
+                        if isinstance(block, dict) and block.get("type") == "text"
+                    ]
+                    tool_text = "\n".join(text_parts) if text_parts else ""
+                else:
+                    tool_text = msg.content or ""
+
                 if flatten_tools:
                     # Convert tool result to a user message
                     litellm_messages.append({
                         "role": "user",
-                        "content": f"[Tool result: {msg.content or ''}]",
+                        "content": f"[Tool result: {tool_text}]",
                     })
                 else:
                     litellm_messages.append({
                         "role": "tool",
                         "tool_call_id": msg.tool_call_id,
-                        "content": msg.content or "",
+                        "content": tool_text,
                     })
             else:
                 # Pass content as-is — LiteLLM/OpenAI natively support
@@ -516,12 +537,14 @@ class LiteLLMProvider(LLMProvider):
             },
         )
 
-    def format_tool_result(self, tool_call_id: str, result: str) -> Message:
+    def format_tool_result(
+        self, tool_call_id: str, result: str | list[dict[str, Any]]
+    ) -> Message:
         """Format a tool result as a message.
 
         Args:
             tool_call_id: ID of the tool call
-            result: Result from the tool execution
+            result: Result from the tool execution (string or content blocks)
 
         Returns:
             Formatted message for the conversation
