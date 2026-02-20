@@ -15,6 +15,7 @@ tasks:
   - move_things_todo
   - list_things_projects
   - create_things_project
+  - update_things_project
   - list_things_tags
 essential_tasks:
   - show_things_today

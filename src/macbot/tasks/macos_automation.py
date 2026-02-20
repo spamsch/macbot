@@ -2609,6 +2609,74 @@ class CreateThingsProjectTask(Task):
         return await run_script("things/create-project.sh", args, timeout=15)
 
 
+class UpdateThingsProjectTask(Task):
+    """Update a Things3 project."""
+
+    @property
+    def name(self) -> str:
+        return "update_things_project"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Update properties of an existing Things3 project. Find by ID (recommended) or name, "
+            "then set new name, notes, due date, tags, area, or status."
+        )
+
+    async def execute(
+        self,
+        id: str | None = None,
+        name: str | None = None,
+        set_name: str | None = None,
+        set_notes: str | None = None,
+        clear_notes: bool = False,
+        set_due: str | None = None,
+        set_tags: str | None = None,
+        set_area: str | None = None,
+        set_status: str | None = None,
+    ) -> dict[str, Any]:
+        """Update a project.
+
+        Args:
+            id: Find project by ID (recommended).
+            name: Find project by exact name.
+            set_name: Set new name.
+            set_notes: Set new notes.
+            clear_notes: Clear notes.
+            set_due: Set due date as "YYYY-MM-DD".
+            set_tags: Set tags (comma-separated, replaces existing).
+            set_area: Move to this area.
+            set_status: Set status: completed, canceled, open.
+
+        Returns:
+            Dictionary with update result.
+        """
+        if not id and not name:
+            return {"success": False, "error": "Must specify id or name"}
+
+        args = []
+        if id:
+            args.extend(["--id", id])
+        if name:
+            args.extend(["--name", name])
+        if set_name:
+            args.extend(["--set-name", set_name])
+        if set_notes:
+            args.extend(["--set-notes", set_notes])
+        if clear_notes:
+            args.append("--clear-notes")
+        if set_due:
+            args.extend(["--set-due", set_due])
+        if set_tags:
+            args.extend(["--set-tags", set_tags])
+        if set_area:
+            args.extend(["--set-area", set_area])
+        if set_status:
+            args.extend(["--set-status", set_status])
+
+        return await run_script("things/update-project.sh", args, timeout=15)
+
+
 class ListThingsTagsTask(Task):
     """List all Things3 tags."""
 
@@ -2734,4 +2802,5 @@ def register_macos_tasks(registry) -> None:
     registry.register(MoveThingsTodoTask())
     registry.register(ListThingsProjectsTask())
     registry.register(CreateThingsProjectTask())
+    registry.register(UpdateThingsProjectTask())
     registry.register(ListThingsTagsTask())
