@@ -81,6 +81,7 @@ impl Default for OnboardingState {
         automation.insert("Reminders".to_string(), false);
         automation.insert("Notes".to_string(), false);
         automation.insert("Safari".to_string(), false);
+        automation.insert("Things3".to_string(), false);
 
         let mut folder_access = std::collections::HashMap::new();
         folder_access.insert("Documents".to_string(), false);

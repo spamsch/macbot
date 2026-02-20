@@ -77,6 +77,7 @@ function createDefaultState(): OnboardingState {
           Reminders: false,
           Notes: false,
           Safari: false,
+          Things3: false,
         },
         folder_access: {
           Documents: false,

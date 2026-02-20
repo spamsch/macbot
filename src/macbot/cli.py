@@ -1607,6 +1607,7 @@ def cmd_doctor(args: argparse.Namespace) -> None:
             "reminders/get-due-today.sh",
             "notes/list-notes.sh",
             "safari/get-current-page.sh",
+            "things/list-todos.sh",
         ]
 
         missing = []
@@ -1653,7 +1654,7 @@ def cmd_doctor(args: argparse.Namespace) -> None:
             else:
                 error = result.stderr.strip()
                 # Parse common error codes
-                if "-1743" in error:
+                if "-1743" in error or "-10003" in error:
                     return False, "Permission denied (grant in System Settings > Privacy > Automation)"
                 elif "-2741" in error:
                     return False, "AppleScript syntax error (special chars in data?)"
@@ -1694,6 +1695,12 @@ def cmd_doctor(args: argparse.Namespace) -> None:
     ok, msg = test_app_access("Safari", 'tell application "Safari" to count of windows')
     results["permissions"]["automation"]["Safari"] = ok
     check("Safari.app", ok, msg,
+          "Grant access in System Settings > Privacy & Security > Automation" if not ok else None)
+
+    # Test Things3
+    ok, msg = test_app_access("Things3", 'tell application "Things3" to count of to dos')
+    results["permissions"]["automation"]["Things3"] = ok
+    check("Things3.app", ok, msg,
           "Grant access in System Settings > Privacy & Security > Automation" if not ok else None)
 
     # Test Contacts

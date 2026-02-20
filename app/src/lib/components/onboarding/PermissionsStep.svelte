@@ -178,7 +178,7 @@
           </span>
         </div>
         <p class="text-sm text-text-muted mb-4">
-          The first time Son of Simon tries to control an app (like Mail or Calendar),
+          The first time Son of Simon tries to control an app (like Mail, Calendar, or Things3),
           macOS will ask for your permission. Just click <strong class="text-text">"OK"</strong> when prompted.
         </p>
         <div class="flex items-start gap-2 p-3 bg-primary/5 rounded-lg border border-primary/20">

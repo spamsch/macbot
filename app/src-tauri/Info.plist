@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
 	<key>NSAppleEventsUsageDescription</key>
-	<string>Son of Simon needs to send Apple Events to automate Mail, Calendar, Reminders, Notes, and Safari on your behalf.</string>
+	<string>Son of Simon needs to send Apple Events to automate Mail, Calendar, Reminders, Notes, Safari, and Things on your behalf.</string>
 	<key>NSCalendarsFullAccessUsageDescription</key>
 	<string>Son of Simon needs full access to your calendars to read and create events.</string>
 	<key>NSRemindersFullAccessUsageDescription</key>
