@@ -1,7 +1,2 @@
-- **Gemini provider support** — Add Google Gemini as an available LLM provider option
-- **Intelligent request routing** — Intent-based keyword routing and hybrid routing for optimal provider selection
-- **macOS Keychain integration** — Securely store and manage API credentials in the system Keychain
-- **Image generation skill** — New skill for generating images with configured providers
-- **Chat history persistence** — Conversation history now saved and restored in the GUI
-- **Enhanced chat interface** — Auto-growing textarea for more natural message input
-- **Dashboard improvements** — Fixed provider settings visibility in multi-provider configurations
+- **Things3 project ID support** — Project assignment now supports specifying projects by ID for more reliable automation.
+- **New update_things_project task** — Add ability to modify Things3 project properties via the agent.
