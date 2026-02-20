@@ -1,5 +1,7 @@
-- **Things3 Integration** — Full automation support for creating, listing, and managing projects and todos with AppleScript bridges and search capabilities
-- **Mindwtr GTD Integration** — Direct sync with Mindwtr files including section management and checklist support, now optional via `MACBOT_MINDWTR_DATA_PATH`
-- **Improved Pico Integration** — Reduced tool count from 88 to 24 via essential_tasks filtering and fixed protocol-token tool calling
-- **Skills System Enhancements** — Updated skill metadata and improved loader logic to better support new integrations
-- **Documentation** — Added comprehensive guides for Things3 and Mindwtr integrations
+- **Gemini provider support** — Add Google Gemini as an available LLM provider option
+- **Intelligent request routing** — Intent-based keyword routing and hybrid routing for optimal provider selection
+- **macOS Keychain integration** — Securely store and manage API credentials in the system Keychain
+- **Image generation skill** — New skill for generating images with configured providers
+- **Chat history persistence** — Conversation history now saved and restored in the GUI
+- **Enhanced chat interface** — Auto-growing textarea for more natural message input
+- **Dashboard improvements** — Fixed provider settings visibility in multi-provider configurations
