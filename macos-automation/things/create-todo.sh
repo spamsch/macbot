@@ -16,7 +16,8 @@
 #   --notes <text>      Notes/description
 #   --due <date>        Due date as "YYYY-MM-DD"
 #   --tags <csv>        Comma-separated tag names
-#   --project <name>    Assign to project
+#   --project <name>    Assign to project by name
+#   --project-id <id>   Assign to project by ID (more reliable than name)
 #   --list <name>       Add to built-in list (Inbox, Today, Anytime, Someday)
 #   --schedule <when>   Schedule: "today", "evening", "tomorrow", "someday",
 #                       "anytime", or "YYYY-MM-DD"
@@ -36,6 +37,7 @@ NOTES=""
 DUE=""
 TAGS=""
 PROJECT=""
+PROJECT_ID=""
 LIST=""
 SCHEDULE=""
 HEADING=""
@@ -61,6 +63,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --project)
             PROJECT="$2"
+            shift 2
+            ;;
+        --project-id)
+            PROJECT_ID="$2"
             shift 2
             ;;
         --list)
@@ -156,18 +162,25 @@ tell application "Things3"
         set notes of newTodo to "$NOTES_ESCAPED"
     end if
 
-    -- Assign to project
-    if "$PROJECT_ESCAPED" is not "" then
+    -- Assign to project (prefer ID over name; use "set project" not "move")
+    if "$PROJECT_ID" is not "" then
+        try
+            set targetProject to project id "$PROJECT_ID"
+            set project of newTodo to targetProject
+        on error
+            return "Error: Project with id '$PROJECT_ID' not found. To-do was created but not assigned to a project."
+        end try
+    else if "$PROJECT_ESCAPED" is not "" then
         try
             set targetProject to project "$PROJECT_ESCAPED"
-            move newTodo to targetProject
+            set project of newTodo to targetProject
         on error
             return "Error: Project '$PROJECT_ESCAPED' not found. To-do was created but not assigned to a project."
         end try
     end if
 
     -- Place under heading within project
-    if "$HEADING_ESCAPED" is not "" and "$PROJECT_ESCAPED" is not "" then
+    if "$HEADING_ESCAPED" is not "" and ("$PROJECT_ESCAPED" is not "" or "$PROJECT_ID" is not "") then
         -- Note: heading assignment requires the Things URL scheme; skip for now
     end if
 

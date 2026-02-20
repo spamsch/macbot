@@ -2304,8 +2304,9 @@ class CreateThingsTodoTask(Task):
     @property
     def description(self) -> str:
         return (
-            "Create a new to-do in Things3 with optional notes, due date, tags, project, "
-            "and scheduling (today, evening, tomorrow, someday, anytime, or a date)."
+            "Create a new to-do in Things3 with optional notes, due date, tags, project (by name or ID), "
+            "and scheduling (today, evening, tomorrow, someday, anytime, or a date). "
+            "Prefer project_id over project name for reliable assignment."
         )
 
     async def execute(
@@ -2315,6 +2316,7 @@ class CreateThingsTodoTask(Task):
         due: str | None = None,
         tags: str | None = None,
         project: str | None = None,
+        project_id: str | None = None,
         list_name: str | None = None,
         schedule: str | None = None,
         heading: str | None = None,
@@ -2326,7 +2328,8 @@ class CreateThingsTodoTask(Task):
             notes: Notes or description.
             due: Due date as "YYYY-MM-DD".
             tags: Comma-separated tag names.
-            project: Assign to this project.
+            project: Assign to project by name.
+            project_id: Assign to project by ID (more reliable than name).
             list_name: Add to built-in list (Inbox, Today, Anytime, Someday).
             schedule: Schedule: "today", "evening", "tomorrow", "someday", "anytime", or "YYYY-MM-DD".
             heading: Place under a heading within the project.
@@ -2341,7 +2344,9 @@ class CreateThingsTodoTask(Task):
             args.extend(["--due", due])
         if tags:
             args.extend(["--tags", tags])
-        if project:
+        if project_id:
+            args.extend(["--project-id", project_id])
+        elif project:
             args.extend(["--project", project])
         if list_name:
             args.extend(["--list", list_name])
@@ -2410,7 +2415,8 @@ class UpdateThingsTodoTask(Task):
     def description(self) -> str:
         return (
             "Update properties of an existing Things3 to-do. Find by ID (recommended) or name, "
-            "then set new name, notes, due date, tags, project, or status."
+            "then set new name, notes, due date, tags, project (by name or ID), or status. "
+            "Prefer set_project_id over name for reliable project assignment."
         )
 
     async def execute(
@@ -2423,6 +2429,7 @@ class UpdateThingsTodoTask(Task):
         clear_due: bool = False,
         set_tags: str | None = None,
         set_project: str | None = None,
+        set_project_id: str | None = None,
         set_status: str | None = None,
     ) -> dict[str, Any]:
         """Update a to-do.
@@ -2435,7 +2442,8 @@ class UpdateThingsTodoTask(Task):
             set_due: Set due date as "YYYY-MM-DD".
             clear_due: Remove the due date.
             set_tags: Set tags (comma-separated, replaces existing).
-            set_project: Move to this project.
+            set_project: Move to project by name.
+            set_project_id: Move to project by ID (more reliable than name).
             set_status: Set status: completed, canceled, open.
 
         Returns:
@@ -2459,7 +2467,9 @@ class UpdateThingsTodoTask(Task):
             args.append("--clear-due")
         if set_tags:
             args.extend(["--set-tags", set_tags])
-        if set_project:
+        if set_project_id:
+            args.extend(["--set-project-id", set_project_id])
+        elif set_project:
             args.extend(["--set-project", set_project])
         if set_status:
             args.extend(["--set-status", set_status])
@@ -2478,7 +2488,7 @@ class MoveThingsTodoTask(Task):
     def description(self) -> str:
         return (
             "Move a Things3 to-do to a different built-in list (Inbox, Today, Anytime, Someday) "
-            "or to a project."
+            "or to a project (by name or ID). Prefer to_project_id over name for reliable assignment."
         )
 
     async def execute(
@@ -2487,6 +2497,7 @@ class MoveThingsTodoTask(Task):
         name: str | None = None,
         to_list: str | None = None,
         to_project: str | None = None,
+        to_project_id: str | None = None,
     ) -> dict[str, Any]:
         """Move a to-do.
 
@@ -2494,15 +2505,16 @@ class MoveThingsTodoTask(Task):
             id: Find to-do by ID (recommended).
             name: Find to-do by exact name.
             to_list: Move to built-in list (Inbox, Today, Anytime, Someday).
-            to_project: Move to project.
+            to_project: Move to project by name.
+            to_project_id: Move to project by ID (more reliable than name).
 
         Returns:
             Dictionary with move result.
         """
         if not id and not name:
             return {"success": False, "error": "Must specify id or name"}
-        if not to_list and not to_project:
-            return {"success": False, "error": "Must specify to_list or to_project"}
+        if not to_list and not to_project and not to_project_id:
+            return {"success": False, "error": "Must specify to_list, to_project, or to_project_id"}
 
         args = []
         if id:
@@ -2511,7 +2523,9 @@ class MoveThingsTodoTask(Task):
             args.extend(["--name", name])
         if to_list:
             args.extend(["--to-list", to_list])
-        if to_project:
+        if to_project_id:
+            args.extend(["--to-project-id", to_project_id])
+        elif to_project:
             args.extend(["--to-project", to_project])
 
         return await run_script("things/move-todo.sh", args, timeout=15)

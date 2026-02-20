@@ -18,7 +18,8 @@
 #   --set-due <date>    Set due date as "YYYY-MM-DD"
 #   --clear-due         Remove due date
 #   --set-tags <csv>    Set tags (comma-separated, replaces existing)
-#   --set-project <name> Move to project
+#   --set-project <name> Move to project by name
+#   --set-project-id <id> Move to project by ID (more reliable than name)
 #   --set-status <s>    Set status: completed, canceled, open
 #
 # Example:
@@ -38,6 +39,7 @@ SET_DUE=""
 CLEAR_DUE=false
 SET_TAGS=""
 SET_PROJECT=""
+SET_PROJECT_ID=""
 SET_STATUS=""
 
 # Parse arguments
@@ -73,6 +75,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --set-project)
             SET_PROJECT="$2"
+            shift 2
+            ;;
+        --set-project-id)
+            SET_PROJECT_ID="$2"
             shift 2
             ;;
         --set-status)
@@ -174,11 +180,19 @@ tell application "Things3"
         set end of changes to "  tags → $SET_TAGS"
     end if
 
-    -- Set project
-    if "$SET_PROJECT_ESCAPED" is not "" then
+    -- Set project (prefer ID over name; use "set project" not "move")
+    if "$SET_PROJECT_ID" is not "" then
+        try
+            set targetProject to project id "$SET_PROJECT_ID"
+            set project of t to targetProject
+            set end of changes to "  project → (id: $SET_PROJECT_ID)"
+        on error
+            set end of changes to "  project → ERROR: id '$SET_PROJECT_ID' not found"
+        end try
+    else if "$SET_PROJECT_ESCAPED" is not "" then
         try
             set targetProject to project "$SET_PROJECT_ESCAPED"
-            move t to targetProject
+            set project of t to targetProject
             set end of changes to "  project → $SET_PROJECT_ESCAPED"
         on error
             set end of changes to "  project → ERROR: '$SET_PROJECT_ESCAPED' not found"

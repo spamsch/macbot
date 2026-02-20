@@ -49,7 +49,9 @@ requires_permissions:
 - Use `due` for the actual deadline date
 - Tags are comma-separated: `--tags "work,urgent"`
 - When the user says "add to Today", use `list_name="Today"` or `schedule="today"`
-- When they mention a project, use the `project` parameter
+- **Always prefer `project_id` over `project` name** for assigning to-dos to projects — name-based lookup is unreliable in Things3
+- When creating multiple to-dos for a project, first `create_things_project` to get the ID, then use `project_id` for each to-do
+- `move_things_todo` and `update_things_todo` also accept `to_project_id` / `set_project_id`
 
 ### Scheduling vs Due Dates
 - **Schedule** controls when the to-do appears in Things (visibility)
