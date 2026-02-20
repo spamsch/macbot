@@ -1,1 +1,1 @@
-- **PDF file reading** — `read_file` task now supports PDF documents with automatic text extraction or vision-based image rendering for scanned documents, enabling the agent to process PDF content naturally.
+- **Things3 integration** — Added Things3 to app permission checks and onboarding flow
