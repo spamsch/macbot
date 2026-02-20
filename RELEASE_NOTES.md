@@ -1,2 +1,1 @@
-- **Things3 project ID support** — Project assignment now supports specifying projects by ID for more reliable automation.
-- **New update_things_project task** — Add ability to modify Things3 project properties via the agent.
+- **PDF file reading** — `read_file` task now supports PDF documents with automatic text extraction or vision-based image rendering for scanned documents, enabling the agent to process PDF content naturally.
