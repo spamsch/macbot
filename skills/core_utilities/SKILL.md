@@ -6,6 +6,7 @@ tasks:
   - run_shell_command
   - read_file
   - write_file
+  - create_pdf
   - get_current_time
   - fetch_url
   - list_directory
