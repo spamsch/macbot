@@ -68,20 +68,20 @@ tell application "Things3"
         end try
 
         -- Build output line
-        set line to "  □ " & tName
+        set todoLine to "  □ " & tName
 
         if tDue is not "" then
-            set line to line & "  (due: " & tDue & ")"
+            set todoLine to todoLine & "  (due: " & tDue & ")"
         end if
         if tTags is not "" then
-            set line to line & "  #" & tTags
+            set todoLine to todoLine & "  #" & tTags
         end if
         if tNotes is not "" then
-            set line to line & return & "    " & tNotes
+            set todoLine to todoLine & return & "    " & tNotes
         end if
-        set line to line & return & "    id: " & tID
+        set todoLine to todoLine & return & "    id: " & tID
 
-        set output to output & line & return
+        set output to output & todoLine & return
     end repeat
 
     return output

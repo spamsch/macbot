@@ -164,28 +164,28 @@ tell application "Things3"
 
             -- Build output line
             if tStatus is open then
-                set line to "  □ " & tName
+                set todoLine to "  □ " & tName
             else if tStatus is completed then
-                set line to "  ✓ " & tName
+                set todoLine to "  ✓ " & tName
             else
-                set line to "  ✗ " & tName
+                set todoLine to "  ✗ " & tName
             end if
 
             if tProject is not "" then
-                set line to line & "  [" & tProject & "]"
+                set todoLine to todoLine & "  [" & tProject & "]"
             end if
             if tDue is not "" then
-                set line to line & "  (due: " & tDue & ")"
+                set todoLine to todoLine & "  (due: " & tDue & ")"
             end if
             if tTags is not "" then
-                set line to line & "  #" & tTags
+                set todoLine to todoLine & "  #" & tTags
             end if
             if tNotes is not "" then
-                set line to line & return & "    " & tNotes
+                set todoLine to todoLine & return & "    " & tNotes
             end if
-            set line to line & return & "    id: " & tID
+            set todoLine to todoLine & return & "    id: " & tID
 
-            set output to output & line & return
+            set output to output & todoLine & return
         end if
     end repeat
 

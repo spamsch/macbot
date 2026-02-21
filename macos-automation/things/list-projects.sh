@@ -107,25 +107,25 @@ tell application "Things3"
         end try
 
         -- Build output line
-        set line to "  " & pName
+        set todoLine to "  " & pName
 
         if $WITH_TODOS then
             set openCount to count of (to dos of p whose status is open)
-            set line to line & " (" & openCount & " open)"
+            set todoLine to todoLine & " (" & openCount & " open)"
         end if
 
         if pDue is not "" then
-            set line to line & "  (due: " & pDue & ")"
+            set todoLine to todoLine & "  (due: " & pDue & ")"
         end if
         if pTags is not "" then
-            set line to line & "  #" & pTags
+            set todoLine to todoLine & "  #" & pTags
         end if
         if pNotes is not "" then
-            set line to line & return & "    " & pNotes
+            set todoLine to todoLine & return & "    " & pNotes
         end if
-        set line to line & return & "    id: " & pID
+        set todoLine to todoLine & return & "    id: " & pID
 
-        set output to output & line & return
+        set output to output & todoLine & return
     end repeat
 
     return output
