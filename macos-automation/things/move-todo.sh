@@ -69,6 +69,11 @@ done
 [[ -z "$TODO_ID" && -z "$NAME" ]] && error_exit "Please specify --id or --name"
 [[ -z "$TO_LIST" && -z "$TO_PROJECT" && -z "$TO_PROJECT_ID" ]] && error_exit "Please specify --to-list, --to-project, or --to-project-id"
 
+# Upcoming is a virtual list — items appear there via schedule date, not move
+if [[ "$TO_LIST" == "Upcoming" ]]; then
+    error_exit "'Upcoming' is a virtual list in Things3 — to-dos appear there when they have a future schedule date. Use update_things_todo with set_schedule instead."
+fi
+
 NAME_ESCAPED=$(escape_for_applescript "$NAME")
 TO_PROJECT_ESCAPED=$(escape_for_applescript "$TO_PROJECT")
 

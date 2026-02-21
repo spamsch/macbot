@@ -53,6 +53,8 @@ requires_permissions:
 - **Always prefer `project_id` over `project` name** for assigning to-dos to projects — name-based lookup is unreliable in Things3
 - When creating multiple to-dos for a project, first `create_things_project` to get the ID, then use `project_id` for each to-do
 - `move_things_todo` and `update_things_todo` also accept `to_project_id` / `set_project_id`
+- When creating a to-do with `list_name`, the to-do is created first, then moved to the target list (valid: Inbox, Today, Anytime, Someday — NOT Upcoming)
+- `update_things_todo` supports `set_schedule` for changing when a to-do appears
 
 ### Scheduling vs Due Dates
 - **Schedule** controls when the to-do appears in Things (visibility)
@@ -60,6 +62,8 @@ requires_permissions:
 - "Do this today" → schedule to today
 - "This is due Friday" → set due date to Friday
 - "Remind me about this tomorrow" → schedule to tomorrow
+- Scheduling uses the Things URL scheme internally (AppleScript's `activation date` is read-only)
+- Requires `MACBOT_THINGS_AUTH_TOKEN` in `~/.macbot/.env` — get the token from Things → Settings → General → Enable Things URLs
 
 ### Status Values
 - `open` — Active, not yet done
@@ -69,11 +73,13 @@ requires_permissions:
 ### Built-in Lists
 - **Inbox** — Unprocessed items, brain dump
 - **Today** — To-dos to focus on today
-- **Upcoming** — Scheduled for future dates
+- **Upcoming** — Scheduled for future dates (**virtual list** — cannot move to-dos here directly; to-dos appear when they have a future schedule date via `set_schedule`)
 - **Anytime** — Available to do anytime (no schedule)
 - **Someday** — Ideas for later, not committed
 - **Logbook** — Completed to-dos
 - **Trash** — Deleted items
+
+**Moving to lists:** Use `move_things_todo` for Inbox, Today, Anytime, Someday. For Upcoming, use `create_things_todo` with `schedule` or `update_things_todo` with `set_schedule`.
 
 ### Two-Step Lookup
 When the user wants to act on a specific to-do (complete, update, move), first search or list to find the to-do's ID, then use the ID for the action. This avoids ambiguity with duplicate names.
@@ -85,6 +91,8 @@ When the user wants to act on a specific to-do (complete, update, move), first s
 - **"mark X as done"** → search_things_todos to find it, then complete_things_todo with id
 - **"show my projects"** → list_things_projects with with_todos=true
 - **"move X to Today"** → move_things_todo with to_list="Today"
+- **"schedule X for next week"** → update_things_todo with set_schedule="YYYY-MM-DD"
+- **"remind me in 2 weeks"** → create_things_todo with schedule="YYYY-MM-DD" (compute the date)
 - **"what are my tags?"** → list_things_tags with with_counts=true
 - **"show tasks for project X"** → list_things_todos with project="X"
 - **"show tasks tagged X"** → list_things_todos with tag="X"
