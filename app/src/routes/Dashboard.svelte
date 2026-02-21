@@ -8,6 +8,7 @@
   import { memoryStore } from "$lib/stores/memory.svelte";
   import { heartbeatStore } from "$lib/stores/heartbeat.svelte";
   import { routingStore } from "$lib/stores/routing.svelte";
+  import { cronStore } from "$lib/stores/cron.svelte";
   import { invoke } from "@tauri-apps/api/core";
   import { getVersion } from "@tauri-apps/api/app";
   import { Command } from "@tauri-apps/plugin-shell";
@@ -32,6 +33,7 @@
     Save,
     FileText,
     Route,
+    Clock,
     ChevronUp,
     ChevronDown,
     Trash2,
@@ -43,7 +45,9 @@
   let showMemory = $state(false);
   let showHeartbeat = $state(false);
   let showRouting = $state(false);
+  let showScheduledTasks = $state(false);
   let showChat = $state(false);
+  let confirmDeleteJobId = $state<string | null>(null);
   let customModelFlags = $state<Record<number, boolean>>({});
   let selectedSkill = $state<Skill | null>(null);
   let editingSkill = $state<Skill | null>(null);
@@ -154,6 +158,14 @@
         });
         customModelFlags = flags;
       });
+    }
+  }
+
+  function toggleScheduledTasks() {
+    showScheduledTasks = !showScheduledTasks;
+    confirmDeleteJobId = null;
+    if (showScheduledTasks) {
+      cronStore.load();
     }
   }
 
@@ -784,6 +796,10 @@
         <Heart class="w-4 h-4" />
         Heartbeat
       </Button>
+      <Button variant="ghost" size="sm" onclick={toggleScheduledTasks}>
+        <Clock class="w-4 h-4" />
+        Scheduled
+      </Button>
       <Button variant="ghost" size="sm" onclick={toggleRouting}>
         <Route class="w-4 h-4" />
         Routing
@@ -1265,6 +1281,141 @@ Be concise. Skip anything that's purely informational with no action required.`)
               {heartbeatStore.error}
             </div>
           {/if}
+        {/if}
+      </div>
+    </div>
+  </div>
+{/if}
+
+<!-- Scheduled Tasks Panel (slide-in) -->
+{#if showScheduledTasks}
+  <div class="fixed inset-0 z-50">
+    <!-- Backdrop -->
+    <button
+      type="button"
+      class="absolute inset-0 bg-black/50"
+      onclick={toggleScheduledTasks}
+      onkeydown={(e) => e.key === "Escape" && toggleScheduledTasks()}
+      aria-label="Close scheduled tasks"
+    ></button>
+
+    <!-- Panel -->
+    <div
+      class="absolute right-0 top-0 bottom-0 w-[520px] bg-bg-card border-l border-border flex flex-col"
+    >
+      <div class="flex items-center justify-between p-6 pb-0">
+        <h2 class="text-lg font-bold text-text">Scheduled Tasks</h2>
+        <div class="flex items-center gap-1">
+          <button
+            type="button"
+            class="p-2 hover:bg-bg-input rounded-lg transition-colors text-text-muted"
+            onclick={() => cronStore.load()}
+            title="Refresh"
+          >
+            <RefreshCw class="w-4 h-4" />
+          </button>
+          <button
+            type="button"
+            class="p-2 hover:bg-bg-input rounded-lg transition-colors"
+            onclick={toggleScheduledTasks}
+          >
+            &times;
+          </button>
+        </div>
+      </div>
+
+      <p class="text-xs text-text-muted px-6 pt-2">
+        Managed via <span class="font-mono">~/.macbot/cron.json</span> — create tasks by chatting with the agent.
+      </p>
+
+      <div class="flex-1 flex flex-col p-6 gap-3 min-h-0 overflow-y-auto">
+        {#if cronStore.loading}
+          <div class="text-center text-text-muted py-8">Loading...</div>
+        {:else if cronStore.jobs.length === 0}
+          <div class="text-center text-text-muted py-8">
+            <Clock class="w-8 h-8 mx-auto mb-3 opacity-50" />
+            <p>No scheduled tasks.</p>
+            <p class="text-xs mt-2">Chat with the agent to create one, e.g.<br /><span class="italic">"Schedule a daily email check at 9am"</span></p>
+          </div>
+        {:else}
+          {#each cronStore.jobs as job}
+            <div class="p-4 bg-bg-input border border-border rounded-xl space-y-2 {!job.enabled ? 'opacity-60' : ''}">
+              <div class="flex items-center justify-between gap-2">
+                <div class="flex-1 min-w-0">
+                  <h3 class="text-sm font-medium text-text truncate">{job.name}</h3>
+                  {#if job.description}
+                    <p class="text-xs text-text-muted truncate">{job.description}</p>
+                  {/if}
+                </div>
+                <div class="flex items-center gap-1 shrink-0">
+                  <!-- Enable/disable toggle -->
+                  <button
+                    type="button"
+                    class="relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out
+                           {job.enabled ? 'bg-primary' : 'bg-border'}"
+                    onclick={() => cronStore.toggle(job.id)}
+                    title={job.enabled ? "Disable" : "Enable"}
+                  >
+                    <span
+                      class="pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow transition duration-200 ease-in-out
+                             {job.enabled ? 'translate-x-4' : 'translate-x-0'}"
+                    ></span>
+                  </button>
+                  <!-- Delete -->
+                  {#if confirmDeleteJobId === job.id}
+                    <button
+                      type="button"
+                      class="px-2 py-1 text-xs bg-error text-white rounded-lg hover:bg-error/90 transition-colors"
+                      onclick={() => { cronStore.remove(job.id); confirmDeleteJobId = null; }}
+                    >
+                      Confirm
+                    </button>
+                    <button
+                      type="button"
+                      class="px-2 py-1 text-xs text-text-muted hover:text-text transition-colors"
+                      onclick={() => (confirmDeleteJobId = null)}
+                    >
+                      Cancel
+                    </button>
+                  {:else}
+                    <button
+                      type="button"
+                      class="p-1 hover:bg-error/10 rounded transition-colors text-error/60 hover:text-error"
+                      onclick={() => (confirmDeleteJobId = job.id)}
+                      title="Delete"
+                    >
+                      <Trash2 class="w-4 h-4" />
+                    </button>
+                  {/if}
+                </div>
+              </div>
+
+              <div class="flex flex-wrap gap-x-4 gap-y-1 text-xs text-text-muted">
+                <span title="Schedule">
+                  <Clock class="w-3 h-3 inline -mt-0.5" />
+                  {cronStore.scheduleDescription(job)}
+                </span>
+                <span title="Next run">
+                  Next: {cronStore.formatNextRun(job)}
+                </span>
+                {#if job.state.run_count > 0}
+                  <span title="Run count">
+                    Runs: {job.state.run_count}
+                  </span>
+                {/if}
+              </div>
+
+              <p class="text-xs text-text-muted bg-bg rounded-lg px-3 py-2 font-mono truncate" title={job.payload.message}>
+                {job.payload.message}
+              </p>
+            </div>
+          {/each}
+        {/if}
+
+        {#if cronStore.error}
+          <div class="p-3 bg-error/10 border border-error/30 rounded-xl text-error text-xs">
+            {cronStore.error}
+          </div>
         {/if}
       </div>
     </div>
