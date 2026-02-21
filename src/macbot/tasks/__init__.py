@@ -39,6 +39,7 @@ from macbot.tasks.registry import TaskRegistry, task_registry
 from macbot.tasks import (
     browser_automation,
     calculator,
+    cron_tasks,
     fetch_url,
     file_read,
     file_write,
@@ -64,6 +65,7 @@ __all__ = [
     # Task modules (for explicit imports if needed)
     "browser_automation",
     "calculator",
+    "cron_tasks",
     "fetch_url",
     "file_read",
     "file_write",
@@ -154,6 +156,10 @@ def create_default_registry(config: "Settings | None" = None) -> TaskRegistry:
     if config and config.mindwtr_data_path:
         from macbot.tasks.mindwtr import register_mindwtr_tasks
         register_mindwtr_tasks(registry)
+
+    # Register scheduled task management tools
+    from macbot.tasks.cron_tasks import register_cron_tasks
+    register_cron_tasks(registry)
 
     # Register core preferences task
     from macbot.tasks.preferences import register_preferences_tasks
