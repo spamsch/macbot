@@ -1,5 +1,2 @@
-- **Full Disk Access for Messages.app** — Added Full Disk Access requirement to onboarding flow and system health checks to support Messages.app automation.
-- **Email attachments** — Added support for sending emails with file attachments via the `send_email` task.
-- **Email search optimization** — Reduced unnecessary search calls for simple email queries to improve performance.
-- **PDF generation** — New `create_pdf` task for generating PDF documents from HTML or other sources.
-- **Improved onboarding UI** — Enhanced permissions step UI to better guide users through required system access grants.
+- **SQLite-based email search** — Significantly faster email metadata lookups using Mail.app's Envelope Index instead of AppleScript
+- **Things3 scheduling and list assignment fixes** — Fixed issues with todo dates, scheduling, and project list assignment
