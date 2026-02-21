@@ -1,2 +1,1 @@
-- **Free-tier OpenRouter models** — Added support for free-tier OpenRouter models to expand available LLM options.
-- **Things3 script reliability fix** — Resolved -10003 access errors in Things3 scripts by renaming reserved AppleScript variable.
+- **Update check banner** — Displays an update notification on the dashboard when a new version of Son of Simon is available
