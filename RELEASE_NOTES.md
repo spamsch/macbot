@@ -1,1 +1,2 @@
-- **Things3 integration** — Added Things3 to app permission checks and onboarding flow
+- **Free-tier OpenRouter models** — Added support for free-tier OpenRouter models to expand available LLM options.
+- **Things3 script reliability fix** — Resolved -10003 access errors in Things3 scripts by renaming reserved AppleScript variable.
