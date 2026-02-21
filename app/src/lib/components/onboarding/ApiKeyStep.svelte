@@ -92,6 +92,11 @@
         { id: "openrouter/meta-llama/llama-4-maverick-17b-128e-instruct", name: "Llama 4 Maverick" },
         { id: "openrouter/qwen/qwen3-235b-a22b-04-28", name: "Qwen 3 235B" },
         { id: "openrouter/x-ai/grok-4.1-fast", name: "Grok 4.1 Fast" },
+        { id: "openrouter/deepseek/deepseek-r1:free", name: "DeepSeek R1", tag: "Free · Reasoning" },
+        { id: "openrouter/meta-llama/llama-3.3-70b-instruct:free", name: "Llama 3.3 70B", tag: "Free · All-rounder" },
+        { id: "openrouter/google/gemini-2.0-flash-lite-preview-02-05:free", name: "Gemini 2.0 Flash Lite", tag: "Free · Fast" },
+        { id: "openrouter/qwen/qwen3-next-80b-a3b-instruct:free", name: "Qwen 3 Next 80B", tag: "Free · Coding" },
+        { id: "openrouter/openrouter/auto:free", name: "Auto (Free Router)", tag: "Free · Auto" },
       ],
     },
     {
