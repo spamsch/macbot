@@ -30,6 +30,8 @@
   let checking = $state(true);
   let folderAccess = $state<Record<string, boolean>>({ Documents: false, Downloads: false, Desktop: false });
   let checkingFolders = $state(false);
+  let fullDiskAccessGranted = $state(false);
+  let checkingFDA = $state(false);
 
   async function checkFolderAccess() {
     checkingFolders = true;
@@ -41,6 +43,24 @@
       console.error("Failed to check folder access:", e);
     }
     checkingFolders = false;
+  }
+
+  async function checkFullDiskAccess() {
+    checkingFDA = true;
+    try {
+      const hasAccess = await invoke<boolean>("check_full_disk_access");
+      fullDiskAccessGranted = hasAccess;
+      await onboardingStore.updatePermissions({ full_disk_access: hasAccess });
+    } catch (e) {
+      console.error("Failed to check full disk access:", e);
+    }
+    checkingFDA = false;
+  }
+
+  async function openFullDiskAccessSettings() {
+    await invoke("open_system_preferences", {
+      pane: "com.apple.preference.security?Privacy_AllFiles",
+    });
   }
 
   onMount(async () => {
@@ -56,8 +76,9 @@
     }
     checking = false;
 
-    // Check folder access
+    // Check folder access and full disk access
     await checkFolderAccess();
+    await checkFullDiskAccess();
   });
 
   async function openAccessibilitySettings() {
@@ -230,6 +251,58 @@
         </div>
       </div>
     </div>
+  </div>
+
+  <!-- Step 4: Full Disk Access -->
+  <div class="mb-6">
+    {#if fullDiskAccessGranted}
+      <div class="flex items-start gap-4 p-5 bg-success/10 rounded-xl border border-success/30">
+        <div class="w-8 h-8 rounded-full bg-success text-white flex items-center justify-center shrink-0">
+          <Check class="w-5 h-5" />
+        </div>
+        <div class="flex-1">
+          <h3 class="font-semibold text-text mb-2">Full Disk Access Enabled</h3>
+          <p class="text-sm text-text-muted">
+            Son of Simon can read your Messages history for chat search and listing conversations.
+          </p>
+        </div>
+      </div>
+    {:else}
+      <div class="flex items-start gap-4 p-5 bg-bg-card rounded-xl border border-border">
+        <div class="w-8 h-8 rounded-full bg-primary text-white flex items-center justify-center font-bold shrink-0">
+          4
+        </div>
+        <div class="flex-1">
+          <h3 class="font-semibold text-text mb-2">Full Disk Access</h3>
+          <p class="text-sm text-text-muted mb-4">
+            Required to read your Messages history (iMessage/SMS). Without this, chat search and listing conversations won't work.
+          </p>
+          <ol class="text-sm text-text-muted space-y-2 mb-4 ml-4">
+            <li class="flex gap-2">
+              <span class="text-primary font-medium">1.</span>
+              <span>Click the <strong class="text-text">+</strong> button at the bottom of the list</span>
+            </li>
+            <li class="flex gap-2">
+              <span class="text-primary font-medium">2.</span>
+              <span>Find and select <strong class="text-text">Son of Simon</strong> in your Applications folder</span>
+            </li>
+            <li class="flex gap-2">
+              <span class="text-primary font-medium">3.</span>
+              <span>Make sure the toggle next to it is turned <strong class="text-text">on</strong></span>
+            </li>
+          </ol>
+          <div class="flex gap-3">
+            <Button onclick={openFullDiskAccessSettings}>
+              Open Full Disk Access Settings
+              <ExternalLink class="w-4 h-4" />
+            </Button>
+            <Button variant="secondary" onclick={checkFullDiskAccess} loading={checkingFDA}>
+              {checkingFDA ? "Checking..." : "Recheck"}
+            </Button>
+          </div>
+        </div>
+      </div>
+    {/if}
   </div>
 
   <!-- Info box -->

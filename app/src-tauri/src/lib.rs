@@ -26,6 +26,8 @@ pub struct PermissionsData {
     pub automation: std::collections::HashMap<String, bool>,
     #[serde(default)]
     pub folder_access: std::collections::HashMap<String, bool>,
+    #[serde(default)]
+    pub full_disk_access: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -97,6 +99,7 @@ impl Default for OnboardingState {
                     accessibility: false,
                     automation,
                     folder_access,
+                    full_disk_access: false,
                 },
                 api_key: ApiKeyData {
                     provider: "openai".to_string(),
@@ -219,6 +222,17 @@ fn check_folder_access() -> std::collections::HashMap<String, bool> {
     results
 }
 
+// Check if Full Disk Access is granted by trying to read ~/Library/Messages/chat.db
+#[tauri::command]
+fn check_full_disk_access() -> bool {
+    if let Some(home) = dirs::home_dir() {
+        let chat_db = home.join("Library/Messages/chat.db");
+        chat_db.exists() && std::fs::metadata(&chat_db).is_ok()
+    } else {
+        false
+    }
+}
+
 // Check if accessibility permission is granted for THIS app
 #[tauri::command]
 fn check_accessibility_permission() -> bool {
@@ -246,6 +260,7 @@ pub fn run() {
             open_system_preferences,
             check_accessibility_permission,
             check_folder_access,
+            check_full_disk_access,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

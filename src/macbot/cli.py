@@ -1741,14 +1741,17 @@ def cmd_doctor(args: argparse.Namespace) -> None:
         check(f"~/{folder_name}", accessible, msg,
               "Grant access in System Settings > Privacy & Security > Files and Folders" if not accessible else None)
 
-    # Test Full Disk Access (needed for Messages chat.db)
+    # Full Disk Access (needed for Messages app integration)
+    if not json_mode:
+        console.print("\n[bold]Full Disk Access[/bold]")
+
     chat_db = os.path.expanduser("~/Library/Messages/chat.db")
     if os.path.exists(chat_db) and os.access(chat_db, os.R_OK):
         results["permissions"]["full_disk_access"] = True
-        check("Full Disk Access", True, "chat.db readable")
+        check("Messages (chat.db)", True, "Readable — Messages search and chat listing will work")
     else:
         results["permissions"]["full_disk_access"] = False
-        check("Full Disk Access", False, "Cannot read ~/Library/Messages/chat.db",
+        check("Messages (chat.db)", False, "Cannot read ~/Library/Messages/chat.db",
               "Grant Full Disk Access in System Settings > Privacy & Security > Full Disk Access")
 
     # Browser Automation Tools
