@@ -1,2 +1,1 @@
-- **SQLite-based email search** — Significantly faster email metadata lookups using Mail.app's Envelope Index instead of AppleScript
-- **Things3 scheduling and list assignment fixes** — Fixed issues with todo dates, scheduling, and project list assignment
+- **Scheduled Tasks Management** — Create, list, update, and delete recurring or one-shot scheduled tasks using natural language. Supports cron expressions and interval-based scheduling with a new Dashboard UI panel and agent tools for full management control.
