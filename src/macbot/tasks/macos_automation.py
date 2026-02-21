@@ -2423,7 +2423,8 @@ class UpdateThingsTodoTask(Task):
     def description(self) -> str:
         return (
             "Update properties of an existing Things3 to-do. Find by ID (recommended) or name, "
-            "then set new name, notes, due date, tags, project (by name or ID), or status. "
+            "then set new name, notes, due date, tags, project (by name or ID), status, or schedule. "
+            "Use set_schedule to control when the to-do appears (today, tomorrow, a date, etc.). "
             "Prefer set_project_id over name for reliable project assignment."
         )
 
@@ -2439,6 +2440,7 @@ class UpdateThingsTodoTask(Task):
         set_project: str | None = None,
         set_project_id: str | None = None,
         set_status: str | None = None,
+        set_schedule: str | None = None,
     ) -> dict[str, Any]:
         """Update a to-do.
 
@@ -2453,6 +2455,7 @@ class UpdateThingsTodoTask(Task):
             set_project: Move to project by name.
             set_project_id: Move to project by ID (more reliable than name).
             set_status: Set status: completed, canceled, open.
+            set_schedule: Set schedule/when date: "today", "evening", "tomorrow", "someday", "anytime", or "YYYY-MM-DD". This controls when the to-do appears in Things (Upcoming/Today). Requires MACBOT_THINGS_AUTH_TOKEN.
 
         Returns:
             Dictionary with update result.
@@ -2481,6 +2484,8 @@ class UpdateThingsTodoTask(Task):
             args.extend(["--set-project", set_project])
         if set_status:
             args.extend(["--set-status", set_status])
+        if set_schedule:
+            args.extend(["--set-schedule", set_schedule])
 
         return await run_script("things/update-todo.sh", args, timeout=15)
 
@@ -2496,7 +2501,9 @@ class MoveThingsTodoTask(Task):
     def description(self) -> str:
         return (
             "Move a Things3 to-do to a different built-in list (Inbox, Today, Anytime, Someday) "
-            "or to a project (by name or ID). Prefer to_project_id over name for reliable assignment."
+            "or to a project (by name or ID). Note: 'Upcoming' is NOT a valid list target — "
+            "to-dos appear in Upcoming when they have a future schedule date (use update_things_todo "
+            "with set_schedule instead). Prefer to_project_id over name for reliable assignment."
         )
 
     async def execute(

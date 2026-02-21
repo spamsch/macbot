@@ -228,6 +228,12 @@ Before starting a task, check `get_agent_memory` to see recent context and avoid
         description="Paperless-ngx API token",
     )
 
+    # Things3 settings
+    things_auth_token: str = Field(
+        default="",
+        description="Things3 URL scheme auth token (from Things → Settings → General → Enable Things URLs)",
+    )
+
     # Mindwtr settings
     mindwtr_data_path: str = Field(
         default="",

@@ -136,7 +136,16 @@ case "$SCHEDULE" in
         ;;
 esac
 
-osascript <<EOF
+# Read Things auth token from config (needed for URL scheme scheduling)
+THINGS_AUTH_TOKEN="${MACBOT_THINGS_AUTH_TOKEN:-}"
+if [[ -z "$THINGS_AUTH_TOKEN" && -f "$HOME/.macbot/.env" ]]; then
+    THINGS_AUTH_TOKEN=$(grep -E '^MACBOT_THINGS_AUTH_TOKEN=' "$HOME/.macbot/.env" 2>/dev/null | cut -d'=' -f2- | tr -d '"' | tr -d "'")
+fi
+
+TMPFILE=$(mktemp /tmp/things-create.XXXXXX)
+trap 'rm -f "$TMPFILE"' EXIT
+
+osascript <<EOF > "$TMPFILE"
 tell application "Things3"
     -- Build properties
     set props to {name:"$NAME_ESCAPED"}
@@ -146,16 +155,8 @@ tell application "Things3"
         set tag names of props to "$TAGS"
     end if
 
-    -- Create the to-do
-    if "$LIST" is not "" then
-        try
-            set newTodo to make new to do with properties props in list "$LIST"
-        on error errMsg
-            return "Error: Could not create to-do in list '$LIST'. " & errMsg
-        end try
-    else
-        set newTodo to make new to do with properties props
-    end if
+    -- Always create in default list first, then move
+    set newTodo to make new to do with properties props
 
     -- Set notes after creation (more reliable than in properties)
     if "$NOTES_ESCAPED" is not "" then
@@ -179,14 +180,10 @@ tell application "Things3"
         end try
     end if
 
-    -- Place under heading within project
-    if "$HEADING_ESCAPED" is not "" and ("$PROJECT_ESCAPED" is not "" or "$PROJECT_ID" is not "") then
-        -- Note: heading assignment requires the Things URL scheme; skip for now
-    end if
-
-    -- Set due date
+    -- Set due date (safe order: day 1 first to avoid month-wrap bug)
     if "$HAS_DUE" is "true" then
         set dueDate to current date
+        set day of dueDate to 1
         set year of dueDate to $DUE_YEAR
         set month of dueDate to $DUE_MONTH
         set day of dueDate to $DUE_DAY
@@ -196,37 +193,13 @@ tell application "Things3"
         set due date of newTodo to dueDate
     end if
 
-    -- Schedule
-    set schedVal to "$SCHEDULE_AS"
-    if schedVal is not "" then
-        if schedVal is "today" then
-            -- Move to Today list
-            move newTodo to list "Today"
-        else if schedVal is "evening" then
-            move newTodo to list "Today"
-        else if schedVal is "tomorrow" then
-            -- Set activation date to tomorrow
-            set tmrw to (current date) + 1 * days
-            set activation date of newTodo to tmrw
-        else if schedVal is "someday" then
-            move newTodo to list "Someday"
-        else if schedVal is "anytime" then
-            move newTodo to list "Anytime"
-        else if schedVal starts with "date:" then
-            -- Parse date from "date:YYYY-MM-DD"
-            set dateStr to text 6 thru -1 of schedVal
-            set sYear to text 1 thru 4 of dateStr as integer
-            set sMonth to text 6 thru 7 of dateStr as integer
-            set sDay to text 9 thru 10 of dateStr as integer
-            set schedDate to current date
-            set year of schedDate to sYear
-            set month of schedDate to sMonth
-            set day of schedDate to sDay
-            set hours of schedDate to 0
-            set minutes of schedDate to 0
-            set seconds of schedDate to 0
-            set activation date of newTodo to schedDate
-        end if
+    -- Move to target list (create-then-move pattern, not "in list")
+    if "$LIST" is not "" then
+        try
+            move newTodo to list "$LIST"
+        on error errMsg
+            -- Non-fatal: to-do was created, just couldn't move
+        end try
     end if
 
     -- Build confirmation
@@ -245,3 +218,50 @@ tell application "Things3"
     return output
 end tell
 EOF
+
+# Convert AppleScript carriage returns (\r) to line feeds (\n)
+RESULT=$(tr '\r' '\n' < "$TMPFILE")
+
+# Check for errors from AppleScript
+if [[ "$RESULT" == Error:* ]]; then
+    echo "$RESULT"
+    exit 1
+fi
+
+# Apply schedule via Things URL scheme (activation date is read-only in AppleScript)
+if [[ -n "$SCHEDULE_AS" ]]; then
+    # Extract to-do ID from result
+    TODO_ID=$(echo "$RESULT" | grep '^id: ' | sed 's/^id: //')
+
+    if [[ -z "$TODO_ID" ]]; then
+        echo "$RESULT"
+        echo "Warning: Could not extract to-do ID for scheduling."
+        exit 0
+    fi
+
+    # Map schedule values to Things URL scheme 'when' parameter
+    WHEN_VALUE=""
+    case "$SCHEDULE_AS" in
+        today)    WHEN_VALUE="today" ;;
+        evening)  WHEN_VALUE="evening" ;;
+        tomorrow) WHEN_VALUE="tomorrow" ;;
+        someday)  WHEN_VALUE="someday" ;;
+        anytime)  WHEN_VALUE="anytime" ;;
+        date:*)   WHEN_VALUE="${SCHEDULE_AS#date:}" ;;
+    esac
+
+    if [[ -n "$WHEN_VALUE" ]]; then
+        if [[ -n "$THINGS_AUTH_TOKEN" ]]; then
+            open "things:///update?auth-token=${THINGS_AUTH_TOKEN}&id=${TODO_ID}&when=${WHEN_VALUE}"
+            sleep 0.5
+            RESULT=$(echo "$RESULT" | sed '/^id: /d')
+            RESULT="${RESULT} (scheduled: ${WHEN_VALUE})
+id: ${TODO_ID}"
+        else
+            RESULT="${RESULT}
+Warning: Could not schedule (MACBOT_THINGS_AUTH_TOKEN not set). Set it in ~/.macbot/.env"
+        fi
+    fi
+fi
+
+echo "$RESULT"
