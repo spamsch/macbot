@@ -13,6 +13,7 @@
   import { Command } from "@tauri-apps/plugin-shell";
   import { homeDir, join } from "@tauri-apps/api/path";
   import { onMount } from "svelte";
+  import { openUrl } from "@tauri-apps/plugin-opener";
   import {
     Settings,
     Key,
@@ -50,13 +51,46 @@
   let loading = $state(true);
   let error = $state<string | null>(null);
   let appVersion = $state("0.0.0");
+  let updateAvailable = $state<string | null>(null);
+  let updateUrl = $state("");
+  let upToDate = $state(false);
 
   onMount(async () => {
     await loadConfig();
     appVersion = await getVersion();
+    checkForUpdates();
     // Auto-start the service
     chatStore.connect();
   });
+
+  function isNewer(latest: string, current: string): boolean {
+    const a = latest.split(".").map(Number);
+    const b = current.split(".").map(Number);
+    for (let i = 0; i < 3; i++) {
+      if ((a[i] ?? 0) > (b[i] ?? 0)) return true;
+      if ((a[i] ?? 0) < (b[i] ?? 0)) return false;
+    }
+    return false;
+  }
+
+  async function checkForUpdates() {
+    try {
+      const resp = await fetch(
+        "https://api.github.com/repos/spamsch/son-of-simon/releases/latest",
+      );
+      if (!resp.ok) return;
+      const data = await resp.json();
+      const tag: string = (data.tag_name ?? "").replace(/^v/, "");
+      if (tag && isNewer(tag, appVersion)) {
+        updateAvailable = tag;
+        updateUrl = data.html_url ?? "";
+      } else if (tag) {
+        upToDate = true;
+      }
+    } catch {
+      // Silently ignore — network failure, rate limit, etc.
+    }
+  }
 
   async function loadConfig() {
     loading = true;
@@ -552,6 +586,43 @@
       <h1 class="text-2xl font-bold text-text">Son of Simon</h1>
       <p class="text-text-muted text-center">AI-powered macOS automation</p>
     </div>
+
+    <!-- Update Banner -->
+    {#if updateAvailable}
+      <div class="w-full max-w-md flex items-center gap-3 px-4 py-3 bg-primary/10 border border-primary/30 rounded-xl">
+        <div class="flex-1 text-sm text-primary">
+          Version {updateAvailable} is available.
+          <button
+            type="button"
+            class="underline hover:no-underline font-medium"
+            onclick={() => openUrl(updateUrl)}
+          >
+            View release
+          </button>
+        </div>
+        <button
+          type="button"
+          class="p-1 hover:bg-primary/20 rounded-lg transition-colors text-primary"
+          onclick={() => (updateAvailable = null)}
+          aria-label="Dismiss update notice"
+        >
+          <X class="w-4 h-4" />
+        </button>
+      </div>
+    {:else if upToDate}
+      <div class="w-full max-w-md flex items-center gap-3 px-4 py-3 bg-success/10 border border-success/30 rounded-xl">
+        <Check class="w-4 h-4 text-success shrink-0" />
+        <span class="flex-1 text-sm text-success">You're on the latest version (v{appVersion})</span>
+        <button
+          type="button"
+          class="p-1 hover:bg-success/20 rounded-lg transition-colors text-success"
+          onclick={() => (upToDate = false)}
+          aria-label="Dismiss"
+        >
+          <X class="w-4 h-4" />
+        </button>
+      </div>
+    {/if}
 
     <!-- Config Summary -->
     <div class="w-full max-w-md space-y-3">
