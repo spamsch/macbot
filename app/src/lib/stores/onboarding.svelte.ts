@@ -5,6 +5,7 @@ export interface PermissionsData {
   accessibility: boolean;
   automation: Record<string, boolean>;
   folder_access: Record<string, boolean>;
+  full_disk_access: boolean;
 }
 
 export interface ApiKeyData {
@@ -84,6 +85,7 @@ function createDefaultState(): OnboardingState {
           Downloads: false,
           Desktop: false,
         },
+        full_disk_access: false,
       },
       api_key: {
         provider: "openai",
