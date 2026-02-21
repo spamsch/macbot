@@ -19,12 +19,14 @@
 #   --body-file <file>  Read body from file
 #   --cc <email>        CC recipient (optional)
 #   --bcc <email>       BCC recipient (optional)
+#   --attachment <path> File to attach (repeatable for multiple files)
 #   --draft             Save as draft (silently, without opening window)
 #   --draft-visible     Save as draft and open compose window for review
 #
 # Example:
 #   ./send-email.sh --to "john@example.com" --subject "Hello" --body "Hi there!"
 #   ./send-email.sh --to "team@example.com" --subject "Report" --body-file report.txt --draft
+#   ./send-email.sh --to "john@example.com" --subject "Invoice" --body "See attached" --attachment "/path/to/invoice.pdf" --draft-visible
 # ==============================================================================
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -38,6 +40,7 @@ CC=""
 BCC=""
 DRAFT=false
 DRAFT_VISIBLE=false
+ATTACHMENTS=()
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
@@ -79,6 +82,11 @@ while [[ $# -gt 0 ]]; do
             DRAFT_VISIBLE=true
             shift
             ;;
+        --attachment)
+            [[ -f "$2" ]] || error_exit "Attachment file not found: $2"
+            ATTACHMENTS+=("$2")
+            shift 2
+            ;;
         -h|--help)
             head -35 "$0" | tail -30
             exit 0
@@ -114,6 +122,13 @@ if [[ -n "$BCC" ]]; then
     APPLESCRIPT="$APPLESCRIPT
         make new bcc recipient at end of bcc recipients with properties {address:\"$BCC\"}"
 fi
+
+# Add attachments (must use POSIX path for Mail.app)
+for attachment in "${ATTACHMENTS[@]}"; do
+    ATT_ESCAPED=$(escape_for_applescript "$attachment")
+    APPLESCRIPT="$APPLESCRIPT
+        make new attachment with properties {file name:(POSIX file \"$ATT_ESCAPED\" as alias)} at after the last paragraph"
+done
 
 APPLESCRIPT="$APPLESCRIPT
     end tell"

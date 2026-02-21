@@ -233,6 +233,7 @@ class SendEmailTask(Task):
         body: str,
         cc: str | None = None,
         bcc: str | None = None,
+        attachments: list[str] | None = None,
         draft: bool = False,
         draft_visible: bool = False
     ) -> dict[str, Any]:
@@ -244,6 +245,7 @@ class SendEmailTask(Task):
             body: Email body content.
             cc: CC recipient (optional).
             bcc: BCC recipient (optional).
+            attachments: List of absolute file paths to attach (optional).
             draft: If True, save as draft instead of sending (silently).
             draft_visible: If True with draft, open compose window for review.
 
@@ -255,6 +257,12 @@ class SendEmailTask(Task):
             args.extend(["--cc", cc])
         if bcc:
             args.extend(["--bcc", bcc])
+        if attachments:
+            for path in attachments:
+                abs_path = os.path.abspath(os.path.expanduser(path))
+                if not os.path.exists(abs_path):
+                    return {"return_code": 1, "stdout": "", "stderr": f"Attachment not found: {abs_path}"}
+                args.extend(["--attachment", abs_path])
         if draft:
             if draft_visible:
                 args.append("--draft-visible")

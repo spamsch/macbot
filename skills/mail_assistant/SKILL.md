@@ -1,7 +1,7 @@
 ---
 id: mail_assistant
 name: Mail Assistant
-description: Find, summarize, and act on emails safely with sensible defaults.
+description: Find, summarize, and act on emails safely with sensible defaults. Supports sending emails with file attachments.
 apps:
   - Mail
 tasks:
@@ -22,6 +22,7 @@ examples:
   - "Archive all read newsletters"
   - "Download attachments from the last email from Bob"
   - "Reply to John's email about the meeting"
+  - "Send a draft to Frank with the invoice PDF attached"
 safe_defaults:
   days: 7
   limit: 20
@@ -86,6 +87,13 @@ When processing emails and the user wants them archived or deleted:
 1. Use search_emails to find the email and get its Message-ID
 2. Use move_email with the message_id and to="archive" or to="trash"
 3. The email will be moved to the account's Archive/Trash mailbox
+
+### Sending Emails with Attachments
+When the user wants to send an email with file attachments:
+1. Find the file using `spotlight_search` or use the absolute path provided by the user
+2. Call `send_email` with `attachments=["/absolute/path/to/file"]` — paths must be absolute
+3. Multiple files: pass multiple paths in the list, e.g. `attachments=["/path/a.pdf", "/path/b.pdf"]`
+4. Always use `draft=True` or `draft_visible=True` when attachments are involved so the user can review before sending
 
 ### Downloading Attachments
 When the user wants to download email attachments:
