@@ -183,8 +183,8 @@ class SearchEmailsTask(Task):
         Returns:
             Dictionary with matching emails.
         """
-        if not sender and not subject and not account and not message_id:
-            return {"success": False, "error": "Must specify sender, subject, message_id, or account"}
+        if not sender and not subject and not account and not message_id and not today_only and not days:
+            return {"success": False, "error": "Must specify sender, subject, message_id, account, today_only, or days"}
 
         args = []
         if sender:

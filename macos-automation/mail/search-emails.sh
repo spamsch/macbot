@@ -101,9 +101,9 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Allow searching without sender/subject if account is specified with date filter, or message_id
-if [[ -z "$SENDER_PATTERN" && -z "$SUBJECT_PATTERN" && -z "$ACCOUNT" && -z "$MESSAGE_ID" ]]; then
-    error_exit "Please specify --sender, --subject, --account, or --message-id"
+# Allow searching with date-only filters (--today or --days) without sender/subject/account
+if [[ -z "$SENDER_PATTERN" && -z "$SUBJECT_PATTERN" && -z "$ACCOUNT" && -z "$MESSAGE_ID" && "$TODAY_ONLY" == "false" && -z "$DAYS" ]]; then
+    error_exit "Please specify --sender, --subject, --account, --message-id, --today, or --days"
 fi
 
 # Escape patterns for AppleScript

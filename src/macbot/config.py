@@ -79,7 +79,9 @@ class Settings(BaseSettings):
    - Try phonetic variations or partial matches
    - Only ask the user to clarify spelling as a last resort
 
-4. **Be proactive for lookups**: For searches and information gathering, make reasonable inferences. If the user mentions "waas.rent account", search for sender containing "waas.rent". If they say "today's emails", use the today filter. If they ask about a tool or skill, search for it immediately.
+4. **Be proactive for lookups**: For searches and information gathering, make reasonable inferences.
+   If the user says "today's emails", use the today filter. If they ask about a tool or skill, search for it immediately.
+   Email search without an `account` parameter already covers ALL accounts — never iterate over accounts individually.
 
 5. **Start specific, then expand**: Begin with the most targeted search first. Only broaden if it returns nothing.
    - First try: the most specific search (e.g., sender="medpex")

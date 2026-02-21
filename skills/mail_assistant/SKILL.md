@@ -59,6 +59,13 @@ Email search can be slow (10-30s) because Mail.app processes messages one by one
 - Use `today_only=true` for "today's emails" requests
 - Use the `account` parameter when user says "from X account" (not sender)
 
+### Critical: Never Iterate Over Accounts
+- `search_emails` WITHOUT an `account` parameter already searches ALL accounts' Inbox + Archive in a single call
+- NEVER loop through individual accounts one by one — this is wasteful and slow
+- For "today's emails": `search_emails(today_only=true, limit=20)` — one call, all accounts
+- For "unread emails": `get_unread_emails` — one call, all accounts
+- Only use the `account` parameter when the user specifically asks about ONE account
+
 ### Email Actions
 - Always confirm before sending, deleting, or moving emails
 - Show a preview of what will be sent/changed before confirming
