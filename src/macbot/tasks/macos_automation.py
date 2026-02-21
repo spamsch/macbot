@@ -209,6 +209,13 @@ class SearchEmailsTask(Task):
             args.append("--with-links")
         args.extend(["--limit", str(limit)])
 
+        # Metadata-only search: try fast SQLite path first
+        if not with_content and not with_links:
+            result = await run_script("mail/search-emails-sqlite.sh", args, timeout=10)
+            if result.get("success"):
+                return result
+            # SQLite failed — fall through to AppleScript silently
+
         return await run_script("mail/search-emails.sh", args, timeout=60)
 
 

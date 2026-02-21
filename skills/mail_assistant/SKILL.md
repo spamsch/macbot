@@ -38,11 +38,13 @@ requires_permissions:
 ## Behavior Notes
 
 ### Performance: Two-Phase Search Pattern
-Email search can be slow (10-30s) because Mail.app processes messages one by one.
-**Always use a two-phase approach to minimize search time:**
+Email metadata search (headers, sender, subject, date) is fast (~50ms via SQLite index).
+**The two-phase approach remains important for reading email content:**
 
-1. **Phase 1 — Find (headers only):** Search with the most specific filters possible, `with_content=false` (default), small `limit` (5), and narrow `days` (7 unless user says otherwise). Combine `sender` AND `subject` in a single call when both are known.
-2. **Phase 2 — Read (by message_id):** Once you find the right email, fetch its content with `message_id` + `with_content=true`. Message-ID lookup with content takes ~3-5s per email. Add `with_links=true` only when the user needs URLs from HTML emails (adds ~5s extra).
+1. **Phase 1 — Find (headers only):** Search with filters, `with_content=false` (default).
+   Returns in milliseconds via SQLite. Falls back to AppleScript if needed.
+2. **Phase 2 — Read (by message_id):** Fetch content with `message_id` + `with_content=true`.
+   Takes ~3-5s per email (AppleScript required for email body). Add `with_links=true` only when the user needs URLs from HTML emails (adds ~5s extra).
 
 **Bad:** `search_emails(subject="Ferien", days=30, with_content=True)` → slow (30s+, fetches all bodies)
 **Good:** `search_emails(subject="Ferien", sender="mom", days=7, limit=5)` → fast headers → then `search_emails(message_id="<id>", with_content=True)` → ~3-5s

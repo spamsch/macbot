@@ -1754,6 +1754,22 @@ def cmd_doctor(args: argparse.Namespace) -> None:
         check("Messages (chat.db)", False, "Cannot read ~/Library/Messages/chat.db",
               "Grant Full Disk Access in System Settings > Privacy & Security > Full Disk Access")
 
+    # Check Mail Envelope Index (for fast SQLite email search)
+    import glob as glob_module
+    mail_dbs = sorted(glob_module.glob(os.path.expanduser("~/Library/Mail/V*/MailData/Envelope Index")))
+    if mail_dbs:
+        if os.access(mail_dbs[-1], os.R_OK):
+            results["permissions"]["mail_envelope_index"] = True
+            check("Mail (Envelope Index)", True, "Readable — fast SQLite email search enabled")
+        else:
+            results["permissions"]["mail_envelope_index"] = False
+            check("Mail (Envelope Index)", False, "Cannot read Mail database",
+                  "Grant Full Disk Access in System Settings > Privacy & Security > Full Disk Access")
+    else:
+        results["permissions"]["mail_envelope_index"] = False
+        check("Mail (Envelope Index)", False, "Not found — Mail.app may not be configured",
+              "Set up at least one account in Mail.app")
+
     # Browser Automation Tools
     if not json_mode:
         console.print("\n[bold]Browser Automation[/bold]")

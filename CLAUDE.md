@@ -101,6 +101,14 @@ Python sidecar binary (PyInstaller) bundled at `Contents/MacOS/son`. Tauri spawn
 - When searching by message_id, the `download-attachments.sh` and `search-emails.sh` scripts both use the fast `whose` pattern.
 - Default mailbox search should include inbox + Archive (not just inbox).
 
+### Mail SQLite Search
+- `search_emails` uses a **two-tier strategy**: SQLite for metadata, AppleScript for content.
+- SQLite queries the Envelope Index at `~/Library/Mail/V*/MailData/Envelope Index` (read-only, immutable mode).
+- `date_sent` is Unix epoch in V10+ (no offset needed). RFC Message-IDs are extracted from `.emlx` files on disk (not stored in the DB).
+- `--message-id` lookups always fall back to AppleScript (RFC Message-ID string is not indexed in SQLite).
+- Fallback: if SQLite fails (permissions, missing DB), AppleScript is used automatically.
+- `with_content=True` or `with_links=True` always uses AppleScript (content is in .emlx files, not SQLite).
+
 ## Key Patterns
 
 - **Async everywhere** - All I/O uses async/await
