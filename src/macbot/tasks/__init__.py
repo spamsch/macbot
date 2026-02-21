@@ -44,6 +44,7 @@ from macbot.tasks import (
     file_write,
     macos_automation,
     mindwtr,
+    pdf_create,
     shell_command,
     system_info,
     teams,
@@ -68,6 +69,7 @@ __all__ = [
     "file_write",
     "macos_automation",
     "mindwtr",
+    "pdf_create",
     "shell_command",
     "system_info",
     "teams",
@@ -105,6 +107,10 @@ def create_default_registry(config: "Settings | None" = None) -> TaskRegistry:
     registry.register(FetchURLTask())
     registry.register(ReadFileTask())
     registry.register(WriteFileTask())
+
+    from macbot.tasks.pdf_create import CreatePDFTask
+    registry.register(CreatePDFTask())
+
     registry.register(CalculatorTask())
     registry.register(GetCurrentTimeTask())
     registry.register(EchoTask())
