@@ -87,14 +87,23 @@ class TelegramBot:
         """
         # Telegram has a 4096 character limit
         if len(text) > 4096:
-            # Split into chunks
+            # Split into chunks; send each individually so that a
+            # markdown failure in one chunk doesn't lose the whole message.
             chunks = [text[i:i + 4000] for i in range(0, len(text), 4000)]
             for chunk in chunks:
-                await self._bot.send_message(
-                    chat_id=chat_id,
-                    text=chunk,
-                    parse_mode=parse_mode,
-                )
+                try:
+                    await self._bot.send_message(
+                        chat_id=chat_id,
+                        text=chunk,
+                        parse_mode=parse_mode,
+                    )
+                except TelegramError:
+                    # Chunk likely broke a markdown entity — retry plain
+                    await self._bot.send_message(
+                        chat_id=chat_id,
+                        text=chunk,
+                        parse_mode=None,
+                    )
             return True
 
         await self._bot.send_message(
