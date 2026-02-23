@@ -2,6 +2,7 @@
   import { Button } from "$lib/components/ui";
   import { chatStore, type ChatMessage, type ToolCall } from "$lib/stores/chat.svelte";
   import { marked } from "marked";
+  import { openUrl } from "@tauri-apps/plugin-opener";
   import { onMount } from "svelte";
 
   // Configure marked for inline rendering (no wrapping <p> tags for single lines)
@@ -152,6 +153,14 @@
   async function handleDeleteConversation() {
     await chatStore.deleteConversation(chatStore.conversationId);
   }
+
+  function handleLinkClick(e: MouseEvent) {
+    const anchor = (e.target as HTMLElement).closest("a");
+    if (anchor?.href) {
+      e.preventDefault();
+      openUrl(anchor.href);
+    }
+  }
 </script>
 
 {#if visible}
@@ -262,7 +271,9 @@
       {/if}
 
       <!-- Transcript -->
-      <div class="flex-1 overflow-y-auto p-4 space-y-4" bind:this={transcriptEl}>
+      <!-- svelte-ignore a11y_click_events_have_key_events -->
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <div class="flex-1 overflow-y-auto p-4 space-y-4" bind:this={transcriptEl} onclick={handleLinkClick}>
         {#if chatStore.messages.length === 0}
           <div class="flex flex-col items-center justify-center h-full text-text-muted text-sm gap-2">
             <p>No messages yet.</p>
@@ -422,5 +433,13 @@
     opacity: 0.7;
     padding-left: 0.5em;
     margin: 0.25em 0;
+  }
+  :global(.chat-markdown a) {
+    color: var(--color-primary);
+    text-decoration: underline;
+    cursor: pointer;
+  }
+  :global(.chat-markdown a:hover) {
+    opacity: 0.8;
   }
 </style>
