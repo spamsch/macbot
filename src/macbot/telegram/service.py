@@ -98,6 +98,19 @@ class TelegramService:
         try:
             return await self.bot.send_message(target_chat, text, parse_mode)
         except TelegramError as e:
+            if parse_mode is not None:
+                logger.warning(
+                    "Failed to send with parse_mode=%s, retrying as plain text: %s",
+                    parse_mode,
+                    e,
+                )
+                try:
+                    return await self.bot.send_message(
+                        target_chat, text, parse_mode=None
+                    )
+                except TelegramError as e2:
+                    logger.error(f"Failed to send plain-text fallback: {e2}")
+                    return False
             logger.error(f"Failed to send message: {e}")
             return False
 
@@ -369,12 +382,7 @@ class TelegramService:
                 if response:
                     # Trim long responses for mobile readability
                     trimmed = await self._trim_for_telegram(response)
-                    # Try markdown first, fall back to plain text
-                    try:
-                        await self.send_message(trimmed, chat_id, parse_mode="Markdown")
-                    except TelegramError:
-                        # Markdown parsing failed, send as plain text
-                        await self.send_message(trimmed, chat_id, parse_mode=None)
+                    await self.send_message(trimmed, chat_id, parse_mode="Markdown")
             except Exception as e:
                 logger.exception(f"Error processing message: {e}")
                 await self.send_message(
