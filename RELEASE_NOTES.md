@@ -1,5 +1,1 @@
-- **Email search** — Fixed missing recently arrived emails and message ID lookups outside Inbox/Archive
-- **Things3 todo creation** — Fixed failure when tags are specified
-- **Chat links** — Now open in system browser instead of in-app
-- **Telegram reliability** — Fixed silent failures when markdown formatting is rejected
-- **Documentation** — Updated README with recent features
+- **Voice-to-text audio input** — Add voice transcription support to the desktop chat interface for hands-free text input.
