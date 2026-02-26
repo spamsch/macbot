@@ -14,11 +14,11 @@ Your Mac is already set up. Why should an AI make you do it again with OAuth and
 
 ## What is this?
 
-Son of Simon is an AI assistant for macOS that works directly with your built-in Apple apps — Mail, Calendar, Reminders, Notes, and Safari. It runs with cloud providers (Anthropic, OpenAI, OpenRouter) or **fully offline on your Mac** using [Pico AI Server](https://apps.apple.com/app/pico-ai-server/id6502491545) — no API key needed for local models. Add your account in Apple Mail/Calendar and the agent can use it. You do not need to code. Download the app, sign in, and start asking.
+Son of Simon is an AI assistant for macOS that works directly with your Apple apps — Mail, Calendar, Reminders, Notes, Safari, Contacts, Messages, and Things3. It runs with cloud providers (Anthropic, OpenAI, Google Gemini, OpenRouter) or **fully offline on your Mac** using [Pico AI Server](https://apps.apple.com/app/pico-ai-server/id6502491545) — no API key needed for local models. Add your account in Apple Mail/Calendar and the agent can use it. You do not need to code. Download the app, sign in, and start asking.
 
 |  | Son of Simon | Claude / ChatGPT | OpenClaw |
 |---|---|---|---|
-| **Control Apple apps** | Yes — Mail, Calendar, Reminders, Notes, Safari | No | Limited |
+| **Control Apple apps** | Yes — Mail, Calendar, Reminders, Notes, Safari, Contacts, Messages, Things3 | No | Limited |
 | **Local models** | Yes — via Pico AI Server, no API key needed | No | No |
 | **Setup** | One app, guided wizard | Browser sign-in | Complex, error-prone |
 | **Passwords / tokens** | Never accessed — apps are already signed in | Not needed | Stores OAuth tokens |
@@ -32,21 +32,24 @@ For a detailed comparison with OpenClaw, see [docs/COMPARISON.md](docs/COMPARISO
   <img src="docs/images/comic-what-it-can-do.png" alt="Son of Simon in action — Email to Calendar, Smart Summary, Find & File, Organize" width="600">
 </p>
 
-### Apple Apps
+### Apps
 
 | App | Capabilities |
 |---|---|
-| **Mail** | Search, read, send, archive, download attachments — all accounts |
+| **Mail** | Search, read, send (with attachments), archive, download attachments — all accounts |
 | **Calendar** | Create events, check your schedule, find conflicts |
 | **Reminders** | Set reminders, mark done, organize lists |
 | **Notes** | Create, search, organize into folders, move, delete |
 | **Safari** | Open URLs, read pages, click buttons, fill forms, take screenshots, run JS |
+| **Contacts** | Search, retrieve, and create contacts — email, phone, organization lookups |
+| **Things3** | Create, complete, move, and search to-dos; manage projects and tags |
 
 ### Messaging
 
 | App | Capabilities |
 |---|---|
-| **Telegram** | Send & receive text or voice messages, use as remote control for the agent |
+| **Messages** | Send iMessages/SMS and search message history |
+| **Telegram** | Send & receive text, voice, or photo messages — use as remote control for the agent |
 | **WhatsApp** | Read chats, search messages, send replies (via `whatsapp-cli`) |
 | **Microsoft Teams** | List teams/channels, read & send channel and chat messages (multi-account) |
 
@@ -55,9 +58,16 @@ For a detailed comparison with OpenClaw, see [docs/COMPARISON.md](docs/COMPARISO
 | Tool | Capabilities |
 |---|---|
 | **Spotlight** | Find files by name, content, type, or recently opened |
-| **Files** | Read, write, and search files on disk |
+| **Files** | Read, write, and search files on disk — including PDF reading |
+| **PDFs** | Create PDF documents from text or HTML with tables, headings, and formatting |
 | **Downloads** | Auto-organize your Downloads folder into categorized subfolders |
 | **Data Apps** | Create interactive HTML dashboards from CSV, JSON, bank statements, or APIs |
+
+### System
+
+| Control | Capabilities |
+|---|---|
+| **System Controls** | Toggle WiFi, Bluetooth, dark mode, Do Not Disturb; adjust volume; check status |
 
 ### Web & Services
 
@@ -82,7 +92,7 @@ Because it chains tools automatically, you can ask things like:
 3. Open it and follow the setup steps
 
 The setup wizard will guide you through:
-- Connecting your AI provider (Anthropic, OpenAI, OpenRouter, or Pico for local models)
+- Connecting your AI provider (Anthropic, OpenAI, Google Gemini, OpenRouter, or Pico for local models)
 - Choosing a model (Claude, GPT-5, DeepSeek, Gemini, Llama, or any model running locally)
 - Granting macOS permissions
 - Optional Telegram setup
@@ -98,11 +108,11 @@ First success (safe demo prompts):
 
 ## Skills
 
-Son of Simon comes with built-in skills for Mail, Calendar, Reminders, Notes, Safari, Browser Automation, Downloads Organizer, and Data App Creator. Skills use the [AgentSkills standard](https://agentskills.io) — community skills from [ClawHub](https://clawhub.ai) work out of the box. See [docs/SKILLS.md](docs/SKILLS.md) for custom skills, CLI commands, and ClawHub install instructions.
+Son of Simon comes with built-in skills for Mail, Calendar, Reminders, Notes, Safari, Contacts, Messages, Things3, System Controls, Scheduled Tasks, Browser Automation, Downloads Organizer, Image Generation, and Data App Creator. Skills use the [AgentSkills standard](https://agentskills.io) — community skills from [ClawHub](https://clawhub.ai) work out of the box. See [docs/SKILLS.md](docs/SKILLS.md) for custom skills, CLI commands, and ClawHub install instructions.
 
 ## AI providers
 
-Works with cloud providers — Anthropic, OpenAI, and OpenRouter — or run models locally on your Mac with [Pico AI Server](https://apps.apple.com/app/pico-ai-server/id6502491545). No API key needed for local models. Pick a provider during setup or switch any time. See [docs/AI_PROVIDERS.md](docs/AI_PROVIDERS.md) for the full model table.
+Works with cloud providers — Anthropic, OpenAI, Google Gemini, and OpenRouter — or run models locally on your Mac with [Pico AI Server](https://apps.apple.com/app/pico-ai-server/id6502491545). No API key needed for local models. Gemini models support native image generation. Pick a provider during setup or switch any time. See [docs/AI_PROVIDERS.md](docs/AI_PROVIDERS.md) for the full model table.
 
 ## Memory and Heartbeat
 
@@ -119,12 +129,16 @@ Son of Simon remembers context between conversations — preferences, habits, an
 
 No stored passwords — macOS Keychain handles authentication. No local gateway required — AppleScript talks to your apps directly. Your prompts go to your chosen LLM provider; nothing else leaves your Mac. See [docs/SECURITY.md](docs/SECURITY.md) for the full security model and privacy details.
 
+## Scheduled tasks
+
+Create recurring or one-shot scheduled tasks through natural language or the dashboard GUI. Uses cron expressions with timezone support. Useful for daily email summaries, meeting prep, or periodic reminders.
+
 ## Optional extras
 
 - **Microsoft Teams** — Ask the agent to "set up Teams". The [Azure CLI](https://learn.microsoft.com/en-us/cli/azure/) (`brew install azure-cli`) handles the Azure AD app registration so you never need to navigate the Azure Portal. Supports multiple accounts (e.g., work + personal tenant). See [Teams setup guide](docs/TEAMS_SETUP.md) for details.
+- **Mindwtr GTD** — Full GTD task management via direct file sync (set `MACBOT_MINDWTR_DATA_PATH`)
 - Paperless-ngx integration for documents
 - Time tracking
-- Scheduled jobs (daily or hourly tasks)
 
 ## Learn more
 
