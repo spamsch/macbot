@@ -25,6 +25,8 @@
     Plus,
     Clock,
     ChevronDown,
+    Mic,
+    MicOff,
   } from "lucide-svelte";
 
   interface Props {
@@ -38,6 +40,14 @@
   let inputEl: HTMLTextAreaElement | undefined = $state();
   let transcriptEl: HTMLDivElement | undefined = $state();
   let showHistory = $state(false);
+
+  // Audio recording state
+  let isRecording = $state(false);
+  let recordingDuration = $state(0);
+  let mediaRecorder: MediaRecorder | null = null;
+  let recordingChunks: Blob[] = [];
+  let recordingTimer: ReturnType<typeof setInterval> | null = null;
+  let recordingStream: MediaStream | null = null;
 
   // Track previous message count to detect new messages vs streaming updates
   let prevMessageCount = $state(0);
@@ -104,6 +114,90 @@
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       handleSend();
+    }
+  }
+
+  function formatRecordingDuration(seconds: number): string {
+    const m = Math.floor(seconds / 60);
+    const s = seconds % 60;
+    return `${m}:${s.toString().padStart(2, "0")}`;
+  }
+
+  async function startRecording() {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      recordingStream = stream;
+      recordingChunks = [];
+      recordingDuration = 0;
+
+      const recorder = new MediaRecorder(stream, {
+        mimeType: "audio/webm;codecs=opus",
+      });
+
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) {
+          recordingChunks.push(e.data);
+        }
+      };
+
+      recorder.onstop = async () => {
+        // Stop all tracks to release microphone
+        stream.getTracks().forEach((t) => t.stop());
+        recordingStream = null;
+
+        if (recordingTimer) {
+          clearInterval(recordingTimer);
+          recordingTimer = null;
+        }
+
+        if (recordingChunks.length === 0) return;
+
+        const blob = new Blob(recordingChunks, { type: "audio/webm" });
+        recordingChunks = [];
+
+        // Convert to base64
+        const buffer = await blob.arrayBuffer();
+        const bytes = new Uint8Array(buffer);
+        let binary = "";
+        for (let i = 0; i < bytes.length; i++) {
+          binary += String.fromCharCode(bytes[i]);
+        }
+        const base64 = btoa(binary);
+
+        await chatStore.sendAudio(base64, "webm");
+      };
+
+      mediaRecorder = recorder;
+      recorder.start();
+      isRecording = true;
+
+      // Start duration timer
+      recordingTimer = setInterval(() => {
+        recordingDuration += 1;
+      }, 1000);
+    } catch (err) {
+      console.error("Failed to start recording:", err);
+      // Microphone permission denied or not available — fail silently
+    }
+  }
+
+  function stopRecording() {
+    if (mediaRecorder && mediaRecorder.state !== "inactive") {
+      mediaRecorder.stop();
+    }
+    mediaRecorder = null;
+    isRecording = false;
+    if (recordingTimer) {
+      clearInterval(recordingTimer);
+      recordingTimer = null;
+    }
+  }
+
+  function toggleRecording() {
+    if (isRecording) {
+      stopRecording();
+    } else {
+      startRecording();
     }
   }
 
@@ -357,20 +451,50 @@
 
       <!-- Input -->
       <div class="border-t border-border p-4">
+        <!-- Recording indicator -->
+        {#if isRecording}
+          <div class="flex items-center gap-2 mb-2 text-sm text-error">
+            <span class="inline-block w-2 h-2 rounded-full bg-error animate-pulse"></span>
+            <span>Recording {formatRecordingDuration(recordingDuration)}</span>
+          </div>
+        {/if}
+        <!-- Transcribing indicator -->
+        {#if chatStore.isTranscribing}
+          <div class="flex items-center gap-2 mb-2 text-sm text-text-muted">
+            <Loader2 class="w-3.5 h-3.5 animate-spin" />
+            <span>Transcribing audio...</span>
+          </div>
+        {/if}
         <div class="flex gap-2">
           <textarea
             class="flex-1 bg-bg-input border border-border rounded-xl px-3 py-2 text-sm text-text resize-none focus:outline-none focus:ring-2 focus:ring-primary/50 min-h-[40px] max-h-[200px] overflow-y-auto"
             placeholder={chatStore.connectionState === "connected" ? "Type a message..." : "Connecting..."}
-            disabled={chatStore.connectionState !== "connected" || chatStore.isStreaming}
+            disabled={chatStore.connectionState !== "connected" || chatStore.isStreaming || isRecording}
             bind:value={inputText}
             bind:this={inputEl}
             onkeydown={handleKeydown}
             rows={1}
           ></textarea>
+          <button
+            type="button"
+            class="flex items-center justify-center w-10 h-10 rounded-xl transition-colors
+              {isRecording
+                ? 'bg-error text-white hover:bg-error/80'
+                : 'bg-bg-input border border-border text-text-muted hover:text-text hover:bg-bg-input/80'}"
+            onclick={toggleRecording}
+            disabled={chatStore.connectionState !== "connected" || chatStore.isStreaming || chatStore.isTranscribing}
+            title={isRecording ? "Stop recording" : "Record voice message"}
+          >
+            {#if isRecording}
+              <MicOff class="w-4 h-4" />
+            {:else}
+              <Mic class="w-4 h-4" />
+            {/if}
+          </button>
           <Button
             size="sm"
             onclick={handleSend}
-            disabled={chatStore.connectionState !== "connected" || chatStore.isStreaming || !inputText.trim()}
+            disabled={chatStore.connectionState !== "connected" || chatStore.isStreaming || !inputText.trim() || isRecording}
           >
             {#if chatStore.isStreaming}
               <Loader2 class="w-4 h-4 animate-spin" />

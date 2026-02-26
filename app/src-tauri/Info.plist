@@ -10,5 +10,7 @@
 	<string>Son of Simon needs full access to your reminders to read, create, and complete items.</string>
 	<key>NSContactsUsageDescription</key>
 	<string>Son of Simon needs access to your contacts for mail and calendar operations.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Son of Simon needs microphone access to record voice messages for transcription.</string>
 </dict>
 </plist>
