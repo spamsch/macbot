@@ -4,11 +4,13 @@ Runs the cron scheduler and Telegram listener together as a single service.
 """
 
 import asyncio
+import base64
 import json
 import logging
 import os
 import signal
 import stat
+import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -504,6 +506,42 @@ class MacbotService:
             return f"{count / 1000:.1f}K"
         return str(count)
 
+    async def _transcribe_audio(self, audio_b64: str, audio_format: str) -> str:
+        """Decode base64 audio and transcribe via OpenAI Whisper.
+
+        Args:
+            audio_b64: Base64-encoded audio data.
+            audio_format: Audio format extension (e.g. "webm", "ogg").
+
+        Returns:
+            Transcribed text.
+
+        Raises:
+            ValueError: If OpenAI API key is not configured.
+            Exception: On transcription failure.
+        """
+        if not settings.openai_api_key:
+            raise ValueError("OpenAI API key not configured — cannot transcribe audio")
+
+        audio_bytes = base64.b64decode(audio_b64)
+
+        with tempfile.NamedTemporaryFile(suffix=f".{audio_format}", delete=False) as tmp:
+            tmp_path = Path(tmp.name)
+            tmp.write(audio_bytes)
+
+        try:
+            from openai import AsyncOpenAI
+
+            client = AsyncOpenAI(api_key=settings.openai_api_key)
+            with open(tmp_path, "rb") as audio_file:
+                transcript = await client.audio.transcriptions.create(
+                    model="whisper-1",
+                    file=audio_file,
+                )
+            return transcript.text
+        finally:
+            tmp_path.unlink(missing_ok=True)
+
     def _print_context(self, agent: Agent, console: "Console") -> None:
         """Print a formatted overview of the current agent context."""
         from rich.panel import Panel
@@ -629,13 +667,30 @@ class MacbotService:
                     _emit({"type": "error", "text": "Invalid JSON input"})
                     continue
 
-                if msg.get("type") != "message":
-                    _emit({"type": "error", "text": f"Unknown message type: {msg.get('type')}"})
-                    continue
+                msg_type = msg.get("type")
 
-                text = msg.get("text", "").strip()
-                if not text:
-                    _emit({"type": "error", "text": "Empty message"})
+                if msg_type == "audio_message":
+                    # Voice-to-text: transcribe then process as normal message
+                    audio_b64 = msg.get("audio", "")
+                    audio_format = msg.get("format", "webm")
+                    if not audio_b64:
+                        _emit({"type": "error", "text": "Empty audio data"})
+                        continue
+                    try:
+                        text = await self._transcribe_audio(audio_b64, audio_format)
+                        _emit({"type": "transcription", "text": text})
+                    except Exception as e:
+                        _emit({"type": "error", "text": f"Transcription failed: {e}"})
+                        _emit({"type": "done"})
+                        continue
+                    # Fall through to submit transcribed text to agent
+                elif msg_type == "message":
+                    text = msg.get("text", "").strip()
+                    if not text:
+                        _emit({"type": "error", "text": "Empty message"})
+                        continue
+                else:
+                    _emit({"type": "error", "text": f"Unknown message type: {msg_type}"})
                     continue
 
                 try:

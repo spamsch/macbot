@@ -59,6 +59,8 @@ class ChatStore {
   private _conversationId = $state<string>(crypto.randomUUID());
   private _conversations = $state<ConversationSummary[]>([]);
   private _conversationTitle = $state<string>("");
+  private _isTranscribing = $state(false);
+  private _pendingAudioUserMsgId: string | null = null;
 
   get messages() {
     return this._messages;
@@ -74,6 +76,10 @@ class ChatStore {
 
   get isStreaming() {
     return this._currentAssistantId !== null;
+  }
+
+  get isTranscribing() {
+    return this._isTranscribing;
   }
 
   get serviceRunning() {
@@ -343,6 +349,37 @@ class ChatStore {
     await this._child.write(payload);
   }
 
+  async sendAudio(audioBase64: string, format: string = "webm") {
+    if (!this._child || this._connectionState !== "connected") {
+      return;
+    }
+
+    // Add placeholder user message
+    this._pendingAudioUserMsgId = crypto.randomUUID();
+    this._isTranscribing = true;
+    this._messages.push({
+      id: this._pendingAudioUserMsgId,
+      timestamp: Date.now(),
+      role: "user",
+      text: "Transcribing audio...",
+      status: "streaming",
+    });
+
+    // Create placeholder for assistant response
+    this._currentAssistantId = crypto.randomUUID();
+    this._messages.push({
+      id: this._currentAssistantId,
+      timestamp: Date.now(),
+      role: "assistant",
+      text: "",
+      status: "streaming",
+    });
+
+    // Send audio_message JSON-line to stdin
+    const payload = JSON.stringify({ type: "audio_message", audio: audioBase64, format }) + "\n";
+    await this._child.write(payload);
+  }
+
   async disconnect() {
     this._connectionState = "disconnected";
     if (this._child) {
@@ -439,6 +476,25 @@ class ChatStore {
           break;
         }
 
+        case "transcription": {
+          // Audio transcription result — update the placeholder user message
+          this._isTranscribing = false;
+          if (this._pendingAudioUserMsgId) {
+            const idx = this._messages.findIndex(
+              (m) => m.id === this._pendingAudioUserMsgId
+            );
+            if (idx !== -1) {
+              this._messages[idx] = {
+                ...this._messages[idx],
+                text: msg.text as string,
+                status: "complete",
+              };
+            }
+            this._pendingAudioUserMsgId = null;
+          }
+          break;
+        }
+
         case "tool_call": {
           const targetId = this._currentAssistantId ?? this._telegramAssistantId;
           if (targetId) {
@@ -515,6 +571,23 @@ class ChatStore {
           break;
 
         case "error":
+          // Clean up pending audio transcription state
+          if (this._isTranscribing) {
+            this._isTranscribing = false;
+            if (this._pendingAudioUserMsgId) {
+              const aidx = this._messages.findIndex(
+                (m) => m.id === this._pendingAudioUserMsgId
+              );
+              if (aidx !== -1) {
+                this._messages[aidx] = {
+                  ...this._messages[aidx],
+                  text: "Audio transcription failed",
+                  status: "error",
+                };
+              }
+              this._pendingAudioUserMsgId = null;
+            }
+          }
           if (this._currentAssistantId) {
             const idx = this._messages.findIndex(
               (m) => m.id === this._currentAssistantId
