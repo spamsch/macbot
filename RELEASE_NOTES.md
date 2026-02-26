@@ -1,1 +1,5 @@
-- **Scheduled Tasks Management** — Create, list, update, and delete recurring or one-shot scheduled tasks using natural language. Supports cron expressions and interval-based scheduling with a new Dashboard UI panel and agent tools for full management control.
+- **Email search** — Fixed missing recently arrived emails and message ID lookups outside Inbox/Archive
+- **Things3 todo creation** — Fixed failure when tags are specified
+- **Chat links** — Now open in system browser instead of in-app
+- **Telegram reliability** — Fixed silent failures when markdown formatting is rejected
+- **Documentation** — Updated README with recent features
