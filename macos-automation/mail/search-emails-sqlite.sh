@@ -186,8 +186,8 @@ if [[ -z "$WHERE_CLAUSE" ]]; then
     exit 2
 fi
 
-# Query the Envelope Index (read-only, immutable — no locking contention with Mail.app)
-RESULT=$(sqlite3 "file:${DB_PATH}?mode=ro&immutable=1" <<SQL 2>&1
+# Query the Envelope Index (read-only — WAL mode allows concurrent reads without blocking Mail.app)
+RESULT=$(sqlite3 "file:${DB_PATH}?mode=ro" <<SQL 2>&1
 .headers off
 .mode list
 .separator "|"
