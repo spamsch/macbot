@@ -101,6 +101,12 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+# message_id lookups should always search all mailboxes — the whose clause
+# is fast and the email may live outside Inbox/Archive (e.g. Sent, Junk, custom folders)
+if [[ -n "$MESSAGE_ID" ]]; then
+    ALL_MAILBOXES=true
+fi
+
 # Allow searching with date-only filters (--today or --days) without sender/subject/account
 if [[ -z "$SENDER_PATTERN" && -z "$SUBJECT_PATTERN" && -z "$ACCOUNT" && -z "$MESSAGE_ID" && "$TODAY_ONLY" == "false" && -z "$DAYS" ]]; then
     error_exit "Please specify --sender, --subject, --account, --message-id, --today, or --days"

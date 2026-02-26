@@ -96,9 +96,16 @@ done
 
 # Escape for AppleScript
 NAME_ESCAPED=$(escape_for_applescript "$NAME")
-NOTES_ESCAPED=$(escape_for_applescript "$NOTES")
 PROJECT_ESCAPED=$(escape_for_applescript "$PROJECT")
 HEADING_ESCAPED=$(escape_for_applescript "$HEADING")
+
+# Write notes to a temp file — avoids heredoc escaping issues
+# (newlines break AppleScript string literals; $, ` get expanded by bash)
+NOTES_FILE=""
+if [[ -n "$NOTES" ]]; then
+    NOTES_FILE=$(mktemp /tmp/things-notes.XXXXXX)
+    printf '%s' "$NOTES" > "$NOTES_FILE"
+fi
 
 # Handle due date components
 HAS_DUE=false
@@ -143,24 +150,23 @@ if [[ -z "$THINGS_AUTH_TOKEN" && -f "$HOME/.macbot/.env" ]]; then
 fi
 
 TMPFILE=$(mktemp /tmp/things-create.XXXXXX)
-trap 'rm -f "$TMPFILE"' EXIT
+trap 'rm -f "$TMPFILE" "$NOTES_FILE"' EXIT
 
 osascript <<EOF > "$TMPFILE"
 tell application "Things3"
-    -- Build properties
-    set props to {name:"$NAME_ESCAPED"}
-
-    -- Tag names (comma-separated)
+    -- Create to-do (tag names must be inline — can't be set on a record after creation)
     if "$TAGS" is not "" then
-        set tag names of props to "$TAGS"
+        set newTodo to make new to do with properties {name:"$NAME_ESCAPED", tag names:"$TAGS"}
+    else
+        set newTodo to make new to do with properties {name:"$NAME_ESCAPED"}
     end if
 
-    -- Always create in default list first, then move
-    set newTodo to make new to do with properties props
-
-    -- Set notes after creation (more reliable than in properties)
-    if "$NOTES_ESCAPED" is not "" then
-        set notes of newTodo to "$NOTES_ESCAPED"
+    -- Set notes from temp file (avoids heredoc escaping issues with newlines, $, etc.)
+    if "$NOTES_FILE" is not "" then
+        try
+            set notesContent to read POSIX file "$NOTES_FILE" as «class utf8»
+            set notes of newTodo to notesContent
+        end try
     end if
 
     -- Assign to project (prefer ID over name; use "set project" not "move")
