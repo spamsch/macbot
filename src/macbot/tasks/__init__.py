@@ -43,6 +43,7 @@ from macbot.tasks import (
     fetch_url,
     file_read,
     file_write,
+    heartbeat,
     macos_automation,
     mindwtr,
     pdf_create,
@@ -69,6 +70,7 @@ __all__ = [
     "fetch_url",
     "file_read",
     "file_write",
+    "heartbeat",
     "macos_automation",
     "mindwtr",
     "pdf_create",
@@ -109,6 +111,9 @@ def create_default_registry(config: "Settings | None" = None) -> TaskRegistry:
     registry.register(FetchURLTask())
     registry.register(ReadFileTask())
     registry.register(WriteFileTask())
+
+    from macbot.tasks.heartbeat import HeartbeatTask
+    registry.register(HeartbeatTask())
 
     from macbot.tasks.pdf_create import CreatePDFTask
     registry.register(CreatePDFTask())
