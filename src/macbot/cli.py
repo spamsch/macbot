@@ -146,6 +146,15 @@ def _format_tokens(count: int) -> str:
     return str(count)
 
 
+def _format_cost(cost: float | None) -> str:
+    """Format a dollar cost, or return empty string if unknown."""
+    if cost is None:
+        return ""
+    if cost < 0.01:
+        return f"${cost:.4f}"
+    return f"${cost:.2f}"
+
+
 def _print_context_debug(agent: Agent, max_messages: int = 12) -> None:
     """Print a compact debug view of the current conversation context."""
     stats = agent.get_token_stats()
@@ -213,13 +222,15 @@ async def interactive_loop(
 
     while True:
         try:
-            # Build prompt with token stats
+            # Build prompt with token stats and cost
             stats = agent.get_token_stats()
             ctx = _format_tokens(stats["context_tokens"])
             total = _format_tokens(stats["session_total_tokens"])
 
             if stats["session_total_tokens"] > 0:
-                prompt = f"[dim](ctx:{ctx} total:{total})[/dim] [bold blue]You:[/bold blue] "
+                cost_str = _format_cost(stats.get("session_cost") or None)
+                cost_part = f" {cost_str}" if cost_str else ""
+                prompt = f"[dim](ctx:{ctx} total:{total}{cost_part})[/dim] [bold blue]You:[/bold blue] "
             else:
                 prompt = "[bold blue]You:[/bold blue] "
 
@@ -234,8 +245,10 @@ async def interactive_loop(
                 # Show final stats
                 stats = agent.get_token_stats()
                 if stats["session_total_tokens"] > 0:
+                    cost_str = _format_cost(stats.get("session_cost") or None)
+                    cost_part = f", cost: {cost_str}" if cost_str else ""
                     console.print(f"\n[dim]Session total: {stats['session_total_tokens']:,} tokens "
-                                  f"(in: {stats['session_input_tokens']:,}, out: {stats['session_output_tokens']:,})[/dim]")
+                                  f"(in: {stats['session_input_tokens']:,}, out: {stats['session_output_tokens']:,}{cost_part})[/dim]")
                 console.print("[dim]Goodbye![/dim]")
                 break
 
@@ -246,12 +259,16 @@ async def interactive_loop(
 
             if user_input.lower() == "stats":
                 stats = agent.get_token_stats()
+                cost_str = _format_cost(stats.get("session_cost") or None)
                 console.print(f"\n[bold]Token Statistics[/bold]")
                 console.print(f"  Context size:    {stats['context_tokens']:,} tokens")
                 console.print(f"  Messages:        {stats['message_count']}")
                 console.print(f"  Session input:   {stats['session_input_tokens']:,} tokens")
                 console.print(f"  Session output:  {stats['session_output_tokens']:,} tokens")
-                console.print(f"  Session total:   {stats['session_total_tokens']:,} tokens\n")
+                console.print(f"  Session total:   {stats['session_total_tokens']:,} tokens")
+                if cost_str:
+                    console.print(f"  Session cost:    {cost_str}")
+                console.print()
                 continue
 
             if user_input.lower() == "help":

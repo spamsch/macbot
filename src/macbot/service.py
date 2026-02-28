@@ -21,6 +21,7 @@ from macbot.config import settings
 from macbot.core.agent import Agent
 from macbot.cron import CronPayload, CronService
 from macbot.tasks import create_default_registry
+from macbot.usage import UsageTracker
 
 logger = logging.getLogger(__name__)
 
@@ -49,10 +50,11 @@ class AgentQueue:
     socket) share the same Agent instance.
     """
 
-    def __init__(self, agent: Agent) -> None:
+    def __init__(self, agent: Agent, usage_tracker: UsageTracker | None = None) -> None:
         self.agent = agent
         self._queue: asyncio.Queue[QueuedMessage | None] = asyncio.Queue()
         self._running = False
+        self._usage_tracker = usage_tracker or UsageTracker()
 
     async def submit(self, content: str | list[dict[str, Any]], emit: Callable[[dict], None] | None = None) -> str:
         """Enqueue a message and wait for the result.
@@ -84,6 +86,10 @@ class AgentQueue:
                     continue_conversation=True,
                     on_event=msg.emit,
                 )
+                try:
+                    self._usage_tracker.record(self.agent.get_interaction_cost())
+                except Exception:
+                    logger.debug("Failed to record usage", exc_info=True)
                 if not msg.result_future.done():
                     msg.result_future.set_result(result)
             except Exception as e:
@@ -506,6 +512,15 @@ class MacbotService:
             return f"{count / 1000:.1f}K"
         return str(count)
 
+    @staticmethod
+    def _format_cost(cost: float | None) -> str:
+        """Format a dollar cost, or return empty string if unknown."""
+        if not cost:
+            return ""
+        if cost < 0.01:
+            return f"${cost:.4f}"
+        return f"${cost:.2f}"
+
     async def _transcribe_audio(self, audio_b64: str, audio_format: str) -> str:
         """Decode base64 audio and transcribe via OpenAI Whisper.
 
@@ -560,7 +575,9 @@ class MacbotService:
         # Token stats
         tokens_branch = tree.add("[bold cyan]Tokens[/bold cyan]")
         tokens_branch.add(f"Context: {stats['context_tokens']:,}")
-        tokens_branch.add(f"Session: {stats['session_total_tokens']:,} (in: {stats['session_input_tokens']:,}, out: {stats['session_output_tokens']:,})")
+        cost_str = self._format_cost(stats.get("session_cost"))
+        cost_part = f", cost: {cost_str}" if cost_str else ""
+        tokens_branch.add(f"Session: {stats['session_total_tokens']:,} (in: {stats['session_input_tokens']:,}, out: {stats['session_output_tokens']:,}{cost_part})")
 
         # Conversation messages
         msg_branch = tree.add(f"[bold cyan]Messages[/bold cyan] ({stats['message_count']})")
@@ -699,7 +716,11 @@ class MacbotService:
                 except Exception as e:
                     _emit({"type": "error", "text": str(e)})
 
-                _emit({"type": "done"})
+                _emit({
+                    "type": "done",
+                    **queue.agent.get_interaction_cost(),
+                    "monthly": queue._usage_tracker.get_monthly_summary(),
+                })
 
             except EOFError:
                 break
@@ -741,13 +762,15 @@ class MacbotService:
 
         while self._running:
             try:
-                # Build prompt with token stats
+                # Build prompt with token stats and cost
                 stats = agent.get_token_stats()
                 ctx = self._format_tokens(stats["context_tokens"])
                 total = self._format_tokens(stats["session_total_tokens"])
 
                 if stats["session_total_tokens"] > 0:
-                    prompt = f"\x1b[2m(ctx:{ctx} total:{total})\x1b[0m \x1b[1;34m→\x1b[0m "
+                    cost_str = self._format_cost(stats.get("session_cost"))
+                    cost_part = f" {cost_str}" if cost_str else ""
+                    prompt = f"\x1b[2m(ctx:{ctx} total:{total}{cost_part})\x1b[0m \x1b[1;34m→\x1b[0m "
                 else:
                     prompt = "\x1b[1;34m→\x1b[0m "
 
@@ -763,8 +786,10 @@ class MacbotService:
                     # Show final stats
                     stats = agent.get_token_stats()
                     if stats["session_total_tokens"] > 0:
+                        cost_str = self._format_cost(stats.get("session_cost"))
+                        cost_part = f", cost: {cost_str}" if cost_str else ""
                         console.print(f"\n[dim]Session total: {stats['session_total_tokens']:,} tokens "
-                                      f"(in: {stats['session_input_tokens']:,}, out: {stats['session_output_tokens']:,})[/dim]")
+                                      f"(in: {stats['session_input_tokens']:,}, out: {stats['session_output_tokens']:,}{cost_part})[/dim]")
                     console.print("[dim][Stopping service...][/dim]")
                     readline.write_history_file(history_file)
                     await self.stop()
@@ -777,12 +802,16 @@ class MacbotService:
 
                 if user_input.lower() == "stats":
                     stats = agent.get_token_stats()
+                    cost_str = self._format_cost(stats.get("session_cost"))
                     console.print(f"\n[bold]Token Statistics[/bold]")
                     console.print(f"  Context size:    {stats['context_tokens']:,} tokens")
                     console.print(f"  Messages:        {stats['message_count']}")
                     console.print(f"  Session input:   {stats['session_input_tokens']:,} tokens")
                     console.print(f"  Session output:  {stats['session_output_tokens']:,} tokens")
-                    console.print(f"  Session total:   {stats['session_total_tokens']:,} tokens\n")
+                    console.print(f"  Session total:   {stats['session_total_tokens']:,} tokens")
+                    if cost_str:
+                        console.print(f"  Session cost:    {cost_str}")
+                    console.print()
                     continue
 
                 if user_input.lower() == "context":
@@ -901,7 +930,11 @@ class MacbotService:
                 except Exception as e:
                     _emit({"type": "error", "text": str(e)})
 
-                _emit({"type": "done"})
+                _emit({
+                    "type": "done",
+                    **queue.agent.get_interaction_cost(),
+                    "monthly": queue._usage_tracker.get_monthly_summary(),
+                })
                 await writer.drain()
 
         except (ConnectionResetError, BrokenPipeError):

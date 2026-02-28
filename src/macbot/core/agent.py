@@ -73,7 +73,10 @@ class Agent:
         # Token tracking
         self._session_input_tokens = 0
         self._session_output_tokens = 0
+        self._session_cost: float = 0.0
         self._last_context_tokens = 0  # Input tokens from last request (= context size)
+        self._interaction_input_tokens = 0
+        self._interaction_output_tokens = 0
 
     def _create_provider(self) -> LLMProvider:
         """Create an LLM provider based on configuration.
@@ -176,6 +179,8 @@ class Agent:
             # Start fresh conversation
             self.messages = [Message(role="user", content=goal)]
         self.iteration = 0
+        self._interaction_input_tokens = 0
+        self._interaction_output_tokens = 0
 
         # Intent-based pre-routing: check keywords before the first LLM call
         if self._routing_engine is not None and self._routing_engine.has_routes:
@@ -631,7 +636,21 @@ When an email, document, or conversation implies that information is available o
             output_tokens = response.usage.get("output_tokens", 0)
             self._session_input_tokens += input_tokens
             self._session_output_tokens += output_tokens
+            self._interaction_input_tokens += input_tokens
+            self._interaction_output_tokens += output_tokens
             self._last_context_tokens = input_tokens  # Context size = input tokens
+
+            # Accumulate session cost
+            try:
+                import litellm
+                pc, cc = litellm.cost_per_token(
+                    model=self._current_model,
+                    prompt_tokens=input_tokens,
+                    completion_tokens=output_tokens,
+                )
+                self._session_cost += pc + cc
+            except Exception:
+                pass
 
         # Print newline after streaming completes
         if stream and response.content:
@@ -928,16 +947,18 @@ When an email, document, or conversation implies that information is available o
         self.reset()
         self._session_input_tokens = 0
         self._session_output_tokens = 0
+        self._session_cost = 0.0
 
-    def get_token_stats(self) -> dict[str, int]:
+    def get_token_stats(self) -> dict[str, Any]:
         """Get token usage statistics.
 
         Returns:
-            Dictionary with token counts:
+            Dictionary with token counts and cost:
             - context_tokens: Tokens in current context (from last request)
             - session_input_tokens: Total input tokens this session
             - session_output_tokens: Total output tokens this session
             - session_total_tokens: Total tokens consumed this session
+            - session_cost: Total dollar cost this session (0.0 if unknown)
             - message_count: Number of messages in conversation
         """
         return {
@@ -945,5 +966,37 @@ When an email, document, or conversation implies that information is available o
             "session_input_tokens": self._session_input_tokens,
             "session_output_tokens": self._session_output_tokens,
             "session_total_tokens": self._session_input_tokens + self._session_output_tokens,
+            "session_cost": self._session_cost,
             "message_count": len(self.messages),
+        }
+
+    def get_interaction_cost(self) -> dict[str, Any]:
+        """Get token usage and cost for the current interaction.
+
+        Uses litellm's pricing data to calculate dollar cost.
+        Returns cost=None for models without pricing info.
+        """
+        input_tokens = self._interaction_input_tokens
+        output_tokens = self._interaction_output_tokens
+        total_tokens = input_tokens + output_tokens
+        model = self._current_model
+
+        cost: float | None = None
+        try:
+            import litellm
+            prompt_cost, completion_cost = litellm.cost_per_token(
+                model=model,
+                prompt_tokens=input_tokens,
+                completion_tokens=output_tokens,
+            )
+            cost = prompt_cost + completion_cost
+        except Exception:
+            pass  # Unknown model or pricing unavailable
+
+        return {
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "total_tokens": total_tokens,
+            "cost": cost,
+            "model": model,
         }

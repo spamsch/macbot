@@ -17,6 +17,11 @@ export interface ChatMessage {
   toolCalls?: ToolCall[];
   source?: "chat" | "telegram";
   imageUrl?: string;
+  inputTokens?: number;
+  outputTokens?: number;
+  totalTokens?: number;
+  cost?: number | null;
+  model?: string;
 }
 
 export interface AppPermissions {
@@ -61,6 +66,11 @@ class ChatStore {
   private _conversationTitle = $state<string>("");
   private _isTranscribing = $state(false);
   private _pendingAudioUserMsgId: string | null = null;
+  private _sessionCost = $state(0);
+  private _sessionTokens = $state(0);
+  private _monthlyCost = $state(0);
+  private _monthlyTokens = $state(0);
+  private _monthlyInteractions = $state(0);
 
   get messages() {
     return this._messages;
@@ -104,6 +114,26 @@ class ChatStore {
 
   get conversationTitle() {
     return this._conversationTitle;
+  }
+
+  get sessionCost() {
+    return this._sessionCost;
+  }
+
+  get sessionTokens() {
+    return this._sessionTokens;
+  }
+
+  get monthlyCost() {
+    return this._monthlyCost;
+  }
+
+  get monthlyTokens() {
+    return this._monthlyTokens;
+  }
+
+  get monthlyInteractions() {
+    return this._monthlyInteractions;
   }
 
   private async getHistoryDir(): Promise<string> {
@@ -205,6 +235,14 @@ class ChatStore {
       this._conversationTitle = data.title;
       this._messages = data.messages;
       this._currentAssistantId = null;
+
+      // Recompute session totals from saved message data
+      this._sessionCost = 0;
+      this._sessionTokens = 0;
+      for (const m of data.messages) {
+        if (m.totalTokens) this._sessionTokens += m.totalTokens;
+        if (typeof m.cost === "number") this._sessionCost += m.cost;
+      }
     } catch (e) {
       console.error("Failed to load conversation:", e);
     }
@@ -215,6 +253,8 @@ class ChatStore {
     this._conversationId = crypto.randomUUID();
     this._conversationTitle = "";
     this._currentAssistantId = null;
+    this._sessionCost = 0;
+    this._sessionTokens = 0;
   }
 
   async deleteConversation(id: string) {
@@ -560,10 +600,31 @@ class ChatStore {
               (m) => m.id === this._currentAssistantId
             );
             if (idx !== -1) {
+              const inputTokens = msg.input_tokens as number | undefined;
+              const outputTokens = msg.output_tokens as number | undefined;
+              const totalTokens = msg.total_tokens as number | undefined;
+              const cost = msg.cost as number | null | undefined;
+              const model = msg.model as string | undefined;
               this._messages[idx] = {
                 ...this._messages[idx],
                 status: "complete",
+                inputTokens,
+                outputTokens,
+                totalTokens,
+                cost: cost ?? null,
+                model,
               };
+              if (totalTokens) this._sessionTokens += totalTokens;
+              if (typeof cost === "number") this._sessionCost += cost;
+            }
+            // Update monthly totals from backend
+            const monthly = msg.monthly as Record<string, unknown> | undefined;
+            if (monthly) {
+              const mIn = (monthly.input_tokens as number) ?? 0;
+              const mOut = (monthly.output_tokens as number) ?? 0;
+              this._monthlyTokens = mIn + mOut;
+              this._monthlyCost = (monthly.cost as number) ?? 0;
+              this._monthlyInteractions = (monthly.interactions as number) ?? 0;
             }
             this._currentAssistantId = null;
             this.saveConversation();
