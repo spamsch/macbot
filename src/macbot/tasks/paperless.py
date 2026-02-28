@@ -28,6 +28,56 @@ def _get_base_url() -> str:
     return settings.paperless_url.rstrip("/")
 
 
+async def _resolve_tags(tags: list[int | str]) -> list[int]:
+    """Resolve a mixed list of tag IDs (int) and tag names (str) to IDs.
+
+    Integers and numeric strings are kept as-is. Non-numeric strings are
+    looked up via the Paperless API by name (case-insensitive).
+
+    Returns:
+        List of resolved integer tag IDs. Unknown names are silently skipped.
+    """
+    resolved: list[int] = []
+    names_to_resolve: list[str] = []
+
+    for tag in tags:
+        if isinstance(tag, int):
+            resolved.append(tag)
+        elif isinstance(tag, str) and tag.isdigit():
+            resolved.append(int(tag))
+        elif isinstance(tag, str):
+            names_to_resolve.append(tag)
+
+    if names_to_resolve:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.get(
+                f"{_get_base_url()}/api/tags/",
+                params={"page_size": 200},
+                headers=_get_headers(),
+            )
+            response.raise_for_status()
+            all_tags = response.json().get("results", [])
+
+        name_map = {t["name"].lower(): t["id"] for t in all_tags}
+        for name in names_to_resolve:
+            tag_id = name_map.get(name.lower())
+            if tag_id is not None:
+                resolved.append(tag_id)
+
+    return resolved
+
+
+def _coerce_int(value: Any) -> int | None:
+    """Coerce a value to int, returning None if not possible."""
+    if value is None:
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and value.isdigit():
+        return int(value)
+    return None
+
+
 class PaperlessSearchTask(Task):
     """Search documents in Paperless-ngx."""
 
@@ -39,7 +89,7 @@ class PaperlessSearchTask(Task):
     def description(self) -> str:
         return (
             "Search documents in Paperless-ngx. Supports full-text search via 'query' "
-            "and filtering by inbox status, tags, correspondent, or document type. "
+            "and filtering by inbox status, tags (IDs or names), correspondent, or document type. "
             "Use is_inbox=True to list inbox documents. Filters can be combined with a query."
         )
 
@@ -48,9 +98,9 @@ class PaperlessSearchTask(Task):
         query: str = "",
         limit: int = 10,
         is_inbox: bool = False,
-        tags: list[int] | None = None,
-        correspondent_id: int | None = None,
-        document_type_id: int | None = None,
+        tags: list[int | str] | None = None,
+        correspondent_id: int | str | None = None,
+        document_type_id: int | str | None = None,
     ) -> dict[str, Any]:
         """Search for documents.
 
@@ -58,7 +108,7 @@ class PaperlessSearchTask(Task):
             query: Full-text search query (optional if using filters).
             limit: Maximum number of results to return (default: 10).
             is_inbox: If True, only return documents with an inbox tag.
-            tags: Filter by tag IDs (documents must have all listed tags).
+            tags: Filter by tag IDs or names (documents must have all listed tags).
             correspondent_id: Filter by correspondent ID.
             document_type_id: Filter by document type ID.
 
@@ -70,6 +120,12 @@ class PaperlessSearchTask(Task):
                 "success": False,
                 "error": "Paperless-ngx not configured. Set MACBOT_PAPERLESS_URL and MACBOT_PAPERLESS_API_TOKEN in Settings or run 'son onboard'.",
             }
+
+        # Resolve tag names to IDs and coerce string IDs
+        if tags:
+            tags = await _resolve_tags(tags)  # type: ignore[assignment]
+        correspondent_id = _coerce_int(correspondent_id)
+        document_type_id = _coerce_int(document_type_id)
 
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
@@ -234,18 +290,18 @@ class PaperlessUpdateDocumentTask(Task):
     def description(self) -> str:
         return (
             "Update a document's metadata in Paperless-ngx. "
-            "Can change title, tags (list of tag IDs — replaces all tags), "
+            "Can change title, tags (list of tag IDs or names — replaces all tags), "
             "correspondent, document type, and custom fields. "
             "For custom_fields pass a list of dicts: [{\"field\": <field_id>, \"value\": <value>}]."
         )
 
     async def execute(
         self,
-        document_id: int,
+        document_id: int | str,
         title: str | None = None,
-        tags: list[int] | None = None,
-        correspondent: int | None = None,
-        document_type: int | None = None,
+        tags: list[int | str] | None = None,
+        correspondent: int | str | None = None,
+        document_type: int | str | None = None,
         custom_fields: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         """Update document metadata.
@@ -253,7 +309,7 @@ class PaperlessUpdateDocumentTask(Task):
         Args:
             document_id: The document ID to update.
             title: New title (unchanged if not provided).
-            tags: New list of tag IDs (replaces all tags; unchanged if not provided).
+            tags: New list of tag IDs or names (replaces all tags; unchanged if not provided).
             correspondent: New correspondent ID (unchanged if not provided).
             document_type: New document type ID (unchanged if not provided).
             custom_fields: List of custom field values, e.g. [{"field": 1, "value": "42.50"}].
@@ -266,6 +322,13 @@ class PaperlessUpdateDocumentTask(Task):
                 "success": False,
                 "error": "Paperless-ngx not configured. Set MACBOT_PAPERLESS_URL and MACBOT_PAPERLESS_API_TOKEN in Settings or run 'son onboard'.",
             }
+
+        # Resolve tag names to IDs and coerce string IDs to ints
+        document_id = _coerce_int(document_id) or document_id  # type: ignore[assignment]
+        if tags is not None:
+            tags = await _resolve_tags(tags)  # type: ignore[assignment]
+        correspondent = _coerce_int(correspondent)
+        document_type = _coerce_int(document_type)
 
         patch_data: dict[str, Any] = {}
         if title is not None:
