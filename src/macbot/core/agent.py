@@ -446,17 +446,56 @@ When an email, document, or conversation implies that information is available o
 - **Before saying "I can't do this"**: First check your Capabilities & Skills section and run `clawhub list --dir ~/.macbot/skills` to see if a skill is already installed. If it is, use it — don't search ClawHub for something you already have. If nothing is installed, search ClawHub (`clawhub search <keyword>`) for a community skill. Also consider using `web_search` to find relevant APIs or CLI tools. Only tell the user something isn't possible after you've checked installed skills, searched ClawHub, and found no options.
 """
 
+    # Tools that are always available regardless of which skills are enabled.
+    # These are agent infrastructure (memory, tracking, plumbing) — not
+    # user-facing capabilities that should be toggled via skills.
+    INTERNAL_TOOLS: set[str] = {
+        # Agent memory / tracking
+        "check_email_processed",
+        "mark_email_processed",
+        "list_processed_emails",
+        "record_reminder_created",
+        "get_agent_memory",
+        "memory_add_lesson",
+        "memory_set_preference",
+        "memory_add_fact",
+        "memory_list",
+        "search_files_written",
+        "memory_remove_lesson",
+        # Internal plumbing
+        "heartbeat",
+        "calculate_sum",
+        "echo",
+        "run_subagent",
+    }
+
     def _get_tool_schemas(self) -> list[dict[str, Any]]:
-        """Get tool schemas appropriate for the current context profile."""
+        """Get tool schemas appropriate for the current context profile.
+
+        All profiles filter tools through enabled skills. The profile controls
+        whether to use full or essential task lists, and whether to strip
+        parameter descriptions to save tokens.
+
+        Internal tools (memory, tracking, plumbing) are always included
+        regardless of skill filtering.
+        """
         profile = self._get_effective_profile()
+        compact = profile in ("compact", "minimal")
 
-        if profile == "full":
-            return self.task_registry.get_tool_schemas()
+        schemas = self.skills_registry.get_all_tool_schemas(
+            self.task_registry, compact=compact,
+        )
 
-        # compact/minimal: use only tools from enabled skills
-        schemas = self.skills_registry.get_all_tool_schemas(self.task_registry, compact=True)
+        # Always append internal tools that aren't already included
+        seen = {s.get("name") for s in schemas}
+        for tool_name in self.INTERNAL_TOOLS:
+            if tool_name not in seen:
+                task = self.task_registry.get(tool_name)
+                if task is not None:
+                    schemas.append(task.to_tool_schema())
+                    seen.add(tool_name)
 
-        if profile in ("compact", "minimal"):
+        if compact:
             # Strip parameter descriptions to save tokens
             for schema in schemas:
                 params = schema.get("parameters", {})
