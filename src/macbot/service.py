@@ -21,6 +21,7 @@ from macbot.config import settings
 from macbot.core.agent import Agent
 from macbot.cron import CronPayload, CronService
 from macbot.tasks import create_default_registry
+from macbot.usage import UsageTracker
 
 logger = logging.getLogger(__name__)
 
@@ -49,10 +50,11 @@ class AgentQueue:
     socket) share the same Agent instance.
     """
 
-    def __init__(self, agent: Agent) -> None:
+    def __init__(self, agent: Agent, usage_tracker: UsageTracker | None = None) -> None:
         self.agent = agent
         self._queue: asyncio.Queue[QueuedMessage | None] = asyncio.Queue()
         self._running = False
+        self._usage_tracker = usage_tracker or UsageTracker()
 
     async def submit(self, content: str | list[dict[str, Any]], emit: Callable[[dict], None] | None = None) -> str:
         """Enqueue a message and wait for the result.
@@ -84,6 +86,10 @@ class AgentQueue:
                     continue_conversation=True,
                     on_event=msg.emit,
                 )
+                try:
+                    self._usage_tracker.record(self.agent.get_interaction_cost())
+                except Exception:
+                    logger.debug("Failed to record usage", exc_info=True)
                 if not msg.result_future.done():
                     msg.result_future.set_result(result)
             except Exception as e:
@@ -699,7 +705,11 @@ class MacbotService:
                 except Exception as e:
                     _emit({"type": "error", "text": str(e)})
 
-                _emit({"type": "done", **queue.agent.get_interaction_cost()})
+                _emit({
+                    "type": "done",
+                    **queue.agent.get_interaction_cost(),
+                    "monthly": queue._usage_tracker.get_monthly_summary(),
+                })
 
             except EOFError:
                 break
@@ -901,7 +911,11 @@ class MacbotService:
                 except Exception as e:
                     _emit({"type": "error", "text": str(e)})
 
-                _emit({"type": "done", **queue.agent.get_interaction_cost()})
+                _emit({
+                    "type": "done",
+                    **queue.agent.get_interaction_cost(),
+                    "monthly": queue._usage_tracker.get_monthly_summary(),
+                })
                 await writer.drain()
 
         except (ConnectionResetError, BrokenPipeError):

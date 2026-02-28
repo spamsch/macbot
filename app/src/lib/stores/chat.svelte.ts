@@ -68,6 +68,9 @@ class ChatStore {
   private _pendingAudioUserMsgId: string | null = null;
   private _sessionCost = $state(0);
   private _sessionTokens = $state(0);
+  private _monthlyCost = $state(0);
+  private _monthlyTokens = $state(0);
+  private _monthlyInteractions = $state(0);
 
   get messages() {
     return this._messages;
@@ -119,6 +122,18 @@ class ChatStore {
 
   get sessionTokens() {
     return this._sessionTokens;
+  }
+
+  get monthlyCost() {
+    return this._monthlyCost;
+  }
+
+  get monthlyTokens() {
+    return this._monthlyTokens;
+  }
+
+  get monthlyInteractions() {
+    return this._monthlyInteractions;
   }
 
   private async getHistoryDir(): Promise<string> {
@@ -601,6 +616,15 @@ class ChatStore {
               };
               if (totalTokens) this._sessionTokens += totalTokens;
               if (typeof cost === "number") this._sessionCost += cost;
+            }
+            // Update monthly totals from backend
+            const monthly = msg.monthly as Record<string, unknown> | undefined;
+            if (monthly) {
+              const mIn = (monthly.input_tokens as number) ?? 0;
+              const mOut = (monthly.output_tokens as number) ?? 0;
+              this._monthlyTokens = mIn + mOut;
+              this._monthlyCost = (monthly.cost as number) ?? 0;
+              this._monthlyInteractions = (monthly.interactions as number) ?? 0;
             }
             this._currentAssistantId = null;
             this.saveConversation();

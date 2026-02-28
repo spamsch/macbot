@@ -296,10 +296,19 @@
               {statusLabel(chatStore.connectionState)}
             </span>
           </div>
-          {#if chatStore.sessionTokens > 0}
-            <span class="text-[10px] text-text-muted bg-bg-input px-1.5 py-0.5 rounded-md">
-              {formatTokens(chatStore.sessionTokens)} tokens{#if chatStore.sessionCost > 0} · {formatCost(chatStore.sessionCost)}{/if}
-            </span>
+          {#if chatStore.sessionTokens > 0 || chatStore.monthlyTokens > 0}
+            <div class="flex items-center gap-1.5">
+              {#if chatStore.sessionTokens > 0}
+                <span class="text-[10px] text-text-muted bg-bg-input px-1.5 py-0.5 rounded-md" title="Session usage">
+                  {formatTokens(chatStore.sessionTokens)} tokens{#if chatStore.sessionCost > 0} · {formatCost(chatStore.sessionCost)}{/if}
+                </span>
+              {/if}
+              {#if chatStore.monthlyTokens > 0}
+                <span class="text-[10px] text-text-muted bg-bg-input px-1.5 py-0.5 rounded-md" title="Monthly usage ({chatStore.monthlyInteractions} interactions)">
+                  Month: {formatTokens(chatStore.monthlyTokens)}{#if chatStore.monthlyCost > 0} · {formatCost(chatStore.monthlyCost)}{/if}
+                </span>
+              {/if}
+            </div>
           {/if}
           <!-- History dropdown toggle -->
           {#if chatStore.conversations.length > 0}
