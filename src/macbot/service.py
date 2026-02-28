@@ -699,7 +699,7 @@ class MacbotService:
                 except Exception as e:
                     _emit({"type": "error", "text": str(e)})
 
-                _emit({"type": "done"})
+                _emit({"type": "done", **queue.agent.get_interaction_cost()})
 
             except EOFError:
                 break
@@ -901,7 +901,7 @@ class MacbotService:
                 except Exception as e:
                     _emit({"type": "error", "text": str(e)})
 
-                _emit({"type": "done"})
+                _emit({"type": "done", **queue.agent.get_interaction_cost()})
                 await writer.drain()
 
         except (ConnectionResetError, BrokenPipeError):

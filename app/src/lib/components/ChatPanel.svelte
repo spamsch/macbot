@@ -219,6 +219,16 @@
     }
   }
 
+  function formatTokens(n: number): string {
+    if (n >= 1000) return (n / 1000).toFixed(1).replace(/\.0$/, "") + "k";
+    return String(n);
+  }
+
+  function formatCost(c: number): string {
+    if (c < 0.01) return "$" + c.toFixed(4);
+    return "$" + c.toFixed(2);
+  }
+
   function formatTime(ts: number): string {
     return new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   }
@@ -286,6 +296,11 @@
               {statusLabel(chatStore.connectionState)}
             </span>
           </div>
+          {#if chatStore.sessionTokens > 0}
+            <span class="text-[10px] text-text-muted bg-bg-input px-1.5 py-0.5 rounded-md">
+              {formatTokens(chatStore.sessionTokens)} tokens{#if chatStore.sessionCost > 0} · {formatCost(chatStore.sessionCost)}{/if}
+            </span>
+          {/if}
           <!-- History dropdown toggle -->
           {#if chatStore.conversations.length > 0}
             <div class="relative">
@@ -443,7 +458,12 @@
                   {/if}
                 </div>
               {/if}
-              <span class="text-[10px] text-text-muted px-1">{formatTime(msg.timestamp)}</span>
+              <span class="text-[10px] text-text-muted px-1">
+                {formatTime(msg.timestamp)}
+                {#if msg.role === "assistant" && msg.status === "complete" && msg.totalTokens}
+                  <span class="ml-1">{formatTokens(msg.totalTokens)} tokens{#if typeof msg.cost === "number"} · {formatCost(msg.cost)}{/if}</span>
+                {/if}
+              </span>
             </div>
           {/each}
         {/if}
