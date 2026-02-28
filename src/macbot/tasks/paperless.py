@@ -290,25 +290,29 @@ class PaperlessUpdateDocumentTask(Task):
     def description(self) -> str:
         return (
             "Update a document's metadata in Paperless-ngx. "
-            "Can change title, tags (list of tag IDs or names — replaces all tags), "
+            "Can change title, created date, tags (list of tag IDs or names — replaces all tags), "
             "correspondent, document type, and custom fields. "
-            "For custom_fields pass a list of dicts: [{\"field\": <field_id>, \"value\": <value>}]."
+            "For custom_fields pass a list of dicts: [{\"field\": <field_id>, \"value\": <value>}]. "
+            "Pass an empty list [] to clear custom fields. "
+            "For created, use ISO format: '2023-07-12'."
         )
 
     async def execute(
         self,
         document_id: int | str,
         title: str | None = None,
+        created: str | None = None,
         tags: list[int | str] | None = None,
         correspondent: int | str | None = None,
         document_type: int | str | None = None,
-        custom_fields: list[dict[str, Any]] | None = None,
+        custom_fields: list[dict[str, Any]] | str | None = None,
     ) -> dict[str, Any]:
         """Update document metadata.
 
         Args:
             document_id: The document ID to update.
             title: New title (unchanged if not provided).
+            created: New created date in ISO format, e.g. '2023-07-12' (unchanged if not provided).
             tags: New list of tag IDs or names (replaces all tags; unchanged if not provided).
             correspondent: New correspondent ID (unchanged if not provided).
             document_type: New document type ID (unchanged if not provided).
@@ -330,9 +334,19 @@ class PaperlessUpdateDocumentTask(Task):
         correspondent = _coerce_int(correspondent)
         document_type = _coerce_int(document_type)
 
+        # Parse custom_fields if passed as JSON string
+        if isinstance(custom_fields, str):
+            import json
+            try:
+                custom_fields = json.loads(custom_fields)
+            except (json.JSONDecodeError, TypeError):
+                return {"success": False, "error": f"custom_fields must be a JSON list, got: {custom_fields[:100]}"}
+
         patch_data: dict[str, Any] = {}
         if title is not None:
             patch_data["title"] = title
+        if created is not None:
+            patch_data["created"] = created
         if tags is not None:
             patch_data["tags"] = tags
         if correspondent is not None:
@@ -360,6 +374,7 @@ class PaperlessUpdateDocumentTask(Task):
                     "document": {
                         "id": doc.get("id"),
                         "title": doc.get("title"),
+                        "created": doc.get("created"),
                         "tags": doc.get("tags", []),
                         "tag_names": doc.get("tags__name", []),
                         "correspondent": doc.get("correspondent"),
