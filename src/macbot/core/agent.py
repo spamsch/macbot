@@ -73,6 +73,7 @@ class Agent:
         # Token tracking
         self._session_input_tokens = 0
         self._session_output_tokens = 0
+        self._session_cost: float = 0.0
         self._last_context_tokens = 0  # Input tokens from last request (= context size)
         self._interaction_input_tokens = 0
         self._interaction_output_tokens = 0
@@ -639,6 +640,18 @@ When an email, document, or conversation implies that information is available o
             self._interaction_output_tokens += output_tokens
             self._last_context_tokens = input_tokens  # Context size = input tokens
 
+            # Accumulate session cost
+            try:
+                import litellm
+                pc, cc = litellm.cost_per_token(
+                    model=self._current_model,
+                    prompt_tokens=input_tokens,
+                    completion_tokens=output_tokens,
+                )
+                self._session_cost += pc + cc
+            except Exception:
+                pass
+
         # Print newline after streaming completes
         if stream and response.content:
             console.print()  # End the streamed line
@@ -934,16 +947,18 @@ When an email, document, or conversation implies that information is available o
         self.reset()
         self._session_input_tokens = 0
         self._session_output_tokens = 0
+        self._session_cost = 0.0
 
-    def get_token_stats(self) -> dict[str, int]:
+    def get_token_stats(self) -> dict[str, Any]:
         """Get token usage statistics.
 
         Returns:
-            Dictionary with token counts:
+            Dictionary with token counts and cost:
             - context_tokens: Tokens in current context (from last request)
             - session_input_tokens: Total input tokens this session
             - session_output_tokens: Total output tokens this session
             - session_total_tokens: Total tokens consumed this session
+            - session_cost: Total dollar cost this session (0.0 if unknown)
             - message_count: Number of messages in conversation
         """
         return {
@@ -951,6 +966,7 @@ When an email, document, or conversation implies that information is available o
             "session_input_tokens": self._session_input_tokens,
             "session_output_tokens": self._session_output_tokens,
             "session_total_tokens": self._session_input_tokens + self._session_output_tokens,
+            "session_cost": self._session_cost,
             "message_count": len(self.messages),
         }
 
