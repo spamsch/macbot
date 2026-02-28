@@ -1,1 +1,7 @@
-- **Voice-to-text audio input** — Add voice transcription support to the desktop chat interface for hands-free text input.
+- **Paperless Metadata Management** — Create and delete tags, correspondents, and document types in Paperless
+- **LLM Cost Tracking** — Track token usage and costs per session with monthly aggregation across service restarts
+- **Tool Configuration System** — Tools are now configurable through the skills system
+- **Heartbeat Monitoring** — New scheduled task for reading and maintaining heartbeat prompts
+- **Conversation Improvements** — Fixed context loss in extended chats and improved contextual awareness
+- **Email Search & Filtering** — Enhanced search reliability with new days filter for attachment downloads
+- **Skill Updates** — Updated mail, paperless, safari, and telegram skill definitions
