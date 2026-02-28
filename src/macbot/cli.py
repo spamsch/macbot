@@ -217,6 +217,9 @@ async def interactive_loop(
         verbose: Whether to show verbose output
         debug_context: Whether to print context debug info after each turn
     """
+    from macbot.usage import UsageTracker
+    usage_tracker = UsageTracker()
+
     console.print("\n[dim]Type your message, or 'quit' to exit. Use 'clear' to reset conversation.[/dim]")
     console.print("[dim]Commands: 'stats' shows token usage, 'help' for more.[/dim]\n")
 
@@ -259,7 +262,9 @@ async def interactive_loop(
 
             if user_input.lower() == "stats":
                 stats = agent.get_token_stats()
+                monthly = usage_tracker.get_monthly_summary()
                 cost_str = _format_cost(stats.get("session_cost") or None)
+                monthly_cost_str = _format_cost(monthly.get("cost") or None)
                 console.print(f"\n[bold]Token Statistics[/bold]")
                 console.print(f"  Context size:    {stats['context_tokens']:,} tokens")
                 console.print(f"  Messages:        {stats['message_count']}")
@@ -268,6 +273,13 @@ async def interactive_loop(
                 console.print(f"  Session total:   {stats['session_total_tokens']:,} tokens")
                 if cost_str:
                     console.print(f"  Session cost:    {cost_str}")
+                if monthly.get("interactions"):
+                    console.print()
+                    console.print(f"[bold]Monthly ({datetime.now().strftime('%Y-%m')})[/bold]")
+                    console.print(f"  Interactions:    {monthly['interactions']:,}")
+                    console.print(f"  Total tokens:    {monthly['input_tokens'] + monthly['output_tokens']:,}")
+                    if monthly_cost_str:
+                        console.print(f"  Total cost:      {monthly_cost_str}")
                 console.print()
                 continue
 
@@ -303,6 +315,7 @@ async def interactive_loop(
             if cancelled:
                 console.print("\n[dim][Cancelled by Escape][/dim]\n")
             else:
+                usage_tracker.record(agent.get_interaction_cost())
                 console.print()
                 console.print("[bold green]A:[/bold green]", end=" ")
                 console.print(Markdown(result))
@@ -480,6 +493,10 @@ def cmd_run(args: argparse.Namespace) -> None:
         if cancelled:
             console.print("\n[dim][Cancelled by Escape][/dim]")
             return
+
+        # Record usage
+        from macbot.usage import UsageTracker
+        UsageTracker().record(agent.get_interaction_cost())
 
         # When streaming, text was already printed via stream callback
         # Otherwise, print the final result with markdown rendering
