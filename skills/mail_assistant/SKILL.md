@@ -56,9 +56,19 @@ Email metadata search (headers, sender, subject, date) is fast (~50ms via SQLite
 - **Specify account:** If the user context implies which account, use the `account` parameter to halve search time
 - **Never use `with_content=true` on broad searches** — it adds seconds per result
 
-### Search Strategy
-- Start with the most specific search first (sender + subject + narrow days)
-- Only expand search (wider days, remove filters) if initial query returns nothing
+### Search Strategy: Escalation Ladder
+When a search returns nothing, systematically escalate through these steps before giving up:
+
+1. **Start specific:** sender + subject + narrow days (e.g., days=7)
+2. **Vary the keyword:** try alternative spellings, partial names, or the domain (e.g., "huk24" → "huk24-service.de")
+3. **Change the search field:** try subject instead of sender, or vice versa
+4. **Widen the time range:** increase days (7 → 30 → 90 → 365)
+5. **Broaden mailbox scope:** use `all_mailboxes=True` — the email may be in Sent, Junk, a custom folder, or Gmail's All Mail
+6. **Remove filters one at a time:** drop subject, then sender, keeping only the date range
+
+**Important:** Each retry should change something meaningful. Don't just repeat the same search with a synonym — vary the dimension (keyword → field → time → scope).
+
+Additional tips:
 - Use `today_only=true` for "today's emails" requests
 - Use the `account` parameter when user says "from X account" (not sender)
 
@@ -77,6 +87,14 @@ Email metadata search (headers, sender, subject, date) is fast (~50ms via SQLite
 ### Reading Email Content
 - **Never use `with_content=true` on the initial search** — search headers first, then read by message_id
 - For tracking numbers or specific content, use the two-phase pattern above
+- **Handling `unknown-*` Message-IDs:** If a search result returns a Message-ID starting with `unknown-` (e.g., `unknown-36784`), this is a placeholder — NOT a real RFC Message-ID. Do NOT pass it to `search_emails(message_id=...)` — it will always fail. Instead, retry the content lookup using sender/subject filters with `with_content=True` and a narrow date range or `limit=1`.
+
+### Follow up on the web when email isn't enough
+When an email doesn't contain the information the user needs (e.g., price, invoice, order status) but references a website or account page:
+- **Proactively offer to navigate there** and extract the information using browser automation
+- Check memory for a saved web recipe for that domain (`memory_list`)
+- If a recipe exists, follow it directly. If not, open the site and navigate using snapshots/JS
+- Don't just tell the user "go check Settings → Billing" — do it for them
 
 ### Handling Multiple Accounts
 - "emails from X account" means emails RECEIVED BY that account (any sender)

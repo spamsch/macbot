@@ -402,11 +402,23 @@ Use these when:
 - The user expresses a preference for how things should be done
 - You learn factual information about the user (location, preferences, etc.)
 
-## Reusable Extraction Scripts
+## Reusable Web Recipes & Extraction Scripts
 
+### Auto-save after guided navigation
+When the user walks you through a website step by step (e.g., "click Settings", "scroll down", "click Billing"), you are being **taught** a navigation recipe. After completing the flow, **automatically save it** using `memory_add_lesson` with topic format `"recipe-{domain}-{action}"` (e.g., `"recipe-notion.so-check-billing"`). Include:
+- The full URL to start from
+- Each navigation step (what to click, scroll, type)
+- The JS selectors or text labels that worked
+- What data to extract at the end
+
+### Check memory before navigating
+Before attempting any website navigation, **check memory first** (`memory_list`) for a saved recipe matching the domain. If one exists, follow the stored steps directly — skip the visual snapshot trial-and-error. Only fall back to exploration if the recipe fails (page layout may have changed), and if so, update the saved recipe.
+
+### Save extraction scripts
 When you write a JavaScript snippet (via `browser_execute_js`) that successfully extracts structured data from a webpage, **save it to memory** using `memory_add_lesson` with the site domain as the topic (e.g., "golem.de extraction script"). Include the full JS code in the lesson.
 
-On subsequent requests for the same site, **check memory first** (`memory_list`) for a saved script. If one exists, skip the visual snapshot and run the script directly — it's much faster and cheaper. Only fall back to a snapshot if the script fails (the page layout may have changed), and if so, update the saved script.
+### Proactive website navigation
+When an email, document, or conversation implies that information is available on a website (e.g., "check your billing page", "see your account settings", "view your order status"), **proactively navigate there** instead of telling the user to do it manually. You have full browser automation — use it. Check memory for a saved recipe for that domain first.
 """
 
     def _build_important_rules(self) -> str:

@@ -161,11 +161,13 @@ elif [[ -n "$ACCOUNT" ]]; then
     ACCT_SQL="${ACCOUNT//\'/\'\'}"
     CONDITIONS+=("mb.url LIKE '%${ACCT_SQL}%'")
     if [[ "$ALL_MAILBOXES" != "true" ]]; then
-        CONDITIONS+=("(mb.url LIKE '%/INBOX' OR mb.url LIKE '%/Inbox' OR mb.url LIKE '%/Archive')")
+        CONDITIONS+=("(mb.url LIKE '%/INBOX' OR mb.url LIKE '%/Inbox' OR mb.url LIKE '%/Archive' OR mb.url LIKE '%/All%20Mail' OR mb.url LIKE '%/All Mail')")
     fi
 elif [[ "$ALL_MAILBOXES" != "true" ]]; then
-    # Default: only INBOX + Archive (case variants)
-    CONDITIONS+=("(mb.url LIKE '%/INBOX' OR mb.url LIKE '%/Inbox' OR mb.url LIKE '%/Archive')")
+    # Default: INBOX + Archive + Gmail's All Mail (case variants)
+    # Gmail moves archived/filtered emails out of INBOX into [Gmail]/All Mail
+    # URLs are percent-encoded in SQLite, so match both encoded and decoded forms
+    CONDITIONS+=("(mb.url LIKE '%/INBOX' OR mb.url LIKE '%/Inbox' OR mb.url LIKE '%/Archive' OR mb.url LIKE '%/All%20Mail' OR mb.url LIKE '%/All Mail')")
 fi
 
 # Exclude deleted messages
@@ -230,7 +232,12 @@ extract_message_id() {
     local d1=$(( (rowid / 1000) % 10 ))
     local d2=$(( rowid / 10000 ))
     local emlx
+    # Try flat mailbox structure first (most accounts)
     emlx=$(ls "${MAIL_DIR}"/*/*.mbox/*/Data/${d1}/${d2}/Messages/${rowid}.*emlx 2>/dev/null | head -1)
+    # Try nested structure (Gmail: [Gmail].mbox/All Mail.mbox/…)
+    if [[ -z "$emlx" ]]; then
+        emlx=$(ls "${MAIL_DIR}"/*/*.mbox/*.mbox/*/Data/${d1}/${d2}/Messages/${rowid}.*emlx 2>/dev/null | head -1)
+    fi
     if [[ -n "$emlx" ]]; then
         sed -n '/^[Mm]essage-[Ii][Dd]:[[:space:]]*/{
             s/^[Mm]essage-[Ii][Dd]:[[:space:]]*//

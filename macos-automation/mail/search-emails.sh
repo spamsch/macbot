@@ -191,7 +191,7 @@ tell application "Mail"
         else if $ALL_MAILBOXES then
             set mailboxesToSearch to mailboxes of acct
         else
-            -- Default: search Inbox and Archive of the account
+            -- Default: search Inbox, Archive, and Gmail's All Mail of the account
             try
                 set mailboxesToSearch to mailboxesToSearch & {mailbox "Inbox" of acct}
             end try
@@ -200,6 +200,9 @@ tell application "Mail"
             end try
             try
                 set mailboxesToSearch to mailboxesToSearch & {mailbox "Archive" of acct}
+            end try
+            try
+                set mailboxesToSearch to mailboxesToSearch & {mailbox "[Gmail]/All Mail" of acct}
             end try
         end if
     else if "$MAILBOX_ESCAPED" is not "" then
@@ -215,11 +218,15 @@ tell application "Mail"
             set mailboxesToSearch to mailboxesToSearch & (mailboxes of acct)
         end repeat
     else
-        -- Default: search inbox and Archive
+        -- Default: search inbox, Archive, and Gmail's All Mail
+        -- Gmail moves archived/filtered emails out of INBOX into [Gmail]/All Mail
         set mailboxesToSearch to {inbox}
         repeat with acct in accounts
             try
                 set mailboxesToSearch to mailboxesToSearch & {mailbox "Archive" of acct}
+            end try
+            try
+                set mailboxesToSearch to mailboxesToSearch & {mailbox "[Gmail]/All Mail" of acct}
             end try
         end repeat
     end if
