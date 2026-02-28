@@ -18,6 +18,7 @@
 #   --mailbox <name>      Only search in specified mailbox (default: Inbox)
 #   --output <folder>     Destination folder for attachments (required)
 #   --limit <n>           Limit number of emails to process (default: 5)
+#   --days <n>            Only include emails from the last N days
 #
 # Examples:
 #   ./download-attachments.sh --message-id "<abc@example.com>" --output ~/Downloads
@@ -36,6 +37,7 @@ MAILBOX=""
 OUTPUT_DIR=""
 LIMIT=5
 ALL_MAILBOXES=false
+DAYS=""
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
@@ -71,6 +73,10 @@ while [[ $# -gt 0 ]]; do
         --all-mailboxes)
             ALL_MAILBOXES=true
             shift
+            ;;
+        --days)
+            DAYS="$2"
+            shift 2
             ;;
         -h|--help)
             head -35 "$0" | tail -30
@@ -113,6 +119,12 @@ use framework "Foundation"
 tell application "Mail"
     set matchingMsgs to {}
     set mailboxesToSearch to {}
+    set daysFilter to "$DAYS"
+    set useDateFilter to (daysFilter is not "")
+    set cutoffDate to missing value
+    if useDateFilter then
+        set cutoffDate to (current date) - ((daysFilter as integer) * days)
+    end if
 
     -- Determine which mailboxes to search
     if "$ACCOUNT_ESCAPED" is not "" then
@@ -176,11 +188,21 @@ tell application "Mail"
                         else
                             set subjectList to {}
                         end if
+                        if useDateFilter then
+                            set dateList to date received of mbMsgs
+                        else
+                            set dateList to {}
+                        end if
 
                         -- Filter using in-memory lists (no Apple Events in the loop)
                         repeat with i from 1 to msgCount
                             set includeMsg to true
-                            if "$SENDER_ESCAPED" is not "" then
+                            if useDateFilter then
+                                if item i of dateList < cutoffDate then
+                                    set includeMsg to false
+                                end if
+                            end if
+                            if includeMsg and "$SENDER_ESCAPED" is not "" then
                                 if item i of senderList does not contain "$SENDER_ESCAPED" then
                                     set includeMsg to false
                                 end if
@@ -199,7 +221,16 @@ tell application "Mail"
                         -- Fallback to per-message filtering if bulk fetch fails
                         repeat with msg in mbMsgs
                             set includeMsg to true
-                            if "$SENDER_ESCAPED" is not "" then
+                            if useDateFilter then
+                                try
+                                    if date received of msg < cutoffDate then
+                                        set includeMsg to false
+                                    end if
+                                on error
+                                    set includeMsg to false
+                                end try
+                            end if
+                            if includeMsg and "$SENDER_ESCAPED" is not "" then
                                 try
                                     if sender of msg does not contain "$SENDER_ESCAPED" then
                                         set includeMsg to false

@@ -38,16 +38,29 @@ class PaperlessSearchTask(Task):
     @property
     def description(self) -> str:
         return (
-            "Search documents in Paperless-ngx by full-text query. "
-            "Returns matching documents with title, correspondent, tags, and dates."
+            "Search documents in Paperless-ngx. Supports full-text search via 'query' "
+            "and filtering by inbox status, tags, correspondent, or document type. "
+            "Use is_inbox=True to list inbox documents. Filters can be combined with a query."
         )
 
-    async def execute(self, query: str, limit: int = 10) -> dict[str, Any]:
+    async def execute(
+        self,
+        query: str = "",
+        limit: int = 10,
+        is_inbox: bool = False,
+        tags: list[int] | None = None,
+        correspondent_id: int | None = None,
+        document_type_id: int | None = None,
+    ) -> dict[str, Any]:
         """Search for documents.
 
         Args:
-            query: Full-text search query
-            limit: Maximum number of results to return (default: 10)
+            query: Full-text search query (optional if using filters).
+            limit: Maximum number of results to return (default: 10).
+            is_inbox: If True, only return documents with an inbox tag.
+            tags: Filter by tag IDs (documents must have all listed tags).
+            correspondent_id: Filter by correspondent ID.
+            document_type_id: Filter by document type ID.
 
         Returns:
             Dictionary with search results or error
@@ -60,9 +73,30 @@ class PaperlessSearchTask(Task):
 
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
+                params: dict[str, Any] = {"page_size": limit}
+
+                # Parse is:inbox from query string for convenience
+                clean_query = query
+                if "is:inbox" in clean_query:
+                    is_inbox = True
+                    clean_query = clean_query.replace("is:inbox", "").strip()
+
+                if clean_query:
+                    params["query"] = clean_query
+
+                if is_inbox:
+                    params["is_in_inbox"] = "true"
+
+                if tags:
+                    params["tags__id__all"] = ",".join(str(t) for t in tags)
+                if correspondent_id is not None:
+                    params["correspondent__id"] = correspondent_id
+                if document_type_id is not None:
+                    params["document_type__id"] = document_type_id
+
                 response = await client.get(
                     f"{_get_base_url()}/api/documents/",
-                    params={"query": query, "page_size": limit},
+                    params=params,
                     headers=_get_headers(),
                 )
                 response.raise_for_status()
@@ -82,6 +116,7 @@ class PaperlessSearchTask(Task):
                         "created": doc.get("created"),
                         "added": doc.get("added"),
                         "archive_serial_number": doc.get("archive_serial_number"),
+                        "custom_fields": doc.get("custom_fields", []),
                     })
 
                 return {
@@ -162,6 +197,113 @@ class PaperlessGetDocumentTask(Task):
                         "modified": doc.get("modified"),
                         "archive_serial_number": doc.get("archive_serial_number"),
                         "original_file_name": doc.get("original_file_name"),
+                        "custom_fields": doc.get("custom_fields", []),
+                    },
+                }
+
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 404:
+                return {
+                    "success": False,
+                    "error": f"Document {document_id} not found",
+                }
+            return {
+                "success": False,
+                "error": f"HTTP {e.response.status_code}: {e.response.text[:200]}",
+            }
+        except httpx.RequestError as e:
+            return {
+                "success": False,
+                "error": f"Connection error: {e}",
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "error": f"Unexpected error: {e}",
+            }
+
+
+class PaperlessUpdateDocumentTask(Task):
+    """Update a document in Paperless-ngx."""
+
+    @property
+    def name(self) -> str:
+        return "paperless_update_document"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Update a document's metadata in Paperless-ngx. "
+            "Can change title, tags (list of tag IDs — replaces all tags), "
+            "correspondent, document type, and custom fields. "
+            "For custom_fields pass a list of dicts: [{\"field\": <field_id>, \"value\": <value>}]."
+        )
+
+    async def execute(
+        self,
+        document_id: int,
+        title: str | None = None,
+        tags: list[int] | None = None,
+        correspondent: int | None = None,
+        document_type: int | None = None,
+        custom_fields: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        """Update document metadata.
+
+        Args:
+            document_id: The document ID to update.
+            title: New title (unchanged if not provided).
+            tags: New list of tag IDs (replaces all tags; unchanged if not provided).
+            correspondent: New correspondent ID (unchanged if not provided).
+            document_type: New document type ID (unchanged if not provided).
+            custom_fields: List of custom field values, e.g. [{"field": 1, "value": "42.50"}].
+
+        Returns:
+            Dictionary with updated document or error.
+        """
+        if not settings.paperless_url or not settings.paperless_api_token:
+            return {
+                "success": False,
+                "error": "Paperless-ngx not configured. Set MACBOT_PAPERLESS_URL and MACBOT_PAPERLESS_API_TOKEN in Settings or run 'son onboard'.",
+            }
+
+        patch_data: dict[str, Any] = {}
+        if title is not None:
+            patch_data["title"] = title
+        if tags is not None:
+            patch_data["tags"] = tags
+        if correspondent is not None:
+            patch_data["correspondent"] = correspondent
+        if document_type is not None:
+            patch_data["document_type"] = document_type
+        if custom_fields is not None:
+            patch_data["custom_fields"] = custom_fields
+
+        if not patch_data:
+            return {"success": False, "error": "No fields to update."}
+
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.patch(
+                    f"{_get_base_url()}/api/documents/{document_id}/",
+                    json=patch_data,
+                    headers={**_get_headers(), "Content-Type": "application/json"},
+                )
+                response.raise_for_status()
+                doc = response.json()
+
+                return {
+                    "success": True,
+                    "document": {
+                        "id": doc.get("id"),
+                        "title": doc.get("title"),
+                        "tags": doc.get("tags", []),
+                        "tag_names": doc.get("tags__name", []),
+                        "correspondent": doc.get("correspondent"),
+                        "correspondent_name": doc.get("correspondent__name"),
+                        "document_type": doc.get("document_type"),
+                        "document_type_name": doc.get("document_type__name"),
+                        "custom_fields": doc.get("custom_fields", []),
                     },
                 }
 
@@ -379,22 +521,47 @@ class PaperlessDownloadTask(Task):
             }
 
 
-class PaperlessListTagsTask(Task):
-    """List available tags in Paperless-ngx."""
+class PaperlessListTask(Task):
+    """List metadata resources (tags, correspondents, document types, custom fields) in Paperless-ngx."""
+
+    _RESOURCE_CONFIG: dict[str, dict[str, Any]] = {
+        "tags": {
+            "endpoint": "/api/tags/",
+            "fields": ["id", "name", "color", "is_inbox_tag", "document_count"],
+        },
+        "correspondents": {
+            "endpoint": "/api/correspondents/",
+            "fields": ["id", "name", "document_count"],
+        },
+        "document_types": {
+            "endpoint": "/api/document_types/",
+            "fields": ["id", "name", "document_count"],
+        },
+        "custom_fields": {
+            "endpoint": "/api/custom_fields/",
+            "fields": ["id", "name", "data_type"],
+        },
+    }
 
     @property
     def name(self) -> str:
-        return "paperless_list_tags"
+        return "paperless_list"
 
     @property
     def description(self) -> str:
-        return "List all available tags in Paperless-ngx with their IDs and names."
+        return (
+            "List metadata resources in Paperless-ngx. "
+            "Set resource_type to one of: tags, correspondents, document_types, custom_fields."
+        )
 
-    async def execute(self) -> dict[str, Any]:
-        """List tags.
+    async def execute(self, resource_type: str = "tags") -> dict[str, Any]:
+        """List a metadata resource.
+
+        Args:
+            resource_type: One of 'tags', 'correspondents', 'document_types', 'custom_fields'.
 
         Returns:
-            Dictionary with tags or error
+            Dictionary with items or error.
         """
         if not settings.paperless_url or not settings.paperless_api_token:
             return {
@@ -402,154 +569,31 @@ class PaperlessListTagsTask(Task):
                 "error": "Paperless-ngx not configured. Set MACBOT_PAPERLESS_URL and MACBOT_PAPERLESS_API_TOKEN in Settings or run 'son onboard'.",
             }
 
-        try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.get(
-                    f"{_get_base_url()}/api/tags/",
-                    headers=_get_headers(),
-                )
-                response.raise_for_status()
-                data = response.json()
-
-                tags = []
-                for tag in data.get("results", []):
-                    tags.append({
-                        "id": tag.get("id"),
-                        "name": tag.get("name"),
-                        "color": tag.get("color"),
-                        "document_count": tag.get("document_count"),
-                    })
-
-                return {
-                    "success": True,
-                    "count": data.get("count", 0),
-                    "tags": tags,
-                }
-
-        except httpx.HTTPStatusError as e:
+        config = self._RESOURCE_CONFIG.get(resource_type)
+        if not config:
             return {
                 "success": False,
-                "error": f"HTTP {e.response.status_code}: {e.response.text[:200]}",
-            }
-        except httpx.RequestError as e:
-            return {
-                "success": False,
-                "error": f"Connection error: {e}",
-            }
-        except Exception as e:
-            return {
-                "success": False,
-                "error": f"Unexpected error: {e}",
-            }
-
-
-class PaperlessListCorrespondentsTask(Task):
-    """List available correspondents in Paperless-ngx."""
-
-    @property
-    def name(self) -> str:
-        return "paperless_list_correspondents"
-
-    @property
-    def description(self) -> str:
-        return "List all correspondents in Paperless-ngx with their IDs and names."
-
-    async def execute(self) -> dict[str, Any]:
-        """List correspondents.
-
-        Returns:
-            Dictionary with correspondents or error
-        """
-        if not settings.paperless_url or not settings.paperless_api_token:
-            return {
-                "success": False,
-                "error": "Paperless-ngx not configured. Set MACBOT_PAPERLESS_URL and MACBOT_PAPERLESS_API_TOKEN in Settings or run 'son onboard'.",
+                "error": f"Unknown resource_type '{resource_type}'. Use one of: {', '.join(self._RESOURCE_CONFIG)}",
             }
 
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.get(
-                    f"{_get_base_url()}/api/correspondents/",
+                    f"{_get_base_url()}{config['endpoint']}",
+                    params={"page_size": 100},
                     headers=_get_headers(),
                 )
                 response.raise_for_status()
                 data = response.json()
 
-                correspondents = []
-                for corr in data.get("results", []):
-                    correspondents.append({
-                        "id": corr.get("id"),
-                        "name": corr.get("name"),
-                        "document_count": corr.get("document_count"),
-                    })
+                items = []
+                for item in data.get("results", []):
+                    items.append({f: item.get(f) for f in config["fields"]})
 
                 return {
                     "success": True,
                     "count": data.get("count", 0),
-                    "correspondents": correspondents,
-                }
-
-        except httpx.HTTPStatusError as e:
-            return {
-                "success": False,
-                "error": f"HTTP {e.response.status_code}: {e.response.text[:200]}",
-            }
-        except httpx.RequestError as e:
-            return {
-                "success": False,
-                "error": f"Connection error: {e}",
-            }
-        except Exception as e:
-            return {
-                "success": False,
-                "error": f"Unexpected error: {e}",
-            }
-
-
-class PaperlessListDocumentTypesTask(Task):
-    """List available document types in Paperless-ngx."""
-
-    @property
-    def name(self) -> str:
-        return "paperless_list_document_types"
-
-    @property
-    def description(self) -> str:
-        return "List all document types in Paperless-ngx with their IDs and names."
-
-    async def execute(self) -> dict[str, Any]:
-        """List document types.
-
-        Returns:
-            Dictionary with document types or error
-        """
-        if not settings.paperless_url or not settings.paperless_api_token:
-            return {
-                "success": False,
-                "error": "Paperless-ngx not configured. Set MACBOT_PAPERLESS_URL and MACBOT_PAPERLESS_API_TOKEN in Settings or run 'son onboard'.",
-            }
-
-        try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.get(
-                    f"{_get_base_url()}/api/document_types/",
-                    headers=_get_headers(),
-                )
-                response.raise_for_status()
-                data = response.json()
-
-                doc_types = []
-                for dt in data.get("results", []):
-                    doc_types.append({
-                        "id": dt.get("id"),
-                        "name": dt.get("name"),
-                        "document_count": dt.get("document_count"),
-                    })
-
-                return {
-                    "success": True,
-                    "count": data.get("count", 0),
-                    "document_types": doc_types,
+                    resource_type: items,
                 }
 
         except httpx.HTTPStatusError as e:
@@ -577,8 +621,7 @@ def register_paperless_tasks(registry) -> None:
     """
     registry.register(PaperlessSearchTask())
     registry.register(PaperlessGetDocumentTask())
+    registry.register(PaperlessUpdateDocumentTask())
     registry.register(PaperlessUploadTask())
     registry.register(PaperlessDownloadTask())
-    registry.register(PaperlessListTagsTask())
-    registry.register(PaperlessListCorrespondentsTask())
-    registry.register(PaperlessListDocumentTypesTask())
+    registry.register(PaperlessListTask())

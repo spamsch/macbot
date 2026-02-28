@@ -361,7 +361,8 @@ class DownloadAttachmentsTask(Task):
         account: str | None = None,
         mailbox: str | None = None,
         all_mailboxes: bool = False,
-        limit: int = 5
+        limit: int = 5,
+        days: int | None = None,
     ) -> dict[str, Any]:
         """Download attachments from matching emails.
 
@@ -374,6 +375,7 @@ class DownloadAttachmentsTask(Task):
             mailbox: Only search in specified mailbox (default: Inbox).
             all_mailboxes: Search all mailboxes including Sent, Archive, Trash, etc.
             limit: Maximum number of emails to process.
+            days: Only include emails from the last N days.
 
         Returns:
             Dictionary with download result.
@@ -399,6 +401,8 @@ class DownloadAttachmentsTask(Task):
         if all_mailboxes:
             args.append("--all-mailboxes")
         args.extend(["--limit", str(limit)])
+        if days is not None:
+            args.extend(["--days", str(days)])
 
         return await run_script("mail/download-attachments.sh", args, timeout=60)
 
