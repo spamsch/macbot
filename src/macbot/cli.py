@@ -384,10 +384,13 @@ def cmd_chat(args: argparse.Namespace) -> None:
         asyncio.run(stdio_loop(agent, verbose=args.verbose))
         return
 
+    skills = agent.skills_registry.list_enabled_skills()
+    skill_names = ", ".join(s.name for s in skills)
     console.print(Panel(
         f"[bold]Son of Simon[/bold] v{__version__}\n\n"
         f"Model: {settings.model}\n"
-        f"Tasks available: {len(registry)}",
+        f"Tasks available: {len(registry)}\n"
+        f"Skills ({len(skills)}): {skill_names}",
         title="Welcome"
     ))
 

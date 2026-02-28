@@ -11,6 +11,10 @@ tasks:
   - fetch_url
   - list_directory
   - get_preferences
+  - get_system_info
+  - google_search
+  - list_shortcuts
+  - run_shortcut
 essential_tasks:
   - run_shell_command
   - read_file

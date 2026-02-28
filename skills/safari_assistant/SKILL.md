@@ -11,6 +11,7 @@ tasks:
   - extract_safari_links
   - web_search
   - web_fetch
+  - get_hacker_news
 essential_tasks:
   - open_url_in_safari
   - web_search
