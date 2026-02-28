@@ -613,6 +613,166 @@ class PaperlessListTask(Task):
             }
 
 
+class PaperlessManageMetadataTask(Task):
+    """Create or delete metadata resources (tags, correspondents, document types) in Paperless-ngx."""
+
+    _RESOURCE_CONFIG: dict[str, dict[str, Any]] = {
+        "tags": {
+            "endpoint": "/api/tags/",
+            "create_fields": ["name", "color", "is_inbox_tag"],
+        },
+        "correspondents": {
+            "endpoint": "/api/correspondents/",
+            "create_fields": ["name"],
+        },
+        "document_types": {
+            "endpoint": "/api/document_types/",
+            "create_fields": ["name"],
+        },
+    }
+
+    @property
+    def name(self) -> str:
+        return "paperless_manage_metadata"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Create or delete metadata resources in Paperless-ngx. "
+            "Supports tags, correspondents, and document_types. "
+            "Use action='create' with a name to create a new resource. "
+            "Use action='delete' with a resource_id to delete one. "
+            "For tags, you can also set color (hex like '#ff0000') and is_inbox_tag."
+        )
+
+    async def execute(
+        self,
+        action: str,
+        resource_type: str = "tags",
+        resource_id: int | None = None,
+        name: str | None = None,
+        color: str | None = None,
+        is_inbox_tag: bool = False,
+    ) -> dict[str, Any]:
+        """Create or delete a metadata resource.
+
+        Args:
+            action: 'create' or 'delete'.
+            resource_type: One of 'tags', 'correspondents', 'document_types'.
+            resource_id: ID of the resource to delete (required for delete).
+            name: Name for the new resource (required for create).
+            color: Hex color for tags, e.g. '#ff0000' (optional, tags only).
+            is_inbox_tag: Whether this tag marks inbox documents (optional, tags only).
+
+        Returns:
+            Dictionary with created/deleted resource or error.
+        """
+        if not settings.paperless_url or not settings.paperless_api_token:
+            return {
+                "success": False,
+                "error": "Paperless-ngx not configured. Set MACBOT_PAPERLESS_URL and MACBOT_PAPERLESS_API_TOKEN in Settings or run 'son onboard'.",
+            }
+
+        config = self._RESOURCE_CONFIG.get(resource_type)
+        if not config:
+            return {
+                "success": False,
+                "error": f"Unknown resource_type '{resource_type}'. Use one of: {', '.join(self._RESOURCE_CONFIG)}",
+            }
+
+        if action == "create":
+            return await self._create(config, resource_type, name, color, is_inbox_tag)
+        elif action == "delete":
+            return await self._delete(config, resource_type, resource_id)
+        else:
+            return {
+                "success": False,
+                "error": f"Unknown action '{action}'. Use 'create' or 'delete'.",
+            }
+
+    async def _create(
+        self,
+        config: dict[str, Any],
+        resource_type: str,
+        name: str | None,
+        color: str | None,
+        is_inbox_tag: bool,
+    ) -> dict[str, Any]:
+        if not name:
+            return {"success": False, "error": "name is required for create."}
+
+        payload: dict[str, Any] = {"name": name}
+        if resource_type == "tags":
+            if color is not None:
+                payload["color"] = color
+            if is_inbox_tag:
+                payload["is_inbox_tag"] = True
+
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.post(
+                    f"{_get_base_url()}{config['endpoint']}",
+                    json=payload,
+                    headers={**_get_headers(), "Content-Type": "application/json"},
+                )
+                response.raise_for_status()
+                item = response.json()
+
+                return {
+                    "success": True,
+                    "action": "created",
+                    resource_type[:-1]: {
+                        "id": item.get("id"),
+                        "name": item.get("name"),
+                    },
+                }
+
+        except httpx.HTTPStatusError as e:
+            return {
+                "success": False,
+                "error": f"HTTP {e.response.status_code}: {e.response.text[:200]}",
+            }
+        except httpx.RequestError as e:
+            return {"success": False, "error": f"Connection error: {e}"}
+
+    async def _delete(
+        self,
+        config: dict[str, Any],
+        resource_type: str,
+        resource_id: int | None,
+    ) -> dict[str, Any]:
+        if resource_id is None:
+            return {"success": False, "error": "resource_id is required for delete."}
+
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.delete(
+                    f"{_get_base_url()}{config['endpoint']}{resource_id}/",
+                    headers=_get_headers(),
+                )
+                response.raise_for_status()
+
+                return {
+                    "success": True,
+                    "action": "deleted",
+                    "resource_type": resource_type,
+                    "resource_id": resource_id,
+                }
+
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 404:
+                return {
+                    "success": False,
+                    "error": f"{resource_type} with id {resource_id} not found",
+                }
+            return {
+                "success": False,
+                "error": f"HTTP {e.response.status_code}: {e.response.text[:200]}",
+            }
+        except httpx.RequestError as e:
+            return {"success": False, "error": f"Connection error: {e}"}
+
+
 def register_paperless_tasks(registry) -> None:
     """Register Paperless-ngx tasks with a registry.
 
@@ -625,3 +785,4 @@ def register_paperless_tasks(registry) -> None:
     registry.register(PaperlessUploadTask())
     registry.register(PaperlessDownloadTask())
     registry.register(PaperlessListTask())
+    registry.register(PaperlessManageMetadataTask())
