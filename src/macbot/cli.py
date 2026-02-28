@@ -146,12 +146,67 @@ def _format_tokens(count: int) -> str:
     return str(count)
 
 
-async def interactive_loop(agent: Agent, verbose: bool = False) -> None:
+def _print_context_debug(agent: Agent, max_messages: int = 12) -> None:
+    """Print a compact debug view of the current conversation context."""
+    stats = agent.get_token_stats()
+    try:
+        profile = agent._get_effective_profile()
+    except Exception:
+        profile = agent.config.context_profile
+
+    model = getattr(agent, "_current_model", getattr(agent.provider, "model", "unknown"))
+    message_count = len(agent.messages)
+    start = max(0, message_count - max_messages)
+
+    tool_name_by_id: dict[str, str] = {}
+    for msg in agent.messages:
+        if msg.tool_calls:
+            for tc in msg.tool_calls:
+                tool_name_by_id[tc.id] = tc.name
+
+    lines = [
+        f"Model: {model}",
+        f"Context profile: {profile}",
+        f"Messages: {message_count}",
+        f"Last context tokens: {stats['context_tokens']}",
+    ]
+
+    if message_count:
+        lines.append("")
+        lines.append("Recent messages:")
+        for idx in range(start, message_count):
+            msg = agent.messages[idx]
+            role = msg.role
+            tool_info = ""
+            if msg.role == "assistant" and msg.tool_calls:
+                names = ", ".join(tc.name for tc in msg.tool_calls)
+                tool_info = f" tool_calls=[{names}]"
+            elif msg.role == "tool":
+                tool_name = tool_name_by_id.get(msg.tool_call_id, "?")
+                tool_info = f" tool={tool_name}"
+
+            content = msg.content_text or ""
+            content = content.replace("\n", " ").strip()
+            if not content and isinstance(msg.content, list):
+                content = "[non-text content]"
+
+            preview = content
+            if len(preview) > 120:
+                preview = preview[:117] + "..."
+            lines.append(f"{idx:02d} {role}{tool_info} | {len(content)} chars | {preview}")
+
+    console.print(Panel("\n".join(lines), title="Context Debug", expand=False))
+
+
+async def interactive_loop(
+    agent: Agent, verbose: bool = False, debug_context: bool = False
+) -> None:
     """Run an interactive chat loop with the agent.
 
     Args:
         agent: The agent instance (may already have conversation history)
         verbose: Whether to show verbose output
+        debug_context: Whether to print context debug info after each turn
     """
     console.print("\n[dim]Type your message, or 'quit' to exit. Use 'clear' to reset conversation.[/dim]")
     console.print("[dim]Commands: 'stats' shows token usage, 'help' for more.[/dim]\n")
@@ -221,7 +276,11 @@ async def interactive_loop(agent: Agent, verbose: bool = False) -> None:
 
             from macbot.utils.cancellable import run_with_escape_cancel
             result, cancelled = await run_with_escape_cancel(
-                agent.run(user_input, verbose=verbose)
+                agent.run(
+                    user_input,
+                    verbose=verbose,
+                    continue_conversation=True,
+                )
             )
 
             if cancelled:
@@ -231,6 +290,8 @@ async def interactive_loop(agent: Agent, verbose: bool = False) -> None:
                 console.print("[bold green]A:[/bold green]", end=" ")
                 console.print(Markdown(result))
                 console.print("[dim]─" * 60 + "[/dim]\n")
+                if debug_context:
+                    _print_context_debug(agent)
 
         except KeyboardInterrupt:
             console.print("\n[dim]Use 'quit' to exit.[/dim]")
@@ -318,6 +379,8 @@ def cmd_chat(args: argparse.Namespace) -> None:
     agent = Agent(registry)
 
     if getattr(args, "stdio", False):
+        if getattr(args, "debug_context", False):
+            console.print("[yellow]Warning:[/yellow] --debug-context is ignored in --stdio mode")
         asyncio.run(stdio_loop(agent, verbose=args.verbose))
         return
 
@@ -328,7 +391,11 @@ def cmd_chat(args: argparse.Namespace) -> None:
         title="Welcome"
     ))
 
-    asyncio.run(interactive_loop(agent, verbose=args.verbose))
+    asyncio.run(interactive_loop(
+        agent,
+        verbose=args.verbose,
+        debug_context=getattr(args, "debug_context", False),
+    ))
 
 
 def cmd_run(args: argparse.Namespace) -> None:
@@ -3525,6 +3592,10 @@ Use [bold]son <command> --help[/bold] for command details.
     chat_parser.add_argument(
         "--stdio", action="store_true",
         help="Use JSON-lines protocol over stdin/stdout (for app integration)"
+    )
+    chat_parser.add_argument(
+        "--debug-context", action="store_true",
+        help="Print a compact view of the conversation context after each turn"
     )
     chat_parser.set_defaults(func=cmd_chat)
 

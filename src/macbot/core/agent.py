@@ -775,9 +775,59 @@ When an email, document, or conversation implies that information is available o
         This walks through messages and for each completed exchange
         (user → assistant+tool_calls → tool_results → ... → assistant text),
         keeps only the user message and the final assistant text response.
+        Exception: preserve the last browser-related tool call group (Safari/page
+        context) so immediate follow-up questions can reference page content.
         """
         if not self.messages:
             return
+
+        def is_browser_tool(name: str) -> bool:
+            return (
+                name.startswith("browser_")
+                or name in {
+                    "analyze_screenshot",
+                    "get_current_safari_page",
+                    "open_url_in_safari",
+                    "extract_safari_links",
+                    "list_safari_tabs",
+                    # Mail context tools (keep last email results for follow-ups)
+                    "get_unread_emails",
+                    "search_emails",
+                    "send_email",
+                    "move_email",
+                    "download_attachments",
+                    "mark_emails_read",
+                }
+            )
+
+        # Find the most recent browser-related tool group and the user message
+        # it belongs to (so we can reinsert it into the condensed history).
+        last_browser_group: list[Message] | None = None
+        last_browser_user: Message | None = None
+        current_user: Message | None = None
+        i = 0
+        while i < len(self.messages):
+            msg = self.messages[i]
+            if msg.role == "user":
+                current_user = msg
+                i += 1
+                continue
+            if msg.role == "assistant" and msg.tool_calls:
+                if any(is_browser_tool(tc.name) for tc in msg.tool_calls):
+                    group = [msg]
+                    i += 1
+                    while i < len(self.messages) and self.messages[i].role == "tool":
+                        group.append(self.messages[i])
+                        i += 1
+                    last_browser_group = group
+                    last_browser_user = current_user
+                    continue
+                # Skip non-browser tool groups
+                i += 1
+                while i < len(self.messages) and self.messages[i].role == "tool":
+                    i += 1
+                continue
+            i += 1
 
         condensed: list[Message] = []
         i = 0
@@ -829,6 +879,17 @@ When an email, document, or conversation implies that information is available o
                 condensed.pop()
             else:
                 break
+
+        # Reinsert the last browser tool group right after its user message,
+        # unless it's already present (e.g., incomplete exchange).
+        if last_browser_group and last_browser_user:
+            if all(m is not last_browser_group[0] for m in condensed):
+                try:
+                    user_index = condensed.index(last_browser_user)
+                except ValueError:
+                    user_index = -1
+                if user_index >= 0 and user_index + 1 < len(condensed):
+                    condensed[user_index + 1:user_index + 1] = last_browser_group
 
         self.messages = condensed
 
