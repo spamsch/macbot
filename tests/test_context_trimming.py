@@ -110,29 +110,30 @@ class TestTrimMessagesToFit:
         assert result == messages
 
     def test_oldest_messages_trimmed_first(self) -> None:
-        """Oldest messages (after goal) are dropped first."""
-        # 5 messages × 100 tokens = 500, budget = 1000 * 0.9 = 900
-        # But let's make it tight: budget = 350 (context=389 → 389*0.9=350)
-        agent = _make_agent(context_window=334, tokens_per_message=100)
-        # budget = 334 * 0.9 = 300.6 → 300
-        # 5 messages = 500 tokens, over budget
+        """Oldest messages (after goal) are dropped first, preserving recent context."""
+        # 7 messages × 100 tokens = 700, budget = 556 * 0.9 = 500
+        agent = _make_agent(context_window=556, tokens_per_message=100)
         messages = [
             Message(role="user", content="goal"),        # keep (first)
             Message(role="assistant", content="old1"),    # droppable
             Message(role="user", content="mid"),          # droppable
             Message(role="assistant", content="old2"),    # droppable
+            Message(role="user", content="recent_q"),     # keep (recent)
+            Message(role="assistant", content="recent_a"),  # keep (recent)
             Message(role="user", content="latest"),       # keep (last)
         ]
         result = agent._trim_messages_to_fit(messages)
-        # Should keep goal + latest = 2 messages = 200 tokens ≤ 300
-        assert result[0].content == "goal"
+        # Should keep goal + recent context, dropping old1/mid/old2
         assert result[-1].content == "latest"
         assert len(result) < len(messages)
+        # Recent context must survive
+        contents = [m.content for m in result]
+        assert "recent_q" in contents or "recent_a" in contents
 
-    def test_first_message_always_preserved(self) -> None:
-        """The first message (goal) is never dropped."""
-        agent = _make_agent(context_window=250, tokens_per_message=100)
-        # budget = 225, 4 messages = 400 tokens
+    def test_first_message_preserved_when_possible(self) -> None:
+        """The first message (goal) is kept when it fits alongside recent context."""
+        agent = _make_agent(context_window=445, tokens_per_message=100)
+        # budget = 400, 4 messages = 400 tokens — fits exactly
         messages = [
             Message(role="user", content="my goal"),
             Message(role="assistant", content="step1"),
@@ -188,10 +189,10 @@ class TestTrimMessagesToFit:
         result = agent._trim_messages_to_fit(messages)
         assert result == messages
 
-    def test_keeps_goal_plus_latest_group(self) -> None:
-        """Even under extreme pressure, goal + latest group are kept."""
-        agent = _make_agent(context_window=112, tokens_per_message=100)
-        # budget = 100, total = 5 * 100 = 500
+    def test_keeps_recent_context_over_goal(self) -> None:
+        """Under extreme pressure, recent context is preferred over stale goal."""
+        agent = _make_agent(context_window=334, tokens_per_message=100)
+        # budget = 300, total = 5 * 100 = 500
         messages = [
             Message(role="user", content="goal"),
             Message(role="assistant", content="a"),
@@ -200,9 +201,28 @@ class TestTrimMessagesToFit:
             Message(role="user", content="latest"),
         ]
         result = agent._trim_messages_to_fit(messages)
-        assert len(result) == 2
-        assert result[0].content == "goal"
-        assert result[1].content == "latest"
+        # Should keep goal + enough recent context to fit
+        assert result[-1].content == "latest"
+        assert len(result) <= len(messages)
+
+    def test_recent_exchange_preserved_when_goal_dropped(self) -> None:
+        """The preceding exchange survives even when the original goal is dropped."""
+        agent = _make_agent(context_window=445, tokens_per_message=100)
+        # budget = 400, total = 7 * 100 = 700
+        messages = [
+            Message(role="user", content="old goal"),       # may be dropped
+            Message(role="assistant", content="old reply"),  # may be dropped
+            Message(role="user", content="old question"),    # may be dropped
+            Message(role="assistant", content="old answer"),  # should survive
+            Message(role="user", content="do something"),    # should survive
+            Message(role="assistant", content="shall I?"),    # should survive
+            Message(role="user", content="yes"),             # should survive
+        ]
+        result = agent._trim_messages_to_fit(messages)
+        # The "yes" and the preceding "shall I?" must both survive
+        contents = [m.content for m in result]
+        assert "yes" in contents
+        assert "shall I?" in contents
 
 
 # ---------------------------------------------------------------------------

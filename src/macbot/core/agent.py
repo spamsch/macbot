@@ -543,10 +543,17 @@ When an email, document, or conversation implies that information is available o
         if len(groups) <= 2:
             return messages
 
+        # In long conversations, recent context is MORE important than the
+        # original goal (which may be hours old).  Always preserve at least
+        # the last MIN_TAIL_GROUPS to maintain conversational coherence
+        # (e.g., user confirms "yes" → we need the preceding proposal).
+        min_tail = min(4, len(groups) - 1)  # last ~2 exchanges
+
         # Drop groups from index 1 onwards (preserve first = goal)
-        # until we're under budget, but always keep the last group.
+        # until we're under budget, but always keep the last min_tail groups.
         drop_from = 1
-        while drop_from < len(groups) - 1:
+        max_drop = len(groups) - min_tail
+        while drop_from < max_drop:
             kept = [groups[0]] + groups[drop_from:]
             flat = [m for g in kept for m in g]
             est = self.provider.estimate_tokens(flat, system_prompt, tools)
@@ -563,14 +570,31 @@ When an email, document, or conversation implies that information is available o
                 return flat
             drop_from += 1
 
-        # Worst case: keep only first + last group
-        kept = [groups[0]] + [groups[-1]]
+        # Still over budget: drop the first goal too, keep only recent context.
+        # In a long-running Telegram chat, the original goal from hours ago
+        # is less useful than the last few exchanges.
+        tail_start = max(len(groups) - min_tail, 0)
+        kept = groups[tail_start:]
         flat = [m for g in kept for m in g]
-        dropped_count = len(groups) - 2
+        est = self.provider.estimate_tokens(flat, system_prompt, tools)
+        if est <= budget:
+            dropped_count = tail_start
+            if dropped_count > 0:
+                logger.warning(
+                    "Trimmed %d message group(s) (including original goal) "
+                    "to fit context window (%d tokens estimated, budget %d)",
+                    dropped_count,
+                    est,
+                    budget,
+                )
+            return flat
+
+        # Absolute worst case: even the tail is too large, keep only last group
+        kept = [groups[-1]]
+        flat = [m for g in kept for m in g]
         logger.warning(
-            "Trimmed %d message group(s) to fit context window "
+            "Trimmed all but last message group to fit context window "
             "(%d tokens estimated, budget %d)",
-            dropped_count,
             self.provider.estimate_tokens(flat, system_prompt, tools),
             budget,
         )
