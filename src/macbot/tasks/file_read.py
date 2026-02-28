@@ -37,10 +37,14 @@ class ReadFileTask(Task):
     @property
     def description(self) -> str:
         """Get the task description."""
-        return "Read and return the content of a file. Supports text files and PDFs (text extraction with image fallback for scanned documents)."
+        return (
+            "Read and return the content of a file. Supports text files and PDFs "
+            "(text extraction with image fallback for scanned documents). "
+            "For PDFs, use start_page to read from a specific page (0-indexed)."
+        )
 
     async def execute(
-        self, path: str, max_chars: int = 10000, max_pages: int = 5
+        self, path: str, max_chars: int = 10000, max_pages: int = 5, start_page: int = 0
     ) -> str | dict[str, Any]:
         """Read content from a file.
 
@@ -48,6 +52,7 @@ class ReadFileTask(Task):
             path: File path to read from.
             max_chars: Maximum characters to return (for text content).
             max_pages: Maximum pages to render as images (for scanned PDFs).
+            start_page: First page to read from in PDFs (0-indexed, default 0).
 
         Returns:
             File content as string, or dict with page images for scanned PDFs.
@@ -59,14 +64,14 @@ class ReadFileTask(Task):
         path = os.path.expanduser(path)
 
         if path.lower().endswith(".pdf"):
-            return self._read_pdf(path, max_chars, max_pages)
+            return self._read_pdf(path, max_chars, max_pages, start_page)
 
         with open(path) as f:
             content = f.read(max_chars)
         return content
 
     def _read_pdf(
-        self, path: str, max_chars: int, max_pages: int
+        self, path: str, max_chars: int, max_pages: int, start_page: int = 0
     ) -> str | dict[str, Any]:
         """Read a PDF file, extracting text or rendering pages as images.
 
@@ -74,6 +79,7 @@ class ReadFileTask(Task):
             path: Absolute path to the PDF file.
             max_chars: Maximum characters for text extraction.
             max_pages: Maximum pages to render as images.
+            start_page: First page to read (0-indexed).
 
         Returns:
             Extracted text as string if the PDF has meaningful text content,
@@ -95,10 +101,14 @@ class ReadFileTask(Task):
             raise ValueError(f"Could not open PDF: {e}") from e
 
         try:
-            # Extract text from all pages
+            total_pages = len(doc)
+            start = max(0, min(start_page, total_pages))
+            end = min(total_pages, start + max_pages)
+
+            # Extract text from selected page range
             text_parts: list[str] = []
-            for page in doc:
-                text = page.get_text()
+            for i in range(start, end):
+                text = doc[i].get_text()
                 if text.strip():
                     text_parts.append(text)
 
@@ -108,13 +118,13 @@ class ReadFileTask(Task):
             if len(full_text.strip()) > 100:
                 if len(full_text) > max_chars:
                     full_text = full_text[:max_chars]
-                return full_text
+                header = f"[Pages {start + 1}-{end} of {total_pages}]\n\n"
+                return header + full_text
 
             # Image-based PDF: render pages as PNG images
-            pages_to_render = min(len(doc), max_pages)
             images: list[str] = []
 
-            for i in range(pages_to_render):
+            for i in range(start, end):
                 page = doc[i]
                 # Render at 150 DPI for good quality without excessive size
                 pix = page.get_pixmap(dpi=150)
@@ -122,14 +132,15 @@ class ReadFileTask(Task):
                 b64_data = base64.b64encode(png_data).decode("ascii")
                 images.append(b64_data)
 
-            summary = f"Scanned PDF: {len(doc)} page(s)"
+            summary = f"Scanned PDF: {total_pages} page(s), showing pages {start + 1}-{end}"
             if full_text.strip():
                 summary += f", minimal text extracted: {full_text.strip()[:200]}"
 
             return {
                 "type": "pdf_images",
                 "text": summary,
-                "pages": len(doc),
+                "pages": total_pages,
+                "start_page": start,
                 "images": images,
             }
         finally:
