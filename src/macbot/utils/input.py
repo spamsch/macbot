@@ -21,6 +21,7 @@ from prompt_toolkit import PromptSession
 from prompt_toolkit.formatted_text import ANSI
 from prompt_toolkit.history import FileHistory
 from prompt_toolkit.key_binding import KeyBindings
+from prompt_toolkit.output.vt100 import Vt100_Output
 
 
 def create_input_session(history_file: Path | None = None) -> PromptSession:
@@ -52,7 +53,18 @@ def create_input_session(history_file: Path | None = None) -> PromptSession:
         history_file.parent.mkdir(parents=True, exist_ok=True)
         kwargs["history"] = FileHistory(str(history_file))
 
-    return PromptSession(**kwargs)
+    session = PromptSession(**kwargs)
+
+    # Disable Cursor Position Report queries.  prompt_toolkit sends \033[6n
+    # to ask the terminal where the cursor is; the terminal replies with
+    # \033[row;colR.  When switching tabs the reply can arrive at the wrong
+    # time, leaking as visible text (e.g. "^[[72;35R") and causing partial
+    # re-renders of the prompt.
+    output = session.output
+    if isinstance(output, Vt100_Output):
+        output.enable_cpr = False
+
+    return session
 
 
 async def async_prompt(session: PromptSession, prompt: str = "") -> str:
