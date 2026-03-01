@@ -734,21 +734,15 @@ class MacbotService:
 
     async def _run_interactive(self) -> None:
         """Run interactive console input loop with readline support."""
-        import readline
-        from concurrent.futures import ThreadPoolExecutor
         from rich.console import Console
         from rich.markdown import Markdown
 
-        # Set up readline with persistent history
-        history_file = MACBOT_DIR / "input_history"
-        try:
-            readline.read_history_file(history_file)
-        except FileNotFoundError:
-            pass
-        readline.set_history_length(500)
+        from macbot.utils.input import async_prompt, create_input_session
 
-        executor = ThreadPoolExecutor(max_workers=1)
-        loop = asyncio.get_event_loop()
+        # Set up prompt_toolkit session with persistent history
+        history_file = MACBOT_DIR / "input_history"
+        session = create_input_session(history_file)
+
         console = Console()
 
         queue = self._get_default_queue()
@@ -758,6 +752,7 @@ class MacbotService:
             console.print(f"\n[dim][Context shared with Telegram chat {settings.telegram_chat_id}][/dim]")
 
         console.print("[dim][Ready for input - type a query or 'quit' to exit][/dim]")
+        console.print("[dim][Alt+Enter for newline. Multi-line paste works automatically.][/dim]")
         console.print("[dim][Commands: 'clear' resets conversation, 'stats' shows tokens, 'context' shows structure][/dim]\n")
 
         while self._running:
@@ -774,10 +769,8 @@ class MacbotService:
                 else:
                     prompt = "\x1b[1;34m→\x1b[0m "
 
-                # Use input() instead of console.input() for readline support
-                user_input = await loop.run_in_executor(
-                    executor, lambda p=prompt: input(p).strip()
-                )
+                # prompt_toolkit: readline-compatible, multi-line via Alt+Enter
+                user_input = await async_prompt(session, prompt)
 
                 if not user_input:
                     continue
@@ -791,7 +784,6 @@ class MacbotService:
                         console.print(f"\n[dim]Session total: {stats['session_total_tokens']:,} tokens "
                                       f"(in: {stats['session_input_tokens']:,}, out: {stats['session_output_tokens']:,}{cost_part})[/dim]")
                     console.print("[dim][Stopping service...][/dim]")
-                    readline.write_history_file(history_file)
                     await self.stop()
                     break
 
@@ -840,13 +832,9 @@ class MacbotService:
                     console.print(f"\n[red]Error: {e}[/red]\n")
 
             except EOFError:
-                readline.write_history_file(history_file)
                 break
             except asyncio.CancelledError:
-                readline.write_history_file(history_file)
                 break
-
-        executor.shutdown(wait=False)
 
     async def _run_socket_server(self) -> None:
         """Run a Unix domain socket server for external client connections.

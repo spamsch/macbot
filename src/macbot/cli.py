@@ -218,14 +218,19 @@ async def interactive_loop(
         debug_context: Whether to print context debug info after each turn
     """
     from macbot.usage import UsageTracker
+    from macbot.utils.input import async_prompt, create_input_session
+
     usage_tracker = UsageTracker()
+    history_file = Path.home() / ".macbot" / "chat_history"
+    session = create_input_session(history_file)
 
     console.print("\n[dim]Type your message, or 'quit' to exit. Use 'clear' to reset conversation.[/dim]")
+    console.print("[dim]Alt+Enter for newline. Multi-line paste works automatically.[/dim]")
     console.print("[dim]Commands: 'stats' shows token usage, 'help' for more.[/dim]\n")
 
     while True:
         try:
-            # Build prompt with token stats and cost
+            # Build prompt with token stats and cost (ANSI escape codes)
             stats = agent.get_token_stats()
             ctx = _format_tokens(stats["context_tokens"])
             total = _format_tokens(stats["session_total_tokens"])
@@ -233,12 +238,12 @@ async def interactive_loop(
             if stats["session_total_tokens"] > 0:
                 cost_str = _format_cost(stats.get("session_cost") or None)
                 cost_part = f" {cost_str}" if cost_str else ""
-                prompt = f"[dim](ctx:{ctx} total:{total}{cost_part})[/dim] [bold blue]You:[/bold blue] "
+                prompt = f"\x1b[2m(ctx:{ctx} total:{total}{cost_part})\x1b[0m \x1b[1;34mYou:\x1b[0m "
             else:
-                prompt = "[bold blue]You:[/bold blue] "
+                prompt = "\x1b[1;34mYou:\x1b[0m "
 
-            # Get user input
-            user_input = console.input(prompt).strip()
+            # Get user input (readline-compatible, multi-line via Alt+Enter)
+            user_input = await async_prompt(session, prompt)
 
             if not user_input:
                 continue

@@ -6,6 +6,7 @@ Supports searching, uploading, downloading, and managing documents.
 API Documentation: https://docs.paperless-ngx.com/api/
 """
 
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -13,6 +14,8 @@ import httpx
 
 from macbot.config import settings
 from macbot.tasks.base import Task
+
+logger = logging.getLogger(__name__)
 
 
 def _get_headers() -> dict[str, str]:
@@ -28,19 +31,35 @@ def _get_base_url() -> str:
     return settings.paperless_url.rstrip("/")
 
 
-async def _resolve_tags(tags: list[int | str]) -> list[int]:
+def _normalize_list(value: Any) -> list[Any]:
+    """Ensure value is a list. Handles strings (comma-separated), single values, and lists."""
+    if isinstance(value, list):
+        return value
+    if isinstance(value, str):
+        # Split comma-separated strings: "Inbox,KV,Beleg" or "Inbox, KV, Beleg"
+        return [item.strip() for item in value.split(",") if item.strip()]
+    if value is not None:
+        return [value]
+    return []
+
+
+async def _resolve_tags(tags: list[int | str] | str) -> list[int]:
     """Resolve a mixed list of tag IDs (int) and tag names (str) to IDs.
 
+    Accepts a list, a single value, or a comma-separated string.
     Integers and numeric strings are kept as-is. Non-numeric strings are
     looked up via the Paperless API by name (case-insensitive).
 
     Returns:
         List of resolved integer tag IDs. Unknown names are silently skipped.
     """
+    logger.info("_resolve_tags called with: %r (type: %s)", tags, type(tags).__name__)
+    items = _normalize_list(tags)
+    logger.info("_resolve_tags normalized to: %r", items)
     resolved: list[int] = []
     names_to_resolve: list[str] = []
 
-    for tag in tags:
+    for tag in items:
         if isinstance(tag, int):
             resolved.append(tag)
         elif isinstance(tag, str) and tag.isdigit():
@@ -49,6 +68,7 @@ async def _resolve_tags(tags: list[int | str]) -> list[int]:
             names_to_resolve.append(tag)
 
     if names_to_resolve:
+        logger.info("_resolve_tags looking up names: %r", names_to_resolve)
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.get(
                 f"{_get_base_url()}/api/tags/",
@@ -59,22 +79,48 @@ async def _resolve_tags(tags: list[int | str]) -> list[int]:
             all_tags = response.json().get("results", [])
 
         name_map = {t["name"].lower(): t["id"] for t in all_tags}
+        logger.info("_resolve_tags available tags: %r", list(name_map.keys()))
         for name in names_to_resolve:
             tag_id = name_map.get(name.lower())
             if tag_id is not None:
                 resolved.append(tag_id)
+            else:
+                logger.warning("_resolve_tags: tag '%s' not found in Paperless", name)
 
     return resolved
 
 
-def _coerce_int(value: Any) -> int | None:
-    """Coerce a value to int, returning None if not possible."""
+async def _resolve_resource(
+    value: Any, endpoint: str
+) -> int | None:
+    """Resolve a resource by ID (int/numeric str) or name (str lookup).
+
+    Args:
+        value: Integer ID, numeric string, or resource name.
+        endpoint: API endpoint, e.g. '/api/correspondents/'.
+
+    Returns:
+        Integer ID, or None if unresolvable.
+    """
     if value is None:
         return None
     if isinstance(value, int):
         return value
     if isinstance(value, str) and value.isdigit():
         return int(value)
+    if isinstance(value, str):
+        # Look up by name
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.get(
+                f"{_get_base_url()}{endpoint}",
+                params={"page_size": 200},
+                headers=_get_headers(),
+            )
+            response.raise_for_status()
+            items = response.json().get("results", [])
+
+        name_map = {item["name"].lower(): item["id"] for item in items}
+        return name_map.get(value.lower())
     return None
 
 
@@ -121,11 +167,11 @@ class PaperlessSearchTask(Task):
                 "error": "Paperless-ngx not configured. Set MACBOT_PAPERLESS_URL and MACBOT_PAPERLESS_API_TOKEN in Settings or run 'son onboard'.",
             }
 
-        # Resolve tag names to IDs and coerce string IDs
+        # Resolve tag names to IDs, correspondent/doc-type names to IDs
         if tags:
             tags = await _resolve_tags(tags)  # type: ignore[assignment]
-        correspondent_id = _coerce_int(correspondent_id)
-        document_type_id = _coerce_int(document_type_id)
+        correspondent_id = await _resolve_resource(correspondent_id, "/api/correspondents/")
+        document_type_id = await _resolve_resource(document_type_id, "/api/document_types/")
 
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
@@ -327,12 +373,13 @@ class PaperlessUpdateDocumentTask(Task):
                 "error": "Paperless-ngx not configured. Set MACBOT_PAPERLESS_URL and MACBOT_PAPERLESS_API_TOKEN in Settings or run 'son onboard'.",
             }
 
-        # Resolve tag names to IDs and coerce string IDs to ints
-        document_id = _coerce_int(document_id) or document_id  # type: ignore[assignment]
+        # Resolve names to IDs and coerce string IDs to ints
+        doc_id = await _resolve_resource(document_id, "/api/documents/")
+        document_id = doc_id if doc_id is not None else document_id  # type: ignore[assignment]
         if tags is not None:
             tags = await _resolve_tags(tags)  # type: ignore[assignment]
-        correspondent = _coerce_int(correspondent)
-        document_type = _coerce_int(document_type)
+        correspondent = await _resolve_resource(correspondent, "/api/correspondents/")
+        document_type = await _resolve_resource(document_type, "/api/document_types/")
 
         # Parse custom_fields if passed as JSON string
         if isinstance(custom_fields, str):
@@ -359,6 +406,8 @@ class PaperlessUpdateDocumentTask(Task):
         if not patch_data:
             return {"success": False, "error": "No fields to update."}
 
+        logger.info("paperless_update_document(%s) patch_data: %r", document_id, patch_data)
+
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.patch(
@@ -369,8 +418,9 @@ class PaperlessUpdateDocumentTask(Task):
                 response.raise_for_status()
                 doc = response.json()
 
-                return {
+                result = {
                     "success": True,
+                    "_sent": patch_data,
                     "document": {
                         "id": doc.get("id"),
                         "title": doc.get("title"),
@@ -384,6 +434,8 @@ class PaperlessUpdateDocumentTask(Task):
                         "custom_fields": doc.get("custom_fields", []),
                     },
                 }
+                logger.info("paperless_update_document(%s) response tags: %r", document_id, doc.get("tags"))
+                return result
 
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 404:
