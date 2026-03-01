@@ -66,6 +66,11 @@ class ReadFileTask(Task):
         if path.lower().endswith(".pdf"):
             return self._read_pdf(path, max_chars, max_pages, start_page)
 
+        if path.lower().endswith((".xlsx", ".xls")):
+            raise ValueError(
+                "Excel files cannot be read as text. Use the read_excel tool instead."
+            )
+
         with open(path) as f:
             content = f.read(max_chars)
         return content
