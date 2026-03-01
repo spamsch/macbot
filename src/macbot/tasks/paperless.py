@@ -32,11 +32,21 @@ def _get_base_url() -> str:
 
 
 def _normalize_list(value: Any) -> list[Any]:
-    """Ensure value is a list. Handles strings (comma-separated), single values, and lists."""
+    """Ensure value is a list. Handles JSON arrays, comma-separated strings, single values, and lists."""
     if isinstance(value, list):
         return value
     if isinstance(value, str):
-        # Split comma-separated strings: "Inbox,KV,Beleg" or "Inbox, KV, Beleg"
+        # Try JSON first: '["Inbox","KV"]' or '[1,2,3]'
+        stripped = value.strip()
+        if stripped.startswith("["):
+            import json
+            try:
+                parsed = json.loads(stripped)
+                if isinstance(parsed, list):
+                    return parsed
+            except (json.JSONDecodeError, ValueError):
+                pass
+        # Fall back to comma-separated: "Inbox,KV,Beleg" or "Inbox, KV, Beleg"
         return [item.strip() for item in value.split(",") if item.strip()]
     if value is not None:
         return [value]
@@ -106,9 +116,11 @@ async def _resolve_resource(
         return None
     if isinstance(value, int):
         return value
-    if isinstance(value, str) and value.isdigit():
-        return int(value)
     if isinstance(value, str):
+        # Strip surrounding quotes from JSON serialization: '"EDEKA"' → 'EDEKA'
+        value = value.strip().strip('"').strip("'")
+        if value.isdigit():
+            return int(value)
         # Look up by name
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.get(
