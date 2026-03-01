@@ -6,6 +6,7 @@ Supports searching, uploading, downloading, and managing documents.
 API Documentation: https://docs.paperless-ngx.com/api/
 """
 
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -13,6 +14,8 @@ import httpx
 
 from macbot.config import settings
 from macbot.tasks.base import Task
+
+logger = logging.getLogger(__name__)
 
 
 def _get_headers() -> dict[str, str]:
@@ -50,7 +53,9 @@ async def _resolve_tags(tags: list[int | str] | str) -> list[int]:
     Returns:
         List of resolved integer tag IDs. Unknown names are silently skipped.
     """
+    logger.info("_resolve_tags called with: %r (type: %s)", tags, type(tags).__name__)
     items = _normalize_list(tags)
+    logger.info("_resolve_tags normalized to: %r", items)
     resolved: list[int] = []
     names_to_resolve: list[str] = []
 
@@ -63,6 +68,7 @@ async def _resolve_tags(tags: list[int | str] | str) -> list[int]:
             names_to_resolve.append(tag)
 
     if names_to_resolve:
+        logger.info("_resolve_tags looking up names: %r", names_to_resolve)
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.get(
                 f"{_get_base_url()}/api/tags/",
@@ -73,10 +79,13 @@ async def _resolve_tags(tags: list[int | str] | str) -> list[int]:
             all_tags = response.json().get("results", [])
 
         name_map = {t["name"].lower(): t["id"] for t in all_tags}
+        logger.info("_resolve_tags available tags: %r", list(name_map.keys()))
         for name in names_to_resolve:
             tag_id = name_map.get(name.lower())
             if tag_id is not None:
                 resolved.append(tag_id)
+            else:
+                logger.warning("_resolve_tags: tag '%s' not found in Paperless", name)
 
     return resolved
 
@@ -397,6 +406,8 @@ class PaperlessUpdateDocumentTask(Task):
         if not patch_data:
             return {"success": False, "error": "No fields to update."}
 
+        logger.info("paperless_update_document(%s) patch_data: %r", document_id, patch_data)
+
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.patch(
@@ -407,8 +418,9 @@ class PaperlessUpdateDocumentTask(Task):
                 response.raise_for_status()
                 doc = response.json()
 
-                return {
+                result = {
                     "success": True,
+                    "_sent": patch_data,
                     "document": {
                         "id": doc.get("id"),
                         "title": doc.get("title"),
@@ -422,6 +434,8 @@ class PaperlessUpdateDocumentTask(Task):
                         "custom_fields": doc.get("custom_fields", []),
                     },
                 }
+                logger.info("paperless_update_document(%s) response tags: %r", document_id, doc.get("tags"))
+                return result
 
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 404:
