@@ -1014,6 +1014,8 @@ class MacbotService:
             await asyncio.gather(*self._tasks)
         except asyncio.CancelledError:
             pass
+        except KeyboardInterrupt:
+            await self.stop()
 
     async def stop(self) -> None:
         """Stop all services gracefully."""
@@ -1191,13 +1193,6 @@ def run_service(daemon: bool = False, verbose: bool = False, foreground: bool = 
                 asyncio.run(service.start(interactive=True))
             except KeyboardInterrupt:
                 console.print("\n[dim]Stopping...[/dim]")
-                asyncio.run(service.stop())
-                # Close stdin to unblock any thread still waiting on console.input()
-                import sys
-                try:
-                    sys.stdin.close()
-                except Exception:
-                    pass
             console.print("[dim]Service stopped.[/dim]")
 
 

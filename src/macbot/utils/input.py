@@ -43,9 +43,7 @@ def create_input_session(history_file: Path | None = None) -> PromptSession:
         event.current_buffer.newline()
 
     kwargs: dict = dict(
-        multiline=True,
         key_bindings=kb,
-        prompt_continuation="  ... ",
     )
     if history_file is not None:
         history_file.parent.mkdir(parents=True, exist_ok=True)
