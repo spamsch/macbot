@@ -38,6 +38,7 @@ dependencies = [
     "python-telegram-bot>=21.0",
     "msal>=1.28.0",
     "pymupdf>=1.24.0",
+    "prompt_toolkit>=3.0.0",
 ]
 
 [project.optional-dependencies]
