@@ -40,6 +40,7 @@ from macbot.tasks import (
     browser_automation,
     calculator,
     cron_tasks,
+    excel,
     fetch_url,
     file_read,
     file_write,
@@ -67,6 +68,7 @@ __all__ = [
     "browser_automation",
     "calculator",
     "cron_tasks",
+    "excel",
     "fetch_url",
     "file_read",
     "file_write",
@@ -117,6 +119,10 @@ def create_default_registry(config: "Settings | None" = None) -> TaskRegistry:
 
     from macbot.tasks.pdf_create import CreatePDFTask
     registry.register(CreatePDFTask())
+
+    from macbot.tasks.excel import ReadExcelTask, WriteExcelTask
+    registry.register(ReadExcelTask())
+    registry.register(WriteExcelTask())
 
     registry.register(CalculatorTask())
     registry.register(GetCurrentTimeTask())
