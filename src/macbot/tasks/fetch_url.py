@@ -46,7 +46,12 @@ class FetchURLTask(Task):
             - headers: Response headers as dict
             - body: Response body (limited to 5000 chars)
         """
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(
+            headers={
+                "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
+            },
+            follow_redirects=True,
+        ) as client:
             response = await client.request(method, url)
             return {
                 "status_code": response.status_code,
