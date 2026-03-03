@@ -9,9 +9,11 @@ tasks:
   - paperless_upload
   - paperless_download
   - paperless_list
+  - paperless_manage_metadata
 essential_tasks:
   - paperless_search
   - paperless_list
+  - paperless_manage_metadata
 examples:
   - "Search Paperless for invoices from 2024"
   - "Upload this PDF to Paperless"

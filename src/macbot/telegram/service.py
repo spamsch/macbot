@@ -30,6 +30,94 @@ _STALE_THRESHOLD_SECS = 45.0
 PID_FILE = Path.home() / ".macbot" / "telegram.pid"
 
 
+def _sanitize_telegram_markdown(text: str) -> str:
+    """Fix unmatched Markdown markers that break Telegram's legacy parser.
+
+    Telegram's ``Markdown`` parse mode rejects messages when ``*``, ``_``,
+    or backtick markers are not properly paired.  This function closes or
+    removes unmatched markers so the message is accepted without falling
+    back to plain text (which loses *all* formatting).
+
+    The parser processes entities in order: triple-backtick code blocks
+    first, then inline backtick code spans, then ``*``/``_`` formatting.
+    Characters inside any code region are *not* considered as formatting
+    markers, so we must mirror that layering here.
+    """
+    # 1. Ensure triple-backtick code blocks are closed.
+    if text.count("```") % 2 != 0:
+        text += "\n```"
+
+    # 2. Split into code-block / non-code-block segments.
+    #    Even indices = outside code blocks, odd = inside (leave alone).
+    cb_parts = text.split("```")
+
+    for i in range(0, len(cb_parts), 2):
+        seg = cb_parts[i]
+
+        # 3. Fix unmatched inline backticks first.
+        if seg.count("`") % 2 != 0:
+            pos = seg.rfind("`")
+            seg = seg[:pos] + seg[pos + 1 :]
+
+        # 4. Split on inline code spans (``).  After step 3 the backtick
+        #    count is even, so ic_parts has an odd number of elements.
+        #    Even indices = outside inline code, odd = inside.
+        ic_parts = seg.split("`")
+
+        # Count * and _ only in non-inline-code parts (what Telegram sees).
+        star_count = sum(
+            p.count("*") for j, p in enumerate(ic_parts) if j % 2 == 0
+        )
+        under_count = sum(
+            p.count("_") for j, p in enumerate(ic_parts) if j % 2 == 0
+        )
+
+        # Remove the *last* unmatched marker from a non-code part.
+        if star_count % 2 != 0:
+            for j in range(len(ic_parts) - 1, -1, -2):
+                idx = ic_parts[j].rfind("*")
+                if idx != -1:
+                    ic_parts[j] = (
+                        ic_parts[j][:idx] + ic_parts[j][idx + 1 :]
+                    )
+                    break
+
+        if under_count % 2 != 0:
+            for j in range(len(ic_parts) - 1, -1, -2):
+                idx = ic_parts[j].rfind("_")
+                if idx != -1:
+                    ic_parts[j] = (
+                        ic_parts[j][:idx] + ic_parts[j][idx + 1 :]
+                    )
+                    break
+
+        # 5. Fix orphan [ (not part of a valid [text](url) link) in
+        #    non-code parts only.
+        for j in range(0, len(ic_parts), 2):
+            p = ic_parts[j]
+            cleaned: list[str] = []
+            k = 0
+            while k < len(p):
+                if p[k] == "[":
+                    close = p.find("](", k + 1)
+                    if close != -1:
+                        end = p.find(")", close + 2)
+                        if end != -1:
+                            cleaned.append(p[k : end + 1])
+                            k = end + 1
+                            continue
+                    # Orphan '[' — drop it
+                    k += 1
+                else:
+                    cleaned.append(p[k])
+                    k += 1
+            ic_parts[j] = "".join(cleaned)
+
+        cb_parts[i] = "`".join(ic_parts)
+
+    return "```".join(cb_parts)
+
+
 class TelegramService:
     """Telegram integration service for macbot.
 
@@ -90,6 +178,9 @@ class TelegramService:
         Returns:
             True if message was sent successfully
         """
+        if parse_mode and parse_mode.lower() == "markdown":
+            text = _sanitize_telegram_markdown(text)
+
         target_chat = chat_id or self.default_chat_id
         if not target_chat:
             logger.error("No chat_id provided and no default configured")
@@ -254,7 +345,11 @@ class TelegramService:
                     "Keep the key information and outcome but make it short and "
                     "scannable — ideally 2-4 sentences, max ~400 characters. "
                     "Use a casual, direct tone. Preserve any important names, "
-                    "dates, numbers, or action items. Do not add commentary."
+                    "dates, numbers, or action items. Do not add commentary. "
+                    "IMPORTANT formatting rules: use *bold* (asterisks) not "
+                    "_italic_ (underscores) for emphasis. Never use underscores "
+                    "for formatting. Keep `code` backticks paired. Do not use "
+                    "markdown links [text](url) — just write the URL directly."
                 ),
             )
             return response.content or text[:500]

@@ -79,14 +79,21 @@ async def _resolve_tags(tags: list[int | str] | str) -> list[int]:
 
     if names_to_resolve:
         logger.info("_resolve_tags looking up names: %r", names_to_resolve)
+        all_tags: list[dict[str, Any]] = []
+        page = 1
         async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.get(
-                f"{_get_base_url()}/api/tags/",
-                params={"page_size": 200},
-                headers=_get_headers(),
-            )
-            response.raise_for_status()
-            all_tags = response.json().get("results", [])
+            while True:
+                response = await client.get(
+                    f"{_get_base_url()}/api/tags/",
+                    params={"page": page, "page_size": 100},
+                    headers=_get_headers(),
+                )
+                response.raise_for_status()
+                data = response.json()
+                all_tags.extend(data.get("results", []))
+                if not data.get("next"):
+                    break
+                page += 1
 
         name_map = {t["name"].lower(): t["id"] for t in all_tags}
         logger.info("_resolve_tags available tags: %r", list(name_map.keys()))
@@ -121,15 +128,22 @@ async def _resolve_resource(
         value = value.strip().strip('"').strip("'")
         if value.isdigit():
             return int(value)
-        # Look up by name
+        # Look up by name — paginate to fetch all results
+        items: list[dict[str, Any]] = []
+        page = 1
         async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.get(
-                f"{_get_base_url()}{endpoint}",
-                params={"page_size": 200},
-                headers=_get_headers(),
-            )
-            response.raise_for_status()
-            items = response.json().get("results", [])
+            while True:
+                response = await client.get(
+                    f"{_get_base_url()}{endpoint}",
+                    params={"page": page, "page_size": 100},
+                    headers=_get_headers(),
+                )
+                response.raise_for_status()
+                data = response.json()
+                items.extend(data.get("results", []))
+                if not data.get("next"):
+                    break
+                page += 1
 
         name_map = {item["name"].lower(): item["id"] for item in items}
         return name_map.get(value.lower())
@@ -719,22 +733,31 @@ class PaperlessListTask(Task):
             }
 
         try:
+            all_results: list[dict[str, Any]] = []
+            total_count = 0
+            page = 1
             async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.get(
-                    f"{_get_base_url()}{config['endpoint']}",
-                    params={"page_size": 100},
-                    headers=_get_headers(),
-                )
-                response.raise_for_status()
-                data = response.json()
+                while True:
+                    response = await client.get(
+                        f"{_get_base_url()}{config['endpoint']}",
+                        params={"page": page, "page_size": 100},
+                        headers=_get_headers(),
+                    )
+                    response.raise_for_status()
+                    data = response.json()
+                    total_count = data.get("count", 0)
+                    all_results.extend(data.get("results", []))
+                    if not data.get("next"):
+                        break
+                    page += 1
 
                 items = []
-                for item in data.get("results", []):
+                for item in all_results:
                     items.append({f: item.get(f) for f in config["fields"]})
 
                 return {
                     "success": True,
-                    "count": data.get("count", 0),
+                    "count": total_count,
                     resource_type: items,
                 }
 
