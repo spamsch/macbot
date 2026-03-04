@@ -153,7 +153,7 @@ class ScheduleTaskTask(Task):
             assert interval_minutes is not None
             schedule = CronSchedule(
                 kind=ScheduleKind.EVERY,
-                every_ms=interval_minutes * 60_000,
+                every_ms=int(interval_minutes) * 60_000,
             )
 
         service = get_cron_service()
