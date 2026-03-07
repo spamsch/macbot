@@ -205,6 +205,84 @@ class TelegramService:
             logger.error(f"Failed to send message: {e}")
             return False
 
+    async def send_and_track(
+        self,
+        text: str,
+        chat_id: str | None = None,
+        parse_mode: str | None = "Markdown",
+    ) -> int | None:
+        """Send a message and return its message_id for later editing.
+
+        Args:
+            text: Message text to send
+            chat_id: Target chat ID (uses default if not provided)
+            parse_mode: Message parsing mode
+
+        Returns:
+            The message_id if sent successfully, None otherwise
+        """
+        if parse_mode and parse_mode.lower() == "markdown":
+            text = _sanitize_telegram_markdown(text)
+
+        target_chat = chat_id or self.default_chat_id
+        if not target_chat:
+            return None
+
+        try:
+            msg = await self.bot._bot.send_message(
+                chat_id=target_chat, text=text, parse_mode=parse_mode,
+            )
+            return msg.message_id
+        except TelegramError as e:
+            if parse_mode is not None:
+                try:
+                    msg = await self.bot._bot.send_message(
+                        chat_id=target_chat, text=text, parse_mode=None,
+                    )
+                    return msg.message_id
+                except TelegramError:
+                    pass
+            logger.error(f"Failed to send message: {e}")
+            return None
+
+    async def edit_message(
+        self,
+        chat_id: str | None,
+        message_id: int,
+        text: str,
+        parse_mode: str | None = "Markdown",
+    ) -> bool:
+        """Edit an existing message (no notification triggered).
+
+        Args:
+            chat_id: Telegram chat ID
+            message_id: ID of the message to edit
+            text: New message text
+            parse_mode: Message parsing mode
+
+        Returns:
+            True if edited successfully
+        """
+        if parse_mode and parse_mode.lower() == "markdown":
+            text = _sanitize_telegram_markdown(text)
+
+        target_chat = chat_id or self.default_chat_id
+        if not target_chat:
+            return False
+
+        try:
+            return await self.bot.edit_message(target_chat, message_id, text, parse_mode)
+        except TelegramError as e:
+            if parse_mode is not None:
+                try:
+                    return await self.bot.edit_message(
+                        target_chat, message_id, text, parse_mode=None
+                    )
+                except TelegramError:
+                    pass
+            logger.error(f"Failed to edit message: {e}")
+            return False
+
     def _is_user_allowed(self, user_id: int) -> bool:
         """Check if a user is allowed to interact with the bot.
 

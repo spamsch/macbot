@@ -402,8 +402,10 @@ class MacbotService:
                     self._emit({"type": "telegram_message", "text": reply, "chat_id": chat_id, "direction": "outgoing"})
                 return reply
 
-            # Send acknowledgment
-            await self.telegram_service.send_message("⏳ Working on it...", chat_id, parse_mode=None)
+            # Send acknowledgment and track its message_id for in-place edits
+            progress_msg_id = await self.telegram_service.send_and_track(
+                "Working on it...", chat_id, parse_mode=None,
+            )
 
             try:
                 # Build a combined emit that forwards to both GUI and Telegram progress
@@ -413,26 +415,33 @@ class MacbotService:
                     # Forward to GUI with channel tag
                     if self._emit:
                         self._emit({**obj, "channel": f"telegram:{chat_id}"})
-                    # Track tool calls for Telegram progress
-                    if obj.get("type") == "tool_call":
+                    # Track tool calls and update progress in-place (no new notifications)
+                    if obj.get("type") == "tool_call" and progress_msg_id is not None:
                         tools_called.append(obj.get("name", "?"))
                         count = len(tools_called)
                         name = obj.get("name", "?")
+                        # Build progress text showing current step
                         if count == 1:
-                            asyncio.get_event_loop().create_task(
-                                self.telegram_service.send_message(
-                                    f"🔧 `{name}`...", chat_id, parse_mode="Markdown"
-                                )
+                            progress = f"Working on it... `{name}`"
+                        else:
+                            progress = f"Working on it... `{name}` (step {count})"
+                        asyncio.get_event_loop().create_task(
+                            self.telegram_service.edit_message(
+                                chat_id, progress_msg_id, progress, parse_mode="Markdown"
                             )
-                        elif count % 3 == 0:
-                            asyncio.get_event_loop().create_task(
-                                self.telegram_service.send_message(
-                                    f"🔧 `{name}` ({count} steps)...", chat_id, parse_mode="Markdown"
-                                )
-                            )
+                        )
 
                 queue = self._get_agent_queue(chat_id)
                 result = await queue.submit(content, emit=_combined_emit)
+
+                # Delete the progress message now that we have the real response
+                if progress_msg_id is not None:
+                    try:
+                        await self.telegram_service.bot._bot.delete_message(
+                            chat_id=chat_id, message_id=progress_msg_id,
+                        )
+                    except Exception:
+                        pass  # best-effort cleanup
 
                 # Emit outgoing response to GUI
                 if self._emit:
