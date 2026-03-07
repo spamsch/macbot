@@ -90,7 +90,7 @@ class SpotlightWatcher:
 
     async def _rebuild_in_thread(self) -> None:
         """Run the rebuild in a thread pool to avoid blocking the event loop."""
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         t0 = time.time()
         try:
             count = await loop.run_in_executor(None, self._do_rebuild)
