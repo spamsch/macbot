@@ -333,7 +333,11 @@ class MoveEmailTask(Task):
             args.extend(["--mailbox", mailbox])
         args.extend(["--limit", str(limit)])
 
-        return await run_script("mail/move-email.sh", args, timeout=60)
+        result = await run_script("mail/move-email.sh", args, timeout=60)
+        if result.get("success") and "No matching messages found" in result.get("output", ""):
+            result["success"] = False
+            result["error"] = result["output"]
+        return result
 
 
 class DownloadAttachmentsTask(Task):

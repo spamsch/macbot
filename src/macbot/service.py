@@ -794,7 +794,9 @@ class MacbotService:
 
                 if user_input.lower() == "stats":
                     stats = agent.get_token_stats()
+                    monthly = queue._usage_tracker.get_monthly_summary()
                     cost_str = self._format_cost(stats.get("session_cost"))
+                    monthly_cost_str = self._format_cost(monthly.get("cost") or None)
                     console.print(f"\n[bold]Token Statistics[/bold]")
                     console.print(f"  Context size:    {stats['context_tokens']:,} tokens")
                     console.print(f"  Messages:        {stats['message_count']}")
@@ -803,6 +805,13 @@ class MacbotService:
                     console.print(f"  Session total:   {stats['session_total_tokens']:,} tokens")
                     if cost_str:
                         console.print(f"  Session cost:    {cost_str}")
+                    if monthly.get("interactions"):
+                        console.print()
+                        console.print(f"[bold]Monthly ({datetime.now().strftime('%Y-%m')})[/bold]")
+                        console.print(f"  Interactions:    {monthly['interactions']:,}")
+                        console.print(f"  Total tokens:    {monthly['input_tokens'] + monthly['output_tokens']:,}")
+                        if monthly_cost_str:
+                            console.print(f"  Total cost:      {monthly_cost_str}")
                     console.print()
                     continue
 

@@ -135,8 +135,38 @@ tell application "Mail"
             end try
         end repeat
     else
-        -- Search unified inbox
+        -- Search inbox first, then archive, then all mailboxes (message-id is unique)
         set foundMsgs to (messages of inbox whose message id is targetId)
+        if (count of foundMsgs) is 0 then
+            -- Try Archive / All Mail across accounts
+            repeat with acct in accounts
+                repeat with archiveName in {"Archive", "All Mail"}
+                    try
+                        set acctMsgs to (messages of mailbox archiveName of acct whose message id is targetId)
+                        if (count of acctMsgs) > 0 then
+                            set foundMsgs to acctMsgs
+                            exit repeat
+                        end if
+                    end try
+                end repeat
+                if (count of foundMsgs) > 0 then exit repeat
+            end repeat
+        end if
+        if (count of foundMsgs) is 0 then
+            -- Fall back to searching all mailboxes
+            repeat with acct in accounts
+                repeat with mb in mailboxes of acct
+                    try
+                        set acctMsgs to (messages of mb whose message id is targetId)
+                        if (count of acctMsgs) > 0 then
+                            set foundMsgs to acctMsgs
+                            exit repeat
+                        end if
+                    end try
+                end repeat
+                if (count of foundMsgs) > 0 then exit repeat
+            end repeat
+        end if
     end if
 
     if (count of foundMsgs) is 0 then
