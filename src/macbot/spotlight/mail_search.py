@@ -247,7 +247,10 @@ def _fetch_content_via_applescript(
     Uses subject + account to find the message via whose clause (fast).
     """
     import subprocess
-    escaped_subject = subject.replace('\\', '\\\\').replace('"', '\\"')
+    # Sanitize subject to avoid breaking out of AppleScript string literals.
+    # Replace newlines and other control characters with spaces before escaping.
+    sanitized_subject = re.sub(r'[\r\n\x00-\x1F\x7F]', ' ', subject)
+    escaped_subject = sanitized_subject.replace('\\', '\\\\').replace('"', '\\"')
 
     if account_id:
         script = f'''
