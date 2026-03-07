@@ -223,7 +223,10 @@ class SearchEmailsTask(Task):
                 try:
                     msg_id_int = int(message_id)
                 except ValueError:
-                    pass
+                    return {
+                        "success": False,
+                        "error": f"Spotlight search only supports numeric message_id values; got {message_id!r}",
+                    }
 
             def _search() -> tuple[bool, list[dict[str, Any]]]:
                 index = MailSearchIndex()
