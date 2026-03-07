@@ -62,13 +62,18 @@ def _derive_emlx_path(
     mailboxes: str | None,
     msg_id: int | None,
     attachment_paths: str | None,
+    date_received: str | None = None,
+    subject: str | None = None,
 ) -> str | None:
-    """Try to derive the .emlx file path from spotlight metadata."""
+    """Try to derive the .emlx file path from spotlight metadata.
+
+    The Spotlight mail_message_id is the Envelope Index ROWID, but for
+    multi-account setups the same email may have different ROWIDs in
+    different accounts/mailboxes. We first try a direct ROWID lookup,
+    then fall back to querying the Envelope Index by date+subject+account
+    to find the correct ROWID for the on-disk .emlx file.
+    """
     if attachment_paths:
-        # Attachment path pattern:
-        # ~/Library/Mail/V10/<account>/Archive.mbox/<uuid>/Data/Attachments/<msgid>/...
-        # Message lives at:
-        # ~/Library/Mail/V10/<account>/Archive.mbox/<uuid>/Data/Messages/<msgid>.emlx
         match = re.search(r'(.+?/Data/)Attachments/', attachment_paths)
         if match and msg_id is not None:
             base = match.group(1)
@@ -77,15 +82,93 @@ def _derive_emlx_path(
                 if os.path.exists(path):
                     return path
 
-    if account_id and msg_id is not None:
-        # Try to find it by walking known mail dirs
-        # Messages can be in Data/Messages/ or Data/<n>/<n>/Messages/
+    mail_base = None
+    if account_id:
         mail_base = Path.home() / "Library" / "Mail" / "V10" / account_id
-        if mail_base.exists():
-            for suffix in [f"{msg_id}.emlx", f"{msg_id}.partial.emlx"]:
+
+    # Direct lookup by Spotlight msg_id (= Envelope Index ROWID)
+    if mail_base and mail_base.exists() and msg_id is not None:
+        for suffix in [f"{msg_id}.emlx", f"{msg_id}.partial.emlx"]:
+            for mbox in mail_base.rglob(suffix):
+                return str(mbox)
+
+    # Fallback: query Envelope Index for the correct ROWID in this account.
+    # Spotlight may have indexed a copy from a different account, so the
+    # msg_id doesn't match the .emlx filename in this account's directory.
+    if mail_base and mail_base.exists() and date_received:
+        rowids = _find_rowids_from_envelope_index(account_id, date_received, subject)
+        for rowid in rowids:
+            for suffix in [f"{rowid}.emlx", f"{rowid}.partial.emlx"]:
                 for mbox in mail_base.rglob(suffix):
                     return str(mbox)
+
     return None
+
+
+def _find_rowids_from_envelope_index(
+    account_id: str | None, date_received: str, subject: str | None = None,
+) -> list[int]:
+    """Query the Envelope Index for ROWIDs matching an account + date.
+
+    The Envelope Index uses a separate subjects table with integer IDs.
+    We match by date window and then optionally filter by subject text.
+    """
+    envelope_idx = Path.home() / "Library" / "Mail" / "V10" / "MailData" / "Envelope Index"
+    if not envelope_idx.exists():
+        return []
+    try:
+        dt = datetime.datetime.fromisoformat(date_received)
+        # Envelope Index stores date_sent as Unix epoch.
+        # Spotlight date_received can differ from Envelope date_sent by up to
+        # ~2 hours due to timezone handling and send/receive delay.
+        epoch = int(dt.timestamp())
+        conn = sqlite3.connect(f"file:{envelope_idx}?mode=ro&immutable=1", uri=True)
+
+        # If we have a subject, find the subject ID first for precise matching
+        subject_ids: list[int] = []
+        if subject:
+            # subjects table: ROWID, subject, normalized_subject
+            clean_subject = subject.removeprefix("Re: ").removeprefix("Fwd: ").removeprefix("AW: ").removeprefix("WG: ")
+            srows = conn.execute(
+                "SELECT ROWID FROM subjects WHERE subject LIKE ?",
+                (f"%{clean_subject}%",),
+            ).fetchall()
+            subject_ids = [r[0] for r in srows]
+
+        if account_id:
+            rows = conn.execute(
+                "SELECT ROWID FROM mailboxes WHERE url LIKE ?",
+                (f"%{account_id}%",),
+            ).fetchall()
+            mbox_ids = [r[0] for r in rows]
+            if not mbox_ids:
+                conn.close()
+                return []
+            placeholders = ','.join('?' * len(mbox_ids))
+            if subject_ids:
+                subj_placeholders = ','.join('?' * len(subject_ids))
+                results = conn.execute(
+                    f"SELECT ROWID FROM messages WHERE mailbox IN ({placeholders}) "
+                    f"AND subject IN ({subj_placeholders}) "
+                    "AND date_sent BETWEEN ? AND ? ORDER BY ROWID DESC",
+                    [*mbox_ids, *subject_ids, epoch - 7200, epoch + 7200],
+                ).fetchall()
+            else:
+                results = conn.execute(
+                    f"SELECT ROWID FROM messages WHERE mailbox IN ({placeholders}) "
+                    "AND date_sent BETWEEN ? AND ? ORDER BY ROWID DESC",
+                    [*mbox_ids, epoch - 7200, epoch + 7200],
+                ).fetchall()
+        else:
+            results = conn.execute(
+                "SELECT ROWID FROM messages WHERE date_sent BETWEEN ? AND ? ORDER BY ROWID DESC",
+                (epoch - 7200, epoch + 7200),
+            ).fetchall()
+        conn.close()
+        return [r[0] for r in results]
+    except Exception:
+        log.debug("Envelope Index lookup failed", exc_info=True)
+        return []
 
 
 def _extract_rfc_message_id(emlx_path: str) -> str | None:
@@ -102,6 +185,103 @@ def _extract_rfc_message_id(emlx_path: str) -> str | None:
                     return mid
     except OSError:
         pass
+    return None
+
+
+def _extract_emlx_body(emlx_path: str, with_links: bool = False) -> str | None:
+    """Extract plain-text body from an .emlx file."""
+    try:
+        with open(emlx_path, 'rb') as f:
+            # First line is the byte count of the RFC822 message
+            size_line = f.readline()
+            try:
+                msg_size = int(size_line.strip())
+            except ValueError:
+                return None
+            raw = f.read(msg_size)
+
+        import email
+        import email.policy
+        msg = email.message_from_bytes(raw, policy=email.policy.default)
+
+        # Extract plain text body
+        body = msg.get_body(preferencelist=('plain',))
+        if body:
+            text = body.get_content()
+            if with_links:
+                # Also extract links from HTML part
+                html_body = msg.get_body(preferencelist=('html',))
+                if html_body:
+                    html = html_body.get_content()
+                    links = re.findall(r'href=["\']([^"\']+)["\']', html)
+                    if links:
+                        text += "\n\n--- Links ---\n" + "\n".join(links)
+            return text
+
+        # Fall back to HTML → strip tags
+        html_body = msg.get_body(preferencelist=('html',))
+        if html_body:
+            html = html_body.get_content()
+            links = []
+            if with_links:
+                links = re.findall(r'href=["\']([^"\']+)["\']', html)
+            # Simple tag stripping
+            text = re.sub(r'<style[^>]*>.*?</style>', '', html, flags=re.DOTALL)
+            text = re.sub(r'<[^>]+>', ' ', text)
+            text = re.sub(r'\s+', ' ', text).strip()
+            if with_links and links:
+                text += "\n\n--- Links ---\n" + "\n".join(links)
+            return text
+
+    except Exception:
+        log.debug("Failed to extract body from %s", emlx_path, exc_info=True)
+    return None
+
+
+def _fetch_content_via_applescript(
+    subject: str,
+    account_id: str | None = None,
+) -> str | None:
+    """Fetch email content via AppleScript when .emlx is not available on disk.
+
+    Uses subject + account to find the message via whose clause (fast).
+    """
+    import subprocess
+    escaped_subject = subject.replace('\\', '\\\\').replace('"', '\\"')
+
+    if account_id:
+        script = f'''
+            tell application "Mail"
+                repeat with mb in mailboxes of account id "{account_id}"
+                    set msgs to (messages of mb whose subject is "{escaped_subject}")
+                    if (count of msgs) > 0 then
+                        return content of item 1 of msgs
+                    end if
+                end repeat
+            end tell
+        '''
+    else:
+        script = f'''
+            tell application "Mail"
+                repeat with acct in every account
+                    repeat with mb in mailboxes of acct
+                        set msgs to (messages of mb whose subject is "{escaped_subject}")
+                        if (count of msgs) > 0 then
+                            return content of item 1 of msgs
+                        end if
+                    end repeat
+                end repeat
+            end tell
+        '''
+    try:
+        result = subprocess.run(
+            ['osascript', '-e', script],
+            capture_output=True, text=True, timeout=30,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return result.stdout.strip()
+    except Exception:
+        log.debug("AppleScript content fetch failed for '%s'", subject, exc_info=True)
     return None
 
 
@@ -379,6 +559,7 @@ class MailSearchIndex:
         self,
         query: str | None = None,
         sender: str | None = None,
+        recipient: str | None = None,
         subject: str | None = None,
         message_id: int | None = None,
         account: str | None = None,
@@ -390,12 +571,15 @@ class MailSearchIndex:
         has_attachments: bool = False,
         limit: int = 20,
         resolve_urls: bool = False,
+        with_content: bool = False,
+        with_links: bool = False,
     ) -> list[dict[str, Any]]:
         """Search the mail index.
 
         Args:
             query: Full-text search across subject, sender, snippet.
             sender: Filter by sender email (substring match).
+            recipient: Filter by recipient email/name (searches To and CC).
             subject: Filter by subject (substring match).
             message_id: Lookup by Mail.app internal message ID.
             account: Filter by account email.
@@ -407,6 +591,8 @@ class MailSearchIndex:
             has_attachments: Only messages with attachments.
             limit: Max results.
             resolve_urls: Resolve message:// URLs (slower, reads .emlx files).
+            with_content: Include full email body from .emlx file.
+            with_links: Also extract hyperlinks from HTML email (requires with_content).
         """
         conn = self._get_conn()
         conditions: list[str] = []
@@ -426,6 +612,10 @@ class MailSearchIndex:
         if sender:
             conditions.append("(sender LIKE ? OR sender_name LIKE ?)")
             params.extend([f"%{sender}%", f"%{sender}%"])
+
+        if recipient:
+            conditions.append("(recipients LIKE ? OR cc_recipients LIKE ?)")
+            params.extend([f"%{recipient}%", f"%{recipient}%"])
 
         if subject:
             conditions.append("subject LIKE ?")
@@ -468,8 +658,30 @@ class MailSearchIndex:
         results = []
         for row in rows:
             d = dict(row)
-            if resolve_urls and not d.get('message_url'):
+            if (resolve_urls or with_content) and not d.get('message_url'):
                 self._resolve_message_url(d)
+            # Extract full content from .emlx before popping internal fields
+            if with_content:
+                body = None
+                emlx = d.get('emlx_path')
+                if not emlx:
+                    emlx = _derive_emlx_path(
+                        d.get('account_id'),
+                        d.get('mailboxes'),
+                        d.get('mail_message_id'),
+                        d.get('attachment_paths'),
+                        d.get('date_received'),
+                        d.get('subject'),
+                    )
+                if emlx:
+                    body = _extract_emlx_body(emlx, with_links=with_links)
+                # Fallback: AppleScript for messages without local .emlx
+                if not body and d.get('subject'):
+                    body = _fetch_content_via_applescript(
+                        d['subject'], d.get('account_id'),
+                    )
+                if body:
+                    d['content'] = body
             # Clean up internal fields for output
             d.pop('spotlight_id', None)
             d.pop('content_length', None)
@@ -489,6 +701,8 @@ class MailSearchIndex:
                 row.get('mailboxes'),
                 row.get('mail_message_id'),
                 row.get('attachment_paths'),
+                row.get('date_received'),
+                row.get('subject'),
             )
             if emlx_path:
                 row['emlx_path'] = emlx_path
@@ -528,6 +742,7 @@ def main() -> None:
     )
     parser.add_argument("--query", "-q", help="Full-text search query")
     parser.add_argument("--sender", help="Filter by sender email/name")
+    parser.add_argument("--recipient", help="Filter by recipient email/name (To/CC)")
     parser.add_argument("--subject", help="Filter by subject")
     parser.add_argument("--account", help="Filter by account")
     parser.add_argument("--mailbox", help="Filter by mailbox")
@@ -597,6 +812,7 @@ def main() -> None:
     results = index.search(
         query=args.query,
         sender=args.sender,
+        recipient=args.recipient,
         subject=args.subject,
         account=args.account,
         mailbox=args.mailbox,
