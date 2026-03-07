@@ -62,12 +62,7 @@ class Channel:
         """Persist the current agent conversation to disk."""
         self.session_dir.mkdir(parents=True, exist_ok=True)
         path = self.session_dir / "session.json"
-        messages = []
-        for msg in self.agent.messages:
-            messages.append({
-                "role": msg.role,
-                "content": msg.content if isinstance(msg.content, str) else "[multimodal]",
-            })
+        messages = [msg.model_dump() for msg in self.agent.messages]
         data = {
             "channel_id": self.id,
             "channel_name": self.name,
@@ -90,13 +85,9 @@ class Channel:
             return False
         try:
             data = json.loads(path.read_text())
-            self.agent.messages = []
-            for entry in data.get("messages", []):
-                role = entry.get("role", "user")
-                content = entry.get("content", "")
-                if content == "[multimodal]":
-                    continue  # Skip multimodal entries we can't restore
-                self.agent.messages.append(Message(role=role, content=content))
+            self.agent.messages = [
+                Message.model_validate(entry) for entry in data.get("messages", [])
+            ]
             return True
         except Exception:
             logger.warning(f"Failed to load session for channel {self.id}", exc_info=True)
