@@ -543,7 +543,7 @@ class ChatApp(App[None]):
             self.clear_selection()
             self.notify("Copied", timeout=1)
             return
-        self.exit()
+        asyncio.create_task(self.action_quit())
 
     async def action_quit(self) -> None:
         """Gracefully shut down, stopping service if running."""
