@@ -121,9 +121,10 @@ class ReadFileTask(Task):
 
             # If meaningful text found (>100 chars), return as text
             if len(full_text.strip()) > 100:
-                if len(full_text) > max_chars:
-                    full_text = full_text[:max_chars]
                 header = f"[Pages {start + 1}-{end} of {total_pages}]\n\n"
+                text_budget = max_chars - len(header)
+                if len(full_text) > text_budget:
+                    full_text = full_text[:text_budget]
                 return header + full_text
 
             # Image-based PDF: render pages as PNG images

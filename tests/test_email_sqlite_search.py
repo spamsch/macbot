@@ -1,6 +1,6 @@
-"""Tests for SQLite-first email search routing in SearchEmailsTask."""
+"""Tests for Spotlight-based email search routing in SearchEmailsTask."""
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -12,123 +12,124 @@ def task() -> SearchEmailsTask:
     return SearchEmailsTask()
 
 
-def _sqlite_success(output: str = "=== FOUND 1 MESSAGES ===\n\nMessage-ID: <test@example.com>\nSubject: Test\nFrom: alice@example.com\nDate: 2026-02-21 10:00:00\nRead: true\n---") -> dict:
-    return {"success": True, "output": output}
+def _spotlight_result(
+    subject: str = "Test",
+    sender: str = "alice@example.com",
+    date: str = "2026-02-21 10:00:00",
+    content: str | None = None,
+) -> dict:
+    r: dict = {
+        "subject": subject,
+        "sender": sender,
+        "recipients": "bob@example.com",
+        "date_received": date,
+        "is_read": True,
+        "snippet": "Preview text",
+    }
+    if content:
+        r["content"] = content
+    return r
 
 
-def _sqlite_failure() -> dict:
-    return {"success": False, "error": "Script exited with code 2", "output": "", "debug": {"return_code": 2}}
-
-
-def _applescript_success() -> dict:
-    return {"success": True, "output": "=== FOUND 1 MESSAGES ===\n\nMessage-ID: <test@example.com>\nSubject: Test\nFrom: Alice <alice@example.com>\nDate: Friday, February 21, 2026 at 10:00:00 AM\nRead: true\n---"}
-
-
-class TestSearchEmailsSQLiteRouting:
-    """Tests for SQLite-first routing logic in SearchEmailsTask.execute()."""
+class TestSearchEmailsSpotlightRouting:
+    """Tests for Spotlight routing logic in SearchEmailsTask.execute()."""
 
     @pytest.mark.asyncio
-    @patch("macbot.tasks.macos_automation.run_script", new_callable=AsyncMock)
-    async def test_metadata_search_tries_sqlite_first(self, mock_run: AsyncMock, task: SearchEmailsTask) -> None:
-        """Metadata-only search should try SQLite script first."""
-        mock_run.return_value = _sqlite_success()
+    @patch("macbot.spotlight.mail_search.MailSearchIndex")
+    async def test_metadata_search_uses_spotlight(self, MockIndex: MagicMock, task: SearchEmailsTask) -> None:
+        """Metadata-only search should use Spotlight index."""
+        index = MockIndex.return_value
+        index.message_count.return_value = 100
+        index.needs_rebuild.return_value = False
+        index.search.return_value = [_spotlight_result()]
 
         result = await task.execute(sender="alice", days=7)
 
         assert result["success"] is True
-        mock_run.assert_called_once_with(
-            "mail/search-emails-sqlite.sh",
-            ["--sender", "alice", "--days", "7", "--limit", "20"],
-            timeout=10,
-        )
+        assert result["source"] == "spotlight"
+        index.search.assert_called_once()
+        kwargs = index.search.call_args.kwargs
+        assert kwargs["sender"] == "alice"
+        assert kwargs["days"] == 7
 
     @pytest.mark.asyncio
-    @patch("macbot.tasks.macos_automation.run_script", new_callable=AsyncMock)
-    async def test_with_content_skips_sqlite(self, mock_run: AsyncMock, task: SearchEmailsTask) -> None:
-        """with_content=True should skip SQLite and go straight to AppleScript."""
-        mock_run.return_value = _applescript_success()
+    @patch("macbot.spotlight.mail_search.MailSearchIndex")
+    async def test_with_content_passed_to_spotlight(self, MockIndex: MagicMock, task: SearchEmailsTask) -> None:
+        """with_content=True should be forwarded to Spotlight search."""
+        index = MockIndex.return_value
+        index.message_count.return_value = 100
+        index.needs_rebuild.return_value = False
+        index.search.return_value = [_spotlight_result(content="Full body text")]
 
         result = await task.execute(sender="alice", with_content=True, days=7)
 
         assert result["success"] is True
-        mock_run.assert_called_once_with(
-            "mail/search-emails.sh",
-            ["--sender", "alice", "--days", "7", "--with-content", "--limit", "20"],
-            timeout=60,
-        )
+        kwargs = index.search.call_args.kwargs
+        assert kwargs["with_content"] is True
 
     @pytest.mark.asyncio
-    @patch("macbot.tasks.macos_automation.run_script", new_callable=AsyncMock)
-    async def test_with_links_skips_sqlite(self, mock_run: AsyncMock, task: SearchEmailsTask) -> None:
-        """with_links=True should skip SQLite and go straight to AppleScript."""
-        mock_run.return_value = _applescript_success()
+    @patch("macbot.spotlight.mail_search.MailSearchIndex")
+    async def test_with_links_passed_to_spotlight(self, MockIndex: MagicMock, task: SearchEmailsTask) -> None:
+        """with_links=True should be forwarded to Spotlight search."""
+        index = MockIndex.return_value
+        index.message_count.return_value = 100
+        index.needs_rebuild.return_value = False
+        index.search.return_value = [_spotlight_result()]
 
         result = await task.execute(sender="alice", with_content=True, with_links=True, days=7)
 
         assert result["success"] is True
-        mock_run.assert_called_once_with(
-            "mail/search-emails.sh",
-            ["--sender", "alice", "--days", "7", "--with-content", "--with-links", "--limit", "20"],
-            timeout=60,
-        )
+        kwargs = index.search.call_args.kwargs
+        assert kwargs["with_links"] is True
+        assert kwargs["with_content"] is True
 
     @pytest.mark.asyncio
-    @patch("macbot.tasks.macos_automation.run_script", new_callable=AsyncMock)
-    async def test_sqlite_failure_falls_back_to_applescript(self, mock_run: AsyncMock, task: SearchEmailsTask) -> None:
-        """When SQLite fails, should transparently fall back to AppleScript."""
-        mock_run.side_effect = [_sqlite_failure(), _applescript_success()]
+    @patch("macbot.spotlight.mail_search.MailSearchIndex")
+    async def test_empty_index_triggers_rebuild(self, MockIndex: MagicMock, task: SearchEmailsTask) -> None:
+        """Empty index should trigger a rebuild before searching."""
+        index = MockIndex.return_value
+        index.message_count.return_value = 0
+        index.needs_rebuild.return_value = True
+        index.search.return_value = [_spotlight_result()]
 
         result = await task.execute(sender="alice", days=7)
 
         assert result["success"] is True
-        assert mock_run.call_count == 2
-        # First call: SQLite
-        assert mock_run.call_args_list[0].args[0] == "mail/search-emails-sqlite.sh"
-        assert mock_run.call_args_list[0].kwargs.get("timeout", mock_run.call_args_list[0].args[2] if len(mock_run.call_args_list[0].args) > 2 else None) == 10
-        # Second call: AppleScript
-        assert mock_run.call_args_list[1].args[0] == "mail/search-emails.sh"
+        index.rebuild.assert_called_once()
 
     @pytest.mark.asyncio
-    @patch("macbot.tasks.macos_automation.run_script", new_callable=AsyncMock)
-    async def test_sqlite_and_applescript_called_with_same_args(self, mock_run: AsyncMock, task: SearchEmailsTask) -> None:
-        """Both scripts should receive the same CLI arguments."""
-        mock_run.side_effect = [_sqlite_failure(), _applescript_success()]
+    @patch("macbot.spotlight.mail_search.MailSearchIndex")
+    async def test_spotlight_failure_returns_error(self, MockIndex: MagicMock, task: SearchEmailsTask) -> None:
+        """When Spotlight raises an exception, return an error dict."""
+        MockIndex.side_effect = Exception("Spotlight index corrupt")
 
-        await task.execute(sender="bob", subject="Invoice", today_only=True, limit=5)
+        result = await task.execute(sender="alice", days=7)
 
-        expected_args = ["--sender", "bob", "--subject", "Invoice", "--today", "--limit", "5"]
-        assert mock_run.call_args_list[0].args[1] == expected_args
-        assert mock_run.call_args_list[1].args[1] == expected_args
+        assert result["success"] is False
+        assert "Spotlight search failed" in result["error"]
 
     @pytest.mark.asyncio
-    @patch("macbot.tasks.macos_automation.run_script", new_callable=AsyncMock)
-    async def test_message_id_search_tries_sqlite(self, mock_run: AsyncMock, task: SearchEmailsTask) -> None:
-        """Message-ID lookup without content should try SQLite first."""
-        mock_run.return_value = _sqlite_success()
+    @patch("macbot.spotlight.mail_search.MailSearchIndex")
+    async def test_message_id_search(self, MockIndex: MagicMock, task: SearchEmailsTask) -> None:
+        """Numeric message_id should be passed as int to Spotlight."""
+        index = MockIndex.return_value
+        index.message_count.return_value = 100
+        index.needs_rebuild.return_value = False
+        index.search.return_value = [_spotlight_result()]
 
+        result = await task.execute(message_id="12345")
+
+        assert result["success"] is True
+        kwargs = index.search.call_args.kwargs
+        assert kwargs["message_id"] == 12345
+
+    @pytest.mark.asyncio
+    async def test_non_numeric_message_id_returns_error(self, task: SearchEmailsTask) -> None:
+        """Non-numeric message_id should return an error."""
         result = await task.execute(message_id="<abc@example.com>")
 
-        assert result["success"] is True
-        mock_run.assert_called_once_with(
-            "mail/search-emails-sqlite.sh",
-            ["--message-id", "<abc@example.com>", "--limit", "20"],
-            timeout=10,
-        )
-
-    @pytest.mark.asyncio
-    @patch("macbot.tasks.macos_automation.run_script", new_callable=AsyncMock)
-    async def test_message_id_with_content_skips_sqlite(self, mock_run: AsyncMock, task: SearchEmailsTask) -> None:
-        """Message-ID + with_content should skip SQLite."""
-        mock_run.return_value = _applescript_success()
-
-        result = await task.execute(message_id="<abc@example.com>", with_content=True)
-
-        assert result["success"] is True
-        mock_run.assert_called_once_with(
-            "mail/search-emails.sh",
-            ["--message-id", "<abc@example.com>", "--with-content", "--limit", "20"],
-            timeout=60,
-        )
+        assert result["success"] is False
+        assert "numeric" in result["error"].lower()
 
     @pytest.mark.asyncio
     async def test_no_criteria_returns_error(self, task: SearchEmailsTask) -> None:
@@ -139,24 +140,32 @@ class TestSearchEmailsSQLiteRouting:
         assert "Must specify" in result["error"]
 
     @pytest.mark.asyncio
-    @patch("macbot.tasks.macos_automation.run_script", new_callable=AsyncMock)
-    async def test_all_mailboxes_flag_passed(self, mock_run: AsyncMock, task: SearchEmailsTask) -> None:
-        """all_mailboxes flag should be passed through to scripts."""
-        mock_run.return_value = _sqlite_success()
-
-        await task.execute(sender="alice", all_mailboxes=True, days=7)
-
-        args = mock_run.call_args_list[0].args[1]
-        assert "--all-mailboxes" in args
-
-    @pytest.mark.asyncio
-    @patch("macbot.tasks.macos_automation.run_script", new_callable=AsyncMock)
-    async def test_account_filter_passed(self, mock_run: AsyncMock, task: SearchEmailsTask) -> None:
-        """account parameter should be passed through to scripts."""
-        mock_run.return_value = _sqlite_success()
+    @patch("macbot.spotlight.mail_search.MailSearchIndex")
+    async def test_account_filter_passed(self, MockIndex: MagicMock, task: SearchEmailsTask) -> None:
+        """account parameter should be passed through to Spotlight."""
+        index = MockIndex.return_value
+        index.message_count.return_value = 100
+        index.needs_rebuild.return_value = False
+        index.search.return_value = [_spotlight_result()]
 
         await task.execute(account="work@example.com", days=7)
 
-        args = mock_run.call_args_list[0].args[1]
-        assert "--account" in args
-        assert "work@example.com" in args
+        kwargs = index.search.call_args.kwargs
+        assert kwargs["account"] == "work@example.com"
+
+    @pytest.mark.asyncio
+    @patch("macbot.spotlight.mail_search.MailSearchIndex")
+    async def test_result_format(self, MockIndex: MagicMock, task: SearchEmailsTask) -> None:
+        """Result should have expected structure with email fields."""
+        index = MockIndex.return_value
+        index.message_count.return_value = 100
+        index.needs_rebuild.return_value = False
+        index.search.return_value = [_spotlight_result(subject="Invoice", sender="bob@test.com")]
+
+        result = await task.execute(sender="bob", days=7)
+
+        assert result["success"] is True
+        assert result["count"] == 1
+        email = result["emails"][0]
+        assert email["subject"] == "Invoice"
+        assert email["sender"] == "bob@test.com"
