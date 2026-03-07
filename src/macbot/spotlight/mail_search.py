@@ -67,17 +67,23 @@ def _derive_emlx_path(
 ) -> str | None:
     """Try to derive the .emlx file path from spotlight metadata.
 
-    The Spotlight mail_message_id is the Envelope Index ROWID, but for
-    multi-account setups the same email may have different ROWIDs in
-    different accounts/mailboxes. We first try a direct ROWID lookup,
-    then fall back to querying the Envelope Index by date+subject+account
-    to find the correct ROWID for the on-disk .emlx file.
+    IMPORTANT: The Spotlight com_apple_mail_messageID is NOT the same as
+    the Envelope Index ROWID used for .emlx filenames. Using msg_id directly
+    as a filename will find wrong emails. Instead we:
+    1. Extract the real ROWID from attachment_paths (most reliable)
+    2. Fall back to querying the Envelope Index by date+subject+account
     """
+    # Strategy 1: Extract the real Envelope Index ROWID from attachment paths.
+    # Attachment paths contain the correct ROWID: .../Data/X/Y/Attachments/{ROWID}/...
+    # The Messages/ dir is at the same level: .../Data/X/Y/Messages/{ROWID}.emlx
+    # Note: attachment_paths may be comma-separated, so take the first path only.
     if attachment_paths:
-        match = re.search(r'(.+?/Data/)Attachments/', attachment_paths)
-        if match and msg_id is not None:
-            base = match.group(1)
-            for suffix in [f"Messages/{msg_id}.emlx", f"Messages/{msg_id}.partial.emlx"]:
+        first_att_path = attachment_paths.split(', ')[0]
+        att_match = re.search(r'(.+/)Attachments/(\d+)/', first_att_path)
+        if att_match:
+            base = att_match.group(1)  # e.g., ".../Data/1/1/"
+            real_rowid = att_match.group(2)
+            for suffix in [f"Messages/{real_rowid}.emlx", f"Messages/{real_rowid}.partial.emlx"]:
                 path = base + suffix
                 if os.path.exists(path):
                     return path
@@ -86,17 +92,9 @@ def _derive_emlx_path(
     if account_id:
         mail_base = Path.home() / "Library" / "Mail" / "V10" / account_id
 
-    # Direct lookup by Spotlight msg_id (= Envelope Index ROWID)
-    if mail_base and mail_base.exists() and msg_id is not None:
-        for suffix in [f"{msg_id}.emlx", f"{msg_id}.partial.emlx"]:
-            for mbox in mail_base.rglob(suffix):
-                return str(mbox)
-
-    # Fallback: query Envelope Index for the correct ROWID in this account.
-    # Spotlight may have indexed a copy from a different account, so the
-    # msg_id doesn't match the .emlx filename in this account's directory.
+    # Strategy 2: Query Envelope Index for the correct ROWID by date+subject+account.
     if mail_base and mail_base.exists() and date_received:
-        rowids = _find_rowids_from_envelope_index(account_id, date_received, subject)
+        rowids = _find_rowids_from_envelope_index(account_id, date_received, subject, mailboxes)
         for rowid in rowids:
             for suffix in [f"{rowid}.emlx", f"{rowid}.partial.emlx"]:
                 for mbox in mail_base.rglob(suffix):
@@ -106,12 +104,16 @@ def _derive_emlx_path(
 
 
 def _find_rowids_from_envelope_index(
-    account_id: str | None, date_received: str, subject: str | None = None,
+    account_id: str | None,
+    date_received: str,
+    subject: str | None = None,
+    mailboxes_hint: str | None = None,
 ) -> list[int]:
-    """Query the Envelope Index for ROWIDs matching an account + date.
+    """Query the Envelope Index for ROWIDs matching an account + date + subject.
 
     The Envelope Index uses a separate subjects table with integer IDs.
     We match by date window and then optionally filter by subject text.
+    If mailboxes_hint is provided, we prefer matching mailboxes first.
     """
     envelope_idx = Path.home() / "Library" / "Mail" / "V10" / "MailData" / "Envelope Index"
     if not envelope_idx.exists():
@@ -135,11 +137,27 @@ def _find_rowids_from_envelope_index(
                 subject_ids = [r[0] for r in srows]
 
             if account_id:
-                rows = conn.execute(
-                    "SELECT ROWID FROM mailboxes WHERE url LIKE ?",
-                    (f"%{account_id}%",),
-                ).fetchall()
-                mbox_ids = [r[0] for r in rows]
+                # Try to narrow by specific mailbox URL if provided
+                mbox_ids: list[int] = []
+                if mailboxes_hint:
+                    # Extract mailbox URLs from the hint (e.g., "ews://UUID/Sent%20Items")
+                    for part in mailboxes_hint.split(', '):
+                        part = part.strip()
+                        if '://' in part:
+                            rows = conn.execute(
+                                "SELECT ROWID FROM mailboxes WHERE url = ?",
+                                (part,),
+                            ).fetchall()
+                            mbox_ids.extend(r[0] for r in rows)
+
+                # Fall back to all mailboxes for this account
+                if not mbox_ids:
+                    rows = conn.execute(
+                        "SELECT ROWID FROM mailboxes WHERE url LIKE ?",
+                        (f"%{account_id}%",),
+                    ).fetchall()
+                    mbox_ids = [r[0] for r in rows]
+
                 if not mbox_ids:
                     return []
                 placeholders = ','.join('?' * len(mbox_ids))
@@ -663,16 +681,16 @@ class MailSearchIndex:
             # Extract full content from .emlx before popping internal fields
             if with_content:
                 body = None
-                emlx = d.get('emlx_path')
-                if not emlx:
-                    emlx = _derive_emlx_path(
-                        d.get('account_id'),
-                        d.get('mailboxes'),
-                        d.get('mail_message_id'),
-                        d.get('attachment_paths'),
-                        d.get('date_received'),
-                        d.get('subject'),
-                    )
+                # Always re-derive emlx_path — cached paths may point to wrong
+                # emails (com_apple_mail_messageID != Envelope Index ROWID).
+                emlx = _derive_emlx_path(
+                    d.get('account_id'),
+                    d.get('mailboxes'),
+                    d.get('mail_message_id'),
+                    d.get('attachment_paths'),
+                    d.get('date_received'),
+                    d.get('subject'),
+                )
                 if emlx:
                     body = _extract_emlx_body(emlx, with_links=with_links)
                 # Fallback: AppleScript for messages without local .emlx
@@ -694,18 +712,17 @@ class MailSearchIndex:
 
     def _resolve_message_url(self, row: dict[str, Any]) -> None:
         """Lazily resolve the message:// URL for a row."""
-        emlx_path = row.get('emlx_path')
-        if not emlx_path:
-            emlx_path = _derive_emlx_path(
-                row.get('account_id'),
-                row.get('mailboxes'),
-                row.get('mail_message_id'),
-                row.get('attachment_paths'),
-                row.get('date_received'),
-                row.get('subject'),
-            )
-            if emlx_path:
-                row['emlx_path'] = emlx_path
+        # Always re-derive emlx_path — cached paths may point to wrong emails.
+        emlx_path = _derive_emlx_path(
+            row.get('account_id'),
+            row.get('mailboxes'),
+            row.get('mail_message_id'),
+            row.get('attachment_paths'),
+            row.get('date_received'),
+            row.get('subject'),
+        )
+        if emlx_path:
+            row['emlx_path'] = emlx_path
 
         if emlx_path:
             rfc_id = _extract_rfc_message_id(emlx_path)
