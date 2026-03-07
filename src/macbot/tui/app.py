@@ -7,7 +7,10 @@ multi-line input editor, live status bar with model/tokens/cost.
 from __future__ import annotations
 
 import asyncio
+import base64
 from datetime import datetime
+from pathlib import Path
+import re
 from typing import Any
 
 from textual import on, work
@@ -389,10 +392,17 @@ class ChatApp(App[None]):
                 self._close_channel(cid)
             return
 
-        self._add_text(f"You: {text}", "msg-user")
+        # Detect image file paths and build multimodal content
+        goal: str | list[dict[str, Any]] = _build_multimodal_content(text)
+        if isinstance(goal, list):
+            n_images = sum(1 for b in goal if b.get("type") == "image_url")
+            display_text = next((b["text"] for b in goal if b.get("type") == "text"), text)
+            self._add_text(f"You: {display_text} [{n_images} image(s) attached]", "msg-user")
+        else:
+            self._add_text(f"You: {text}", "msg-user")
         if self._session_id:
             history.append(self._session_id, "user", text)
-        self._run_agent(text)
+        self._run_agent(goal)
 
     @on(PromptInput.CancelRun)
     def _on_cancel(self) -> None:
@@ -402,7 +412,7 @@ class ChatApp(App[None]):
     # ----- Agent worker -----
 
     @work(exclusive=True, thread=False)
-    async def _run_agent(self, text: str) -> None:
+    async def _run_agent(self, text: str | list[dict[str, Any]]) -> None:
         if not self._agent:
             return
 
@@ -714,6 +724,81 @@ class ChatApp(App[None]):
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+# File path pattern: absolute paths or ~/paths, optionally quoted.
+# Terminals paste dragged files as absolute paths, 'single-quoted', or "double-quoted"
+# paths (which may contain spaces).  Unquoted paths may have backslash-escaped spaces.
+_FILE_PATH_RE = re.compile(
+    r"""(?:^|(?<=\s))"""                    # start or preceded by whitespace
+    r"""(?:"""
+    r"""  (['"])((?:/|~/)(?:(?!\1).)+)\1""" # quoted: capture quote, then path chars up to closing quote
+    r"""  |"""
+    r"""  ((?:/|~/)(?:[^\s]|\\ )+)"""       # unquoted: no whitespace (except backslash-escaped)
+    r""")"""
+    r"""(?=\s|$)""",                        # followed by whitespace or end
+    re.VERBOSE,
+)
+
+_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tiff", ".heic"}
+
+_MIME_TYPES: dict[str, str] = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+    ".bmp": "image/bmp",
+    ".tiff": "image/tiff",
+    ".heic": "image/heic",
+}
+
+
+def _build_multimodal_content(text: str) -> str | list[dict[str, Any]]:
+    """Detect file paths in text and build multimodal content blocks for images.
+
+    Returns the original string if no images found, or a list of content blocks
+    with text + image_url entries.
+    """
+    # Find all potential file paths
+    image_blocks: list[dict[str, Any]] = []
+    remaining_text = text
+
+    for match in _FILE_PATH_RE.finditer(text):
+        raw_path = match.group(2) or match.group(3)  # group 2 = quoted, group 3 = unquoted
+        if not raw_path:
+            continue
+        path = Path(raw_path.replace("\\ ", " ")).expanduser()
+
+        if path.suffix.lower() not in _IMAGE_EXTENSIONS:
+            continue
+        if not path.is_file():
+            continue
+
+        try:
+            data = path.read_bytes()
+            b64 = base64.b64encode(data).decode()
+            mime = _MIME_TYPES.get(path.suffix.lower(), "image/png")
+            image_blocks.append({
+                "type": "image_url",
+                "image_url": {"url": f"data:{mime};base64,{b64}"},
+            })
+            # Remove the path from the text
+            remaining_text = remaining_text.replace(match.group(0).strip(), "").strip()
+        except (OSError, PermissionError):
+            continue
+
+    if not image_blocks:
+        return text
+
+    # Build content blocks: text first (if any), then images
+    blocks: list[dict[str, Any]] = []
+    if remaining_text:
+        blocks.append({"type": "text", "text": remaining_text})
+    else:
+        blocks.append({"type": "text", "text": "What's in this image?"})
+    blocks.extend(image_blocks)
+    return blocks
+
 
 def _fmt_tokens(n: int) -> str:
     if n >= 10000:
