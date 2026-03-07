@@ -316,7 +316,7 @@ class ChatApp(App[None]):
 
         if cmd in ("quit", "exit", "q"):
             self._print_final_stats()
-            self.exit()
+            self.action_quit()
             return
         if cmd == "clear":
             self.action_clear_chat()
