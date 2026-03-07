@@ -39,6 +39,7 @@ from macbot.tasks.registry import TaskRegistry, task_registry
 from macbot.tasks import (
     browser_automation,
     calculator,
+    channels,
     cron_tasks,
     excel,
     fetch_url,
@@ -67,6 +68,7 @@ __all__ = [
     # Task modules (for explicit imports if needed)
     "browser_automation",
     "calculator",
+    "channels",
     "cron_tasks",
     "excel",
     "fetch_url",

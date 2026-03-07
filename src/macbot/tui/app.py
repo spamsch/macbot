@@ -7,7 +7,10 @@ multi-line input editor, live status bar with model/tokens/cost.
 from __future__ import annotations
 
 import asyncio
+import base64
 from datetime import datetime
+from pathlib import Path
+import re
 from typing import Any
 
 from textual import on, work
@@ -22,6 +25,7 @@ from textual.widgets import Footer, Markdown, Static, TextArea
 from macbot import __version__
 from macbot.config import settings
 from macbot.core.agent import Agent
+from macbot.core.channel import ChannelRegistry
 from macbot.providers.base import Message
 from macbot.tasks import create_default_registry
 from macbot.tui import history
@@ -159,11 +163,28 @@ class ChatCommands(Provider):
         yield Hit(0.9, "Show stats", app.action_show_stats, help="Token usage statistics")
         yield Hit(0.8, "Show tasks", app._show_tasks, help="List available agent tasks")
         yield Hit(0.7, "Sessions", app._show_sessions, help="List saved sessions")
+        yield Hit(0.6, "Channels", app._show_channels, help="List all channels")
         yield Hit(0.5, "Quit", app.action_quit, help="Exit the application")
+
+        # List channels as switchable items
+        if app._channels is not None:
+            for ch in app._channels.list_channels():
+                active = " (active)" if ch.id == app._channels.active_id else ""
+                msg_count = len(ch.agent.messages)
+
+                def _make_switcher(_cid: str = ch.id) -> None:
+                    app._switch_channel(_cid)
+
+                yield Hit(
+                    0.55,
+                    f"Switch to channel: {ch.name}{active}",
+                    _make_switcher,
+                    help=f"{ch.id} · {ch.kind.value} · {msg_count} msgs",
+                )
 
         # List saved sessions as loadable items
         sessions = history.list_sessions()
-        for s in sessions[:15]:
+        for s in sessions[:5]:
             sid = s["id"]
             title = s["title"] or "(untitled)"
             if len(title) > 50:
@@ -271,9 +292,12 @@ class ChatApp(App[None]):
         agent: Agent | None = None,
         service_mode: bool = False,
         service: Any | None = None,
+        channels: ChannelRegistry | None = None,
+        **kwargs: Any,
     ) -> None:
         super().__init__()
         self._agent = agent
+        self._channels = channels
         self._service_mode = service_mode
         self._service = service
         self._cancel_event: asyncio.Event | None = None
@@ -288,12 +312,18 @@ class ChatApp(App[None]):
         yield Footer()
 
     async def on_mount(self) -> None:
-        if self._agent is None:
+        if self._channels is not None:
+            # Use the active channel's agent
+            self._agent = self._channels.active.agent
+        elif self._agent is None:
             registry = create_default_registry()
             self._agent = Agent(registry)
 
         bar = self.query_one("#status-bar", StatusBar)
-        bar.model_name = settings.model
+        if self._channels is not None:
+            bar.model_name = f"{settings.model} | {self._channels.active.name}"
+        else:
+            bar.model_name = settings.model
         bar.task_count = len(self._agent.task_registry)
 
         # Start a fresh session
@@ -326,7 +356,8 @@ class ChatApp(App[None]):
             return
         if cmd == "help":
             self._add_md(
-                "**Commands:** quit, clear, stats, help, tasks, sessions, load &lt;id&gt;\n\n"
+                "**Commands:** quit, clear, stats, help, tasks, sessions, load &lt;id&gt;, "
+                "channels, ch &lt;id&gt;, channel new &lt;name&gt;, channel close &lt;id&gt;\n\n"
                 "**Keys:** Enter=send, Shift+Enter=newline, Escape=cancel, "
                 "Ctrl+P=command palette, Ctrl+L=clear, Ctrl+T=stats"
             )
@@ -340,11 +371,38 @@ class ChatApp(App[None]):
         if cmd.startswith("load "):
             self._load_session(text[5:].strip())
             return
+        if cmd in ("channels", "ch"):
+            self._show_channels()
+            return
+        if cmd.startswith("ch ") or cmd.startswith("channel switch "):
+            target = text.split(maxsplit=2)[-1].strip() if " " in text else ""
+            if target:
+                self._switch_channel(target)
+            else:
+                self._show_channels()
+            return
+        if cmd.startswith("channel new "):
+            name = text[len("channel new "):].strip()
+            if name:
+                self._create_channel(name)
+            return
+        if cmd.startswith("channel close "):
+            cid = text[len("channel close "):].strip()
+            if cid:
+                self._close_channel(cid)
+            return
 
-        self._add_text(f"You: {text}", "msg-user")
+        # Detect image file paths and build multimodal content
+        goal: str | list[dict[str, Any]] = _build_multimodal_content(text)
+        if isinstance(goal, list):
+            n_images = sum(1 for b in goal if b.get("type") == "image_url")
+            display_text = next((b["text"] for b in goal if b.get("type") == "text"), text)
+            self._add_text(f"You: {display_text} [{n_images} image(s) attached]", "msg-user")
+        else:
+            self._add_text(f"You: {text}", "msg-user")
         if self._session_id:
             history.append(self._session_id, "user", text)
-        self._run_agent(text)
+        self._run_agent(goal)
 
     @on(PromptInput.CancelRun)
     def _on_cancel(self) -> None:
@@ -354,7 +412,7 @@ class ChatApp(App[None]):
     # ----- Agent worker -----
 
     @work(exclusive=True, thread=False)
-    async def _run_agent(self, text: str) -> None:
+    async def _run_agent(self, text: str | list[dict[str, Any]]) -> None:
         if not self._agent:
             return
 
@@ -533,6 +591,71 @@ class ChatApp(App[None]):
         area.scroll_end(animate=False)
         self._add_text(f"Session '{session_id}' loaded.", "msg-status")
 
+    # ----- Channel management -----
+
+    def _show_channels(self) -> None:
+        if self._channels is None:
+            self._add_text("Channels not available (not in service mode).", "msg-status")
+            return
+        lines = ["**Channels** (use command palette to switch)\n"]
+        for ch in self._channels.list_channels():
+            active = " **[active]**" if ch.id == self._channels.active_id else ""
+            msg_count = len(ch.agent.messages)
+            lines.append(f"- `{ch.id}` {ch.name} ({ch.kind.value}, {msg_count} msgs){active}")
+        self._add_md("\n".join(lines))
+
+    def _switch_channel(self, channel_id: str) -> None:
+        if self._channels is None:
+            self._add_text("Channels not available.", "msg-error")
+            return
+        try:
+            ch = self._channels.switch(channel_id)
+        except KeyError:
+            self._add_text(f"Channel '{channel_id}' not found.", "msg-error")
+            return
+
+        # Switch agent and clear UI
+        self._agent = ch.agent
+        self.query_one("#messages", VerticalScroll).remove_children()
+
+        # Create a new session for this channel view
+        self._session_id = history.create_session()
+
+        # Replay existing agent messages into UI
+        for msg in ch.agent.messages:
+            if msg.role == "user":
+                self._add_text(f"You: {msg.content_text}", "msg-user")
+            elif msg.role == "assistant" and not msg.tool_calls:
+                self._add_md(msg.content_text)
+                self._add_text("─" * 60, "msg-sep")
+
+        self._update_token_bar()
+        bar = self.query_one("#status-bar", StatusBar)
+        bar.model_name = f"{settings.model} | {ch.name}"
+        self._add_text(f"Switched to channel: {ch.name} ({ch.id})", "msg-status")
+
+    def _create_channel(self, name: str) -> None:
+        if self._channels is None:
+            self._add_text("Channels not available.", "msg-error")
+            return
+        try:
+            ch = self._channels.create_custom_channel(name)
+            self._add_text(f"Created channel: {ch.name} ({ch.id})", "msg-status")
+        except ValueError as e:
+            self._add_text(str(e), "msg-error")
+
+    def _close_channel(self, channel_id: str) -> None:
+        if self._channels is None:
+            self._add_text("Channels not available.", "msg-error")
+            return
+        if self._channels.close(channel_id):
+            self._add_text(f"Closed channel: {channel_id}", "msg-status")
+            # If we closed the active channel, switch to main
+            if self._channels.active_id == "main" and channel_id != "main":
+                self._switch_channel("main")
+        else:
+            self._add_text(f"Cannot close '{channel_id}' (not found or not a custom channel).", "msg-error")
+
     # ----- Actions -----
 
     def action_copy_or_quit(self) -> None:
@@ -601,6 +724,81 @@ class ChatApp(App[None]):
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+# File path pattern: absolute paths or ~/paths, optionally quoted.
+# Terminals paste dragged files as absolute paths, 'single-quoted', or "double-quoted"
+# paths (which may contain spaces).  Unquoted paths may have backslash-escaped spaces.
+_FILE_PATH_RE = re.compile(
+    r"""(?:^|(?<=\s))"""                    # start or preceded by whitespace
+    r"""(?:"""
+    r"""  (['"])((?:/|~/)(?:(?!\1).)+)\1""" # quoted: capture quote, then path chars up to closing quote
+    r"""  |"""
+    r"""  ((?:/|~/)(?:[^\s]|\\ )+)"""       # unquoted: no whitespace (except backslash-escaped)
+    r""")"""
+    r"""(?=\s|$)""",                        # followed by whitespace or end
+    re.VERBOSE,
+)
+
+_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tiff", ".heic"}
+
+_MIME_TYPES: dict[str, str] = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+    ".bmp": "image/bmp",
+    ".tiff": "image/tiff",
+    ".heic": "image/heic",
+}
+
+
+def _build_multimodal_content(text: str) -> str | list[dict[str, Any]]:
+    """Detect file paths in text and build multimodal content blocks for images.
+
+    Returns the original string if no images found, or a list of content blocks
+    with text + image_url entries.
+    """
+    # Find all potential file paths
+    image_blocks: list[dict[str, Any]] = []
+    remaining_text = text
+
+    for match in _FILE_PATH_RE.finditer(text):
+        raw_path = match.group(2) or match.group(3)  # group 2 = quoted, group 3 = unquoted
+        if not raw_path:
+            continue
+        path = Path(raw_path.replace("\\ ", " ")).expanduser()
+
+        if path.suffix.lower() not in _IMAGE_EXTENSIONS:
+            continue
+        if not path.is_file():
+            continue
+
+        try:
+            data = path.read_bytes()
+            b64 = base64.b64encode(data).decode()
+            mime = _MIME_TYPES.get(path.suffix.lower(), "image/png")
+            image_blocks.append({
+                "type": "image_url",
+                "image_url": {"url": f"data:{mime};base64,{b64}"},
+            })
+            # Remove the path from the text
+            remaining_text = remaining_text.replace(match.group(0).strip(), "").strip()
+        except (OSError, PermissionError):
+            continue
+
+    if not image_blocks:
+        return text
+
+    # Build content blocks: text first (if any), then images
+    blocks: list[dict[str, Any]] = []
+    if remaining_text:
+        blocks.append({"type": "text", "text": remaining_text})
+    else:
+        blocks.append({"type": "text", "text": "What's in this image?"})
+    blocks.extend(image_blocks)
+    return blocks
+
 
 def _fmt_tokens(n: int) -> str:
     if n >= 10000:
