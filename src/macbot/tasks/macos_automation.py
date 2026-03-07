@@ -144,8 +144,10 @@ class SearchEmailsTask(Task):
     @property
     def description(self) -> str:
         return (
-            "Search emails in Mail.app. Can search by sender, recipient, subject, message_id, or list all emails in an account. "
-            "Use recipient to find emails SENT TO someone (searches To and CC fields). "
+            "Search emails in Mail.app. Uses the Core Spotlight index for fast searches when available, "
+            "with automatic fallback to AppleScript/SQLite for environments where the Spotlight cache is not yet built. "
+            "Can search by sender, recipient, subject, message_id, or list all emails in an account. "
+            "Use recipient to find emails SENT TO someone (searches To and CC fields — Spotlight only; not supported in fallback mode). "
             "IMPORTANT: 'emails from X account' means emails RECEIVED BY that account (use account parameter), "
             "not emails FROM that sender. Use message_id for precise lookup of a specific email. "
             "IMPORTANT: When the user asks to READ an email, see its content/body, or wants to know WHAT an email says, "
@@ -190,13 +192,48 @@ class SearchEmailsTask(Task):
         if not sender and not recipient and not subject and not account and not message_id and not today_only and not days:
             return {"success": False, "error": "Must specify sender, recipient, subject, message_id, account, today_only, or days"}
 
-        # Use Core Spotlight index for all searches
-        return await self._try_spotlight_search(
+        # Try Spotlight index first; fall back to AppleScript/SQLite when unavailable.
+        spotlight_result = await self._try_spotlight_search(
             sender=sender, recipient=recipient, subject=subject,
             message_id=message_id, account=account, mailbox=mailbox,
             today_only=today_only, days=days, limit=limit,
             with_content=with_content, with_links=with_links,
         )
+        if spotlight_result is not None:
+            return spotlight_result
+
+        # Spotlight cache unavailable — fall back to AppleScript/SQLite path.
+        # Note: recipient search is not supported in the fallback path.
+        args = []
+        if sender:
+            args.extend(["--sender", sender])
+        if subject:
+            args.extend(["--subject", subject])
+        if message_id:
+            args.extend(["--message-id", message_id])
+        if account:
+            args.extend(["--account", account])
+        if mailbox:
+            args.extend(["--mailbox", mailbox])
+        if today_only:
+            args.append("--today")
+        if days:
+            args.extend(["--days", str(days)])
+        if all_mailboxes:
+            args.append("--all-mailboxes")
+        if with_content:
+            args.append("--with-content")
+        if with_links:
+            args.append("--with-links")
+        args.extend(["--limit", str(limit)])
+
+        # Metadata-only search: try fast SQLite path first.
+        if not with_content and not with_links:
+            result = await run_script("mail/search-emails-sqlite.sh", args, timeout=10)
+            if result.get("success"):
+                return result
+
+        return await run_script("mail/search-emails.sh", args, timeout=60)
 
     async def _try_spotlight_search(
         self,
@@ -211,10 +248,15 @@ class SearchEmailsTask(Task):
         limit: int = 20,
         with_content: bool = False,
         with_links: bool = False,
-    ) -> dict[str, Any]:
-        """Search using the Core Spotlight index."""
+    ) -> dict[str, Any] | None:
+        """Search using the Core Spotlight index.
+
+        Returns ``None`` when the Spotlight cache is unavailable so the caller
+        can fall back to the AppleScript/SQLite path.
+        """
         try:
             import asyncio
+
             from macbot.spotlight.mail_search import MailSearchIndex
 
             # Convert message_id string to int if provided
@@ -250,7 +292,8 @@ class SearchEmailsTask(Task):
             has_data, results = await loop.run_in_executor(None, _search)
 
             if not has_data:
-                return {"success": False, "error": "Spotlight mail index is empty — run 'son start' to build it, or run 'python -m macbot.spotlight.mail_search --rebuild'"}
+                # Cache could not be built (Spotlight store missing) — signal fallback.
+                return None
 
             emails = []
             for r in results:
@@ -282,8 +325,9 @@ class SearchEmailsTask(Task):
                 "count": len(emails),
                 "emails": emails,
             }
-        except Exception as e:
-            return {"success": False, "error": f"Spotlight search failed: {e}"}
+        except Exception:
+            # Spotlight module unavailable — signal fallback.
+            return None
 
 
 class SendEmailTask(Task):
@@ -1468,8 +1512,8 @@ class SpotlightSearchTask(Task):
 
         Adds a Ref: field line after each header so the LLM includes it in responses.
         """
-        import re
         import random
+        import re
         import string
 
         chars = string.ascii_lowercase + string.digits
