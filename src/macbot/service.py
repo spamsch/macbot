@@ -180,6 +180,7 @@ class MacbotService:
         self._tasks: list[asyncio.Task] = []
         self._emit: Callable | None = None
         self._socket_server: asyncio.Server | None = None
+        self._spotlight_watcher = None
 
     def reload_skills(self) -> None:
         """Reload skills from disk for all channel agents.
@@ -1094,6 +1095,15 @@ class MacbotService:
             else:
                 logger.error(f"Telegram token invalid: {msg}")
 
+        # Start spotlight mail index watcher
+        try:
+            from macbot.spotlight.watcher import SpotlightWatcher
+            self._spotlight_watcher = SpotlightWatcher()
+            self._tasks.append(asyncio.create_task(self._spotlight_watcher.run()))
+            logger.info("Starting Spotlight mail index watcher")
+        except Exception:
+            logger.debug("Spotlight watcher unavailable", exc_info=True)
+
         # Always start socket server for `son connect`
         MACBOT_DIR.mkdir(parents=True, exist_ok=True)
         self._tasks.append(asyncio.create_task(self._run_socket_server()))
@@ -1135,6 +1145,9 @@ class MacbotService:
             self._default_queue.stop()
         for q in self._agent_queues.values():
             q.stop()
+
+        if self._spotlight_watcher:
+            self._spotlight_watcher.stop()
 
         if self.telegram_service:
             await self.telegram_service.stop()
