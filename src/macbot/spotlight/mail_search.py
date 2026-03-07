@@ -715,16 +715,18 @@ class MailSearchIndex:
             if rfc_id:
                 row['rfc_message_id'] = rfc_id
                 row['message_url'] = _make_message_url(rfc_id)
-                # Cache it back to the DB
-                try:
-                    conn = self._get_conn()
-                    conn.execute(
-                        "UPDATE messages SET emlx_path=?, rfc_message_id=?, message_url=? WHERE mail_message_id=?",
-                        (emlx_path, rfc_id, row['message_url'], row.get('mail_message_id'))
-                    )
-                    conn.commit()
-                except Exception:
-                    pass
+                # Cache it back to the DB, keyed by the primary key (spotlight_id)
+                spotlight_id = row.get('spotlight_id')
+                if spotlight_id is not None:
+                    try:
+                        conn = self._get_conn()
+                        conn.execute(
+                            "UPDATE messages SET emlx_path=?, rfc_message_id=?, message_url=? WHERE spotlight_id=?",
+                            (emlx_path, rfc_id, row['message_url'], spotlight_id)
+                        )
+                        conn.commit()
+                    except Exception:
+                        pass
 
     def close(self) -> None:
         if self._conn:
