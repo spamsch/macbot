@@ -1213,7 +1213,7 @@ def run_service(
                 try:
                     from macbot.tui import ChatApp
                     queue = service._get_default_queue()
-                    app = ChatApp(agent=queue.agent, service_mode=True, service=service)
+                    app = ChatApp(queue=queue, service_mode=True, service=service)
                     app.run()
                 except ImportError:
                     # Fallback to classic interactive mode if textual not available
