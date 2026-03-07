@@ -243,7 +243,7 @@ class SearchEmailsTask(Task):
                 index.close()
                 return (True, results)
 
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             has_data, results = await loop.run_in_executor(None, _search)
 
             if not has_data:
