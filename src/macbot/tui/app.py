@@ -129,7 +129,7 @@ class PromptInput(TextArea):
                 self.clear()
             return
 
-        if event.key in ("shift+enter", "escape+enter"):
+        if event.key in ("shift+enter", "alt+enter"):
             # Shift+Enter / Alt+Enter = insert newline
             event.stop()
             event.prevent_default()
