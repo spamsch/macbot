@@ -180,7 +180,7 @@ class MacbotService:
         self._tasks: list[asyncio.Task] = []
         self._emit: Callable | None = None
         self._socket_server: asyncio.Server | None = None
-        self._spotlight_watcher = None
+        self._spotlight_watcher: "SpotlightWatcher | None" = None
 
     def reload_skills(self) -> None:
         """Reload skills from disk for all channel agents.
