@@ -23,7 +23,12 @@ def _ensure_dir() -> None:
 
 
 def _session_path(session_id: str) -> Path:
-    return SESSIONS_DIR / f"{session_id}.json"
+    """Return the path to a session file, ensuring it stays within SESSIONS_DIR."""
+    base = SESSIONS_DIR.resolve()
+    candidate = (base / f"{session_id}.json").resolve(strict=False)
+    if base not in candidate.parents:
+        raise ValueError(f"Invalid session id: {session_id!r}")
+    return candidate
 
 
 def _load_session_file(path: Path) -> dict[str, Any] | None:
