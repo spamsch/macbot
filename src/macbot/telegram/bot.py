@@ -113,6 +113,38 @@ class TelegramBot:
         )
         return True
 
+    async def edit_message(
+        self,
+        chat_id: str | int,
+        message_id: int,
+        text: str,
+        parse_mode: str | None = "Markdown",
+    ) -> bool:
+        """Edit an existing message.
+
+        Args:
+            chat_id: Telegram chat ID
+            message_id: ID of the message to edit
+            text: New message text
+            parse_mode: Message parsing mode
+
+        Returns:
+            True if message was edited successfully
+        """
+        try:
+            await self._bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=message_id,
+                text=text,
+                parse_mode=parse_mode,
+            )
+            return True
+        except TelegramError as e:
+            # "Message is not modified" is expected if text hasn't changed
+            if "not modified" in str(e).lower():
+                return True
+            raise
+
     async def send_voice(
         self,
         chat_id: str | int,
