@@ -54,13 +54,15 @@ class SendToChannelTask(Task):
                 "error": f"Channel '{channel_id}' not found. Available: {', '.join(available)}",
             }
 
-        # Submit the message directly to the target channel's agent
-        from macbot.providers.base import Message
-        ch.agent.messages.append(Message(role="user", content=message))
+        try:
+            result = await self._registry.submit(channel_id, message)
+        except Exception as e:
+            return {"success": False, "error": str(e)}
 
         return {
             "success": True,
-            "output": f"Message sent to channel '{ch.name}' ({channel_id})",
+            "channel": channel_id,
+            "output": result,
         }
 
 

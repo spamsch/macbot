@@ -10,13 +10,17 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Callable
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from macbot.core.agent import Agent
 from macbot.core.task import TaskRegistry
+
+if TYPE_CHECKING:
+    from macbot.service import AgentQueue
 
 logger = logging.getLogger(__name__)
 
@@ -62,12 +66,7 @@ class Channel:
         """Persist the current agent conversation to disk."""
         self.session_dir.mkdir(parents=True, exist_ok=True)
         path = self.session_dir / "session.json"
-        messages = []
-        for msg in self.agent.messages:
-            messages.append({
-                "role": msg.role,
-                "content": msg.content if isinstance(msg.content, str) else "[multimodal]",
-            })
+        messages = [msg.model_dump() for msg in self.agent.messages]
         data = {
             "channel_id": self.id,
             "channel_name": self.name,
@@ -90,13 +89,9 @@ class Channel:
             return False
         try:
             data = json.loads(path.read_text())
-            self.agent.messages = []
-            for entry in data.get("messages", []):
-                role = entry.get("role", "user")
-                content = entry.get("content", "")
-                if content == "[multimodal]":
-                    continue  # Skip multimodal entries we can't restore
-                self.agent.messages.append(Message(role=role, content=content))
+            self.agent.messages = [
+                Message.model_validate(entry) for entry in data.get("messages", [])
+            ]
             return True
         except Exception:
             logger.warning(f"Failed to load session for channel {self.id}", exc_info=True)
@@ -114,6 +109,10 @@ class ChannelRegistry:
         self._channels: dict[str, Channel] = {}
         self._task_registry = task_registry
         self._active_channel_id: str = "main"
+        # Maps channel_id -> AgentQueue, populated at runtime by the service layer
+        # via register_queue().  AgentQueue is imported under TYPE_CHECKING only to
+        # avoid a circular import; the dict is duck-typed at runtime.
+        self._queues: dict[str, AgentQueue] = {}
 
     def _make_agent(self) -> Agent:
         """Create a new Agent instance with the shared task registry."""
@@ -152,6 +151,69 @@ class ChannelRegistry:
     def get(self, channel_id: str) -> Channel | None:
         """Get a channel by ID, or None if it doesn't exist."""
         return self._channels.get(channel_id)
+
+    # ---- Queue management ----
+
+    def register_queue(self, channel_id: str, queue: AgentQueue) -> None:
+        """Register an agent queue for a channel.
+
+        Called by the service layer to bind its queue instances to the registry,
+        enabling send_to_channel to submit messages through the proper
+        serialization guarantees.
+
+        Args:
+            channel_id: The channel ID.
+            queue: The AgentQueue instance handling that channel.
+        """
+        self._queues[channel_id] = queue
+
+    async def submit(
+        self,
+        channel_id: str,
+        message: str | list[dict[str, Any]],
+        emit: Callable[[dict[str, Any]], None] | None = None,
+    ) -> str:
+        """Submit a message to a channel for processing.
+
+        If a queue has been registered for the channel (e.g. via the service
+        layer), the message is submitted through that queue to respect
+        serialization guarantees.  Otherwise the channel's agent is run
+        directly as a fallback (e.g. in tests or standalone mode).
+
+        Args:
+            channel_id: Target channel ID.
+            message: The user message text or multimodal content blocks.
+            emit: Optional event callback for streaming progress.
+
+        Returns:
+            The agent's response text.
+
+        Raises:
+            KeyError: If the channel does not exist.
+        """
+        ch = self.get(channel_id)
+        if ch is None:
+            available = [c.id for c in self.list_channels()]
+            raise KeyError(
+                f"Channel '{channel_id}' not found. Available: {', '.join(available)}"
+            )
+        if channel_id in self._queues:
+            return await self._queues[channel_id].submit(message, emit=emit)
+        # Fallback: no queue registered — run the agent directly.
+        # This is expected in test/standalone mode.  In a running service,
+        # this indicates that register_queue() was not called for this channel.
+        logger.warning(
+            "No queue registered for channel '%s'; running agent directly. "
+            "Concurrent calls may interleave.  "
+            "Ensure MacbotService.register_queue() was called for this channel.",
+            channel_id,
+        )
+        return await ch.agent.run(
+            message,
+            stream=False,
+            continue_conversation=True,
+            on_event=emit,
+        )
 
     def switch(self, channel_id: str) -> Channel:
         """Switch the active channel.

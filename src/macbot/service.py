@@ -224,6 +224,7 @@ class MacbotService:
             agent = self._get_chat_agent(chat_id)
             queue = AgentQueue(agent)
             self._agent_queues[channel_id] = queue
+            self.channels.register_queue(channel_id, queue)
             # Start consumer task if service is running
             if self._running:
                 t = asyncio.create_task(queue.run_consumer())
@@ -246,6 +247,7 @@ class MacbotService:
                 raise KeyError(f"Channel '{channel_id}' does not exist")
             queue = AgentQueue(ch.agent)
             self._agent_queues[channel_id] = queue
+            self.channels.register_queue(channel_id, queue)
             if self._running:
                 t = asyncio.create_task(queue.run_consumer())
                 self._tasks.append(t)
@@ -1056,6 +1058,7 @@ class MacbotService:
         # Initialize tasks channel queue (for cron jobs)
         tasks_ch = self.channels.get("tasks")
         self._cron_queue = AgentQueue(tasks_ch.agent)
+        self.channels.register_queue("tasks", self._cron_queue)
         t = asyncio.create_task(self._cron_queue.run_consumer())
         self._tasks.append(t)
         self._consumer_tasks.append(t)
@@ -1063,12 +1066,14 @@ class MacbotService:
         # Initialize heartbeat channel queue (separate from tasks)
         heartbeat_ch = self.channels.get("heartbeat")
         self._heartbeat_queue = AgentQueue(heartbeat_ch.agent)
+        self.channels.register_queue("heartbeat", self._heartbeat_queue)
         t = asyncio.create_task(self._heartbeat_queue.run_consumer())
         self._tasks.append(t)
         self._consumer_tasks.append(t)
 
         # Initialize default queue (main channel, shared by stdin/socket/interactive)
         default_queue = self._get_default_queue()
+        self.channels.register_queue("main", default_queue)
         t = asyncio.create_task(default_queue.run_consumer())
         self._tasks.append(t)
         self._consumer_tasks.append(t)
