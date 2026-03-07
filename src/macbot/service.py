@@ -1089,13 +1089,19 @@ class MacbotService:
         return status
 
 
-def run_service(daemon: bool = False, verbose: bool = False, foreground: bool = False) -> None:
+def run_service(
+    daemon: bool = False,
+    verbose: bool = False,
+    foreground: bool = False,
+    classic: bool = False,
+) -> None:
     """Run the macbot service.
 
     Args:
         daemon: Whether to run as a background daemon
         verbose: Whether to show verbose output
         foreground: Whether to run in foreground without interactive console (for GUI)
+        classic: Whether to use classic readline-based interface instead of TUI
     """
     from rich.console import Console
     # In foreground mode, use stderr for all Rich output to keep stdout clean for JSON-lines
@@ -1187,9 +1193,6 @@ def run_service(daemon: bool = False, verbose: bool = False, foreground: bool = 
                 PID_FILE.unlink(missing_ok=True)
             stderr_console.print("[dim]Service stopped.[/dim]")
         else:
-            # Interactive mode with input prompt
-            console.print("[dim]Type queries below, or 'quit' to exit. Ctrl+C also stops.[/dim]")
-
             # Set up logging for foreground
             if verbose:
                 logging.basicConfig(
@@ -1198,10 +1201,27 @@ def run_service(daemon: bool = False, verbose: bool = False, foreground: bool = 
                     datefmt="%H:%M:%S",
                 )
 
-            try:
-                asyncio.run(service.start(interactive=True))
-            except KeyboardInterrupt:
-                console.print("\n[dim]Stopping...[/dim]")
+            if classic:
+                # Classic readline-based interactive mode
+                console.print("[dim]Type queries below, or 'quit' to exit. Ctrl+C also stops.[/dim]")
+                try:
+                    asyncio.run(service.start(interactive=True))
+                except KeyboardInterrupt:
+                    console.print("\n[dim]Stopping...[/dim]")
+            else:
+                # Full-screen TUI mode (default)
+                try:
+                    from macbot.tui import ChatApp
+                    queue = service._get_default_queue()
+                    app = ChatApp(agent=queue.agent, service_mode=True, service=service)
+                    app.run()
+                except ImportError:
+                    # Fallback to classic interactive mode if textual not available
+                    console.print("[dim]Type queries below, or 'quit' to exit. Ctrl+C also stops.[/dim]")
+                    try:
+                        asyncio.run(service.start(interactive=True))
+                    except KeyboardInterrupt:
+                        console.print("\n[dim]Stopping...[/dim]")
             console.print("[dim]Service stopped.[/dim]")
 
 
