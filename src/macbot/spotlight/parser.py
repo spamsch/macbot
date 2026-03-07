@@ -1,9 +1,10 @@
 """
 Core Spotlight store.db binary parser.
 
-Reads the proprietary '8tsd' format used by macOS Core Spotlight.
-Derived from spotlight_parser by Yogesh Khatri (GPLv3).
-https://github.com/ydkhatri/spotlight_parser
+Parses the proprietary '8tsd' format used by macOS Core Spotlight.
+This is an independent, clean-room implementation based on publicly
+available documentation and reverse-engineered descriptions of the
+on-disk format.
 
 Focused on extracting metadata items (mail messages, etc.) from the
 per-user Core Spotlight database.
