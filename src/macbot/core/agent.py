@@ -154,6 +154,8 @@ class Agent:
         stream: bool = True,
         continue_conversation: bool = False,
         on_event: Callable[[dict[str, Any]], None] | None = None,
+        stream_callback: Callable[[str], None] | None = None,
+        on_status: Callable[[str], None] | None = None,
     ) -> str:
         """Run the agent loop to achieve a goal.
 
@@ -165,6 +167,10 @@ class Agent:
             continue_conversation: If True, append to existing messages instead of resetting.
                                    Useful for multi-turn conversations (e.g., Telegram chat).
             on_event: Optional callback for agent events (tool_call, tool_result).
+            stream_callback: Optional callback for streaming text chunks.
+                            When provided, overrides the default console streaming.
+            on_status: Optional callback for status messages (tool calls, results).
+                      When provided, overrides the default console status output.
 
         Returns:
             The final response from the agent
@@ -204,7 +210,9 @@ class Agent:
                 console.print(f"\n[dim]Iteration {self.iteration}/{self.config.max_iterations}[/dim]")
 
             # Get LLM response (with streaming if enabled)
-            response = await self._get_llm_response(stream=stream, verbose=verbose)
+            response = await self._get_llm_response(
+                stream=stream, verbose=verbose, stream_callback=stream_callback,
+            )
 
             # If not streaming and verbose, show the response
             if not stream and verbose and response.content:
@@ -230,16 +238,23 @@ class Agent:
                         else:
                             tool_strs.append(tc.name)
                     # Print tool calls - one per line if multiple, single line if one
-                    prefix = f"[dim][{self.iteration}/{self.config.max_iterations}] → "
-                    if len(tool_strs) == 1:
-                        console.print(f"{prefix}{tool_strs[0]}[/dim]")
+                    prefix = f"[{self.iteration}/{self.config.max_iterations}] → "
+                    if on_status:
+                        for ts in tool_strs:
+                            on_status(f"{prefix}{ts}")
                     else:
-                        for i, ts in enumerate(tool_strs):
-                            if i == 0:
-                                console.print(f"{prefix}{ts}[/dim]")
-                            else:
-                                console.print(f"[dim]          {ts}[/dim]")
-                await self._execute_tool_calls(response, verbose, on_event=on_event)
+                        dim_prefix = f"[dim]{prefix}"
+                        if len(tool_strs) == 1:
+                            console.print(f"{dim_prefix}{tool_strs[0]}[/dim]")
+                        else:
+                            for i, ts in enumerate(tool_strs):
+                                if i == 0:
+                                    console.print(f"{dim_prefix}{ts}[/dim]")
+                                else:
+                                    console.print(f"[dim]          {ts}[/dim]")
+                await self._execute_tool_calls(
+                    response, verbose, on_event=on_event, on_status=on_status,
+                )
                 self._maybe_switch_model(response.tool_calls)
             else:
                 # No tool calls means the agent has finished
@@ -644,19 +659,24 @@ When an email, document, or conversation implies that information is available o
         )
         return flat
 
-    async def _get_llm_response(self, stream: bool = False, verbose: bool = False) -> LLMResponse:
+    async def _get_llm_response(
+        self,
+        stream: bool = False,
+        verbose: bool = False,
+        stream_callback: Callable[[str], None] | None = None,
+    ) -> LLMResponse:
         """Get a response from the LLM."""
         tools = self._get_tool_schemas()
         system_prompt = self._build_system_prompt()
         messages = self._cap_messages(self.messages)
         messages = self._trim_messages_to_fit(messages, system_prompt, tools)
 
-        stream_callback = None
-        if stream:
-            # Create a streaming callback that prints text as it arrives
+        cb = stream_callback
+        if stream and cb is None:
+            # Default: create a streaming callback that prints text as it arrives
             first_chunk = [True]  # Use list to allow mutation in closure
 
-            def stream_callback(text: str) -> None:
+            def cb(text: str) -> None:
                 if first_chunk[0]:
                     console.print("\n[bold green]A:[/bold green] ", end="")
                     first_chunk[0] = False
@@ -666,7 +686,7 @@ When an email, document, or conversation implies that information is available o
             messages=messages,
             tools=tools if tools else None,
             system_prompt=system_prompt,
-            stream_callback=stream_callback,
+            stream_callback=cb,
         )
 
         # Track token usage
@@ -691,8 +711,8 @@ When an email, document, or conversation implies that information is available o
             except Exception:
                 pass
 
-        # Print newline after streaming completes
-        if stream and response.content:
+        # Print newline after streaming completes (only for default console streaming)
+        if stream and response.content and cb is not None and stream_callback is None:
             console.print()  # End the streamed line
 
         return response
@@ -702,6 +722,7 @@ When an email, document, or conversation implies that information is available o
         response: LLMResponse,
         verbose: bool = False,
         on_event: Callable[[dict[str, Any]], None] | None = None,
+        on_status: Callable[[str], None] | None = None,
     ) -> None:
         """Execute tool calls from the LLM response."""
         # Add assistant message with tool calls to history
@@ -769,6 +790,11 @@ When an email, document, or conversation implies that information is available o
                 else:
                     console.print(f"  [red]✗ Failed ({elapsed_str})[/red]")
                     console.print(f"  [red]Error:[/red] {result.error}")
+            elif on_status:
+                if result.success:
+                    on_status(f"  ✓ {tool_call.name} ({elapsed_str})")
+                else:
+                    on_status(f"  ✗ {tool_call.name} failed ({elapsed_str}): {result.error}")
             else:
                 if result.success:
                     console.print(f"[dim]  ✓ {tool_call.name} ({elapsed_str})[/dim]")

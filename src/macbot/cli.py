@@ -419,21 +419,28 @@ def cmd_chat(args: argparse.Namespace) -> None:
         asyncio.run(stdio_loop(agent, verbose=args.verbose))
         return
 
-    skills = agent.skills_registry.list_enabled_skills()
-    skill_names = ", ".join(s.name for s in skills)
-    console.print(Panel(
-        f"[bold]Son of Simon[/bold] v{__version__}\n\n"
-        f"Model: {settings.model}\n"
-        f"Tasks available: {len(registry)}\n"
-        f"Skills ({len(skills)}): {skill_names}",
-        title="Welcome"
-    ))
+    if getattr(args, "classic", False):
+        # Classic readline-based interactive mode
+        skills = agent.skills_registry.list_enabled_skills()
+        skill_names = ", ".join(s.name for s in skills)
+        console.print(Panel(
+            f"[bold]Son of Simon[/bold] v{__version__}\n\n"
+            f"Model: {settings.model}\n"
+            f"Tasks available: {len(registry)}\n"
+            f"Skills ({len(skills)}): {skill_names}",
+            title="Welcome"
+        ))
+        asyncio.run(interactive_loop(
+            agent,
+            verbose=args.verbose,
+            debug_context=getattr(args, "debug_context", False),
+        ))
+        return
 
-    asyncio.run(interactive_loop(
-        agent,
-        verbose=args.verbose,
-        debug_context=getattr(args, "debug_context", False),
-    ))
+    # Full-screen TUI (default)
+    from macbot.tui import ChatApp
+    app = ChatApp(agent=agent)
+    app.run()
 
 
 def cmd_run(args: argparse.Namespace) -> None:
@@ -479,6 +486,7 @@ def cmd_run(args: argparse.Namespace) -> None:
 
     registry = create_default_registry()
     agent = Agent(registry)
+    should_continue = [False]
 
     async def _run() -> None:
         # Execute the initial goal
@@ -510,11 +518,16 @@ def cmd_run(args: argparse.Namespace) -> None:
             console.print("[bold green]A:[/bold green]", end=" ")
             console.print(Markdown(result))
 
-        # Continue to interactive mode if requested
         if args.continue_chat:
-            await interactive_loop(agent, verbose=verbose)
+            should_continue[0] = True
 
     asyncio.run(_run())
+
+    # Continue to interactive TUI after the initial goal completes
+    if should_continue[0]:
+        from macbot.tui import ChatApp
+        app = ChatApp(agent=agent)
+        app.run()
 
 
 def cmd_task(args: argparse.Namespace) -> None:
@@ -856,7 +869,12 @@ def cmd_version(args: argparse.Namespace) -> None:
 def cmd_start(args: argparse.Namespace) -> None:
     """Start the macbot service (cron + telegram)."""
     from macbot.service import run_service
-    run_service(daemon=args.daemon, verbose=args.verbose, foreground=args.foreground)
+    run_service(
+        daemon=args.daemon,
+        verbose=args.verbose,
+        foreground=args.foreground,
+        classic=getattr(args, "classic", False),
+    )
 
 
 def cmd_connect(args: argparse.Namespace) -> None:
@@ -3566,6 +3584,10 @@ Use [bold]son <command> --help[/bold] for command details.
         "-v", "--verbose", action="store_true",
         help="Show detailed output"
     )
+    start_parser.add_argument(
+        "--classic", action="store_true",
+        help="Use classic readline-based interface instead of full-screen TUI"
+    )
     start_parser.set_defaults(func=cmd_start)
 
     # Connect command
@@ -3638,6 +3660,10 @@ Use [bold]son <command> --help[/bold] for command details.
     chat_parser.add_argument(
         "--debug-context", action="store_true",
         help="Print a compact view of the conversation context after each turn"
+    )
+    chat_parser.add_argument(
+        "--classic", action="store_true",
+        help="Use classic readline-based interface instead of full-screen TUI"
     )
     chat_parser.set_defaults(func=cmd_chat)
 
