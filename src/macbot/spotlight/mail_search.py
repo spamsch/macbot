@@ -695,7 +695,7 @@ class MailSearchIndex:
 
         return results
 
-    def _resolve_message_url(self, row: dict) -> None:
+    def _resolve_message_url(self, row: dict[str, Any]) -> None:
         """Lazily resolve the message:// URL for a row."""
         emlx_path = row.get('emlx_path')
         if not emlx_path:
