@@ -144,16 +144,19 @@ class SearchEmailsTask(Task):
     @property
     def description(self) -> str:
         return (
-            "Search emails in Mail.app. Can search by sender, subject, message_id, or list all emails in an account. "
+            "Search emails in Mail.app. Can search by sender, recipient, subject, message_id, or list all emails in an account. "
+            "Use recipient to find emails SENT TO someone (searches To and CC fields). "
             "IMPORTANT: 'emails from X account' means emails RECEIVED BY that account (use account parameter), "
             "not emails FROM that sender. Use message_id for precise lookup of a specific email. "
-            "Use with_content=True to include the full email body text (needed to read what an email says). "
+            "IMPORTANT: When the user asks to READ an email, see its content/body, or wants to know WHAT an email says, "
+            "you MUST set with_content=True in the FIRST search call — without it you only get a short snippet. "
             "Add with_links=True to also extract hyperlinks from HTML emails (slower, only when URLs are needed)."
         )
 
     async def execute(
         self,
         sender: str | None = None,
+        recipient: str | None = None,
         subject: str | None = None,
         message_id: str | None = None,
         account: str | None = None,
@@ -169,6 +172,7 @@ class SearchEmailsTask(Task):
 
         Args:
             sender: Search for emails from sender containing this pattern.
+            recipient: Search for emails sent to recipient (To/CC) containing this pattern.
             subject: Search for emails with subject containing this pattern.
             message_id: Search for specific email by Message-ID (fast direct lookup).
             account: Search in specified account (e.g., "waas.rent" for all emails in that account).
@@ -183,40 +187,103 @@ class SearchEmailsTask(Task):
         Returns:
             Dictionary with matching emails.
         """
-        if not sender and not subject and not account and not message_id and not today_only and not days:
-            return {"success": False, "error": "Must specify sender, subject, message_id, account, today_only, or days"}
+        if not sender and not recipient and not subject and not account and not message_id and not today_only and not days:
+            return {"success": False, "error": "Must specify sender, recipient, subject, message_id, account, today_only, or days"}
 
-        args = []
-        if sender:
-            args.extend(["--sender", sender])
-        if subject:
-            args.extend(["--subject", subject])
-        if message_id:
-            args.extend(["--message-id", message_id])
-        if account:
-            args.extend(["--account", account])
-        if mailbox:
-            args.extend(["--mailbox", mailbox])
-        if today_only:
-            args.append("--today")
-        if days:
-            args.extend(["--days", str(days)])
-        if all_mailboxes:
-            args.append("--all-mailboxes")
-        if with_content:
-            args.append("--with-content")
-        if with_links:
-            args.append("--with-links")
-        args.extend(["--limit", str(limit)])
+        # Use Core Spotlight index for all searches
+        return await self._try_spotlight_search(
+            sender=sender, recipient=recipient, subject=subject,
+            message_id=message_id, account=account, mailbox=mailbox,
+            today_only=today_only, days=days, limit=limit,
+            with_content=with_content, with_links=with_links,
+        )
 
-        # Metadata-only search: try fast SQLite path first
-        if not with_content and not with_links:
-            result = await run_script("mail/search-emails-sqlite.sh", args, timeout=10)
-            if result.get("success"):
-                return result
-            # SQLite failed — fall through to AppleScript silently
+    async def _try_spotlight_search(
+        self,
+        sender: str | None = None,
+        recipient: str | None = None,
+        subject: str | None = None,
+        message_id: str | None = None,
+        account: str | None = None,
+        mailbox: str | None = None,
+        today_only: bool = False,
+        days: int | None = None,
+        limit: int = 20,
+        with_content: bool = False,
+        with_links: bool = False,
+    ) -> dict[str, Any]:
+        """Search using the Core Spotlight index."""
+        try:
+            import asyncio
+            from macbot.spotlight.mail_search import MailSearchIndex
 
-        return await run_script("mail/search-emails.sh", args, timeout=60)
+            # Convert message_id string to int if provided
+            msg_id_int = None
+            if message_id:
+                try:
+                    msg_id_int = int(message_id)
+                except ValueError:
+                    return {
+                        "success": False,
+                        "error": f"Spotlight search only supports numeric message_id values; got {message_id!r}",
+                    }
+
+            def _search() -> tuple[bool, list[dict[str, Any]]]:
+                index = MailSearchIndex()
+                # Auto-rebuild if index is empty or stale
+                if index.message_count() == 0 or index.needs_rebuild():
+                    try:
+                        index.rebuild()
+                    except FileNotFoundError:
+                        index.close()
+                        return (False, [])
+                results = index.search(
+                    sender=sender, recipient=recipient, subject=subject,
+                    message_id=msg_id_int, account=account, mailbox=mailbox,
+                    today_only=today_only, days=days, limit=limit,
+                    with_content=with_content, with_links=with_links,
+                )
+                index.close()
+                return (True, results)
+
+            loop = asyncio.get_running_loop()
+            has_data, results = await loop.run_in_executor(None, _search)
+
+            if not has_data:
+                return {"success": False, "error": "Spotlight mail index is empty — run 'son start' to build it, or run 'python -m macbot.spotlight.mail_search --rebuild'"}
+
+            emails = []
+            for r in results:
+                email = {
+                    "subject": r.get("subject", ""),
+                    "sender": r.get("sender", ""),
+                    "recipients": r.get("recipients", ""),
+                    "date": r.get("date_received", ""),
+                    "is_read": bool(r.get("is_read")),
+                    "snippet": r.get("snippet", "")[:200],
+                }
+                if r.get("content"):
+                    email["content"] = r["content"]
+                if r.get("cc_recipients"):
+                    email["cc_recipients"] = r["cc_recipients"]
+                if r.get("attachment_names"):
+                    email["attachments"] = r["attachment_names"]
+                if r.get("account"):
+                    email["account"] = r["account"]
+                if r.get("mailboxes"):
+                    email["mailbox"] = r["mailboxes"]
+                if r.get("mail_message_id"):
+                    email["mail_message_id"] = r["mail_message_id"]
+                emails.append(email)
+
+            return {
+                "success": True,
+                "source": "spotlight",
+                "count": len(emails),
+                "emails": emails,
+            }
+        except Exception as e:
+            return {"success": False, "error": f"Spotlight search failed: {e}"}
 
 
 class SendEmailTask(Task):
