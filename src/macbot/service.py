@@ -19,6 +19,7 @@ from typing import Any
 
 from macbot.config import settings
 from macbot.core.agent import Agent
+from macbot.core.channel import Channel, ChannelKind, ChannelRegistry
 from macbot.cron import CronPayload, CronService
 from macbot.tasks import create_default_registry
 from macbot.usage import UsageTracker
@@ -156,11 +157,22 @@ class MacbotService:
         """
         from rich.console import Console
         self.registry = create_default_registry()
-        self.agent = Agent(self.registry)  # Default agent for cron jobs
-        self._chat_agents: dict[str, Agent] = {}  # Per-chat agents for Telegram conversations
-        self._agent_queues: dict[str, AgentQueue] = {}  # Per-chat queues
-        self._cron_queue: AgentQueue | None = None  # Queue for cron/heartbeat
-        self._default_queue: AgentQueue | None = None  # Queue for stdin/socket
+        self.channels = ChannelRegistry(self.registry)
+        # Create built-in channels
+        self.channels.get_or_create("main", ChannelKind.MAIN, name="Main")
+        self.channels.get_or_create("tasks", ChannelKind.TASKS, name="Tasks")
+        self.channels.get_or_create("heartbeat", ChannelKind.HEARTBEAT, name="Heartbeat")
+        # Load persisted custom channels
+        self.channels.load_custom_channels()
+        # Register channel management tasks
+        from macbot.tasks.channels import register_channel_tasks
+        register_channel_tasks(self.registry, self.channels)
+        # Backwards-compat aliases
+        self.agent = self.channels.get("main").agent
+        self._agent_queues: dict[str, AgentQueue] = {}  # Per-channel queues
+        self._cron_queue: AgentQueue | None = None  # Queue for tasks channel
+        self._heartbeat_queue: AgentQueue | None = None  # Queue for heartbeat channel
+        self._default_queue: AgentQueue | None = None  # Queue for main channel (stdin/socket)
         self._console = Console(stderr=True) if stderr_console else Console()
         self.cron_service: CronService | None = None
         self.telegram_service = None
@@ -170,28 +182,20 @@ class MacbotService:
         self._socket_server: asyncio.Server | None = None
 
     def reload_skills(self) -> None:
-        """Reload skills from disk for all agents.
+        """Reload skills from disk for all channel agents.
 
         Called via SIGHUP signal when skills are added/modified.
         """
         logger.info("Reloading skills...")
-
-        # Reload the main agent's skills registry
-        self.agent.skills_registry.reload()
-
-        # Reload skills for all chat agents
-        for chat_id, agent in self._chat_agents.items():
-            agent.skills_registry.reload()
-            logger.debug(f"Reloaded skills for chat {chat_id}")
-
+        self.channels.reload_skills()
         skill_count = len(self.agent.skills_registry)
         enabled_count = len(self.agent.skills_registry.list_enabled_skills())
         logger.info(f"Skills reloaded: {enabled_count}/{skill_count} enabled")
 
     def _get_chat_agent(self, chat_id: str) -> Agent:
-        """Get or create an agent for a specific chat.
+        """Get or create an agent for a specific Telegram chat.
 
-        Each chat gets its own agent instance to maintain conversation history.
+        Each chat gets its own channel with an isolated agent instance.
 
         Args:
             chat_id: The Telegram chat ID
@@ -199,9 +203,11 @@ class MacbotService:
         Returns:
             Agent instance for this chat
         """
-        if chat_id not in self._chat_agents:
-            self._chat_agents[chat_id] = Agent(self.registry)
-        return self._chat_agents[chat_id]
+        channel_id = f"telegram:{chat_id}"
+        ch = self.channels.get_or_create(
+            channel_id, ChannelKind.TELEGRAM, name=f"Telegram {chat_id}"
+        )
+        return ch.agent
 
     def _get_agent_queue(self, chat_id: str) -> AgentQueue:
         """Get or create a queue for a specific chat agent.
@@ -212,29 +218,49 @@ class MacbotService:
         Returns:
             AgentQueue wrapping the per-chat agent
         """
-        if chat_id not in self._agent_queues:
+        channel_id = f"telegram:{chat_id}"
+        if channel_id not in self._agent_queues:
             agent = self._get_chat_agent(chat_id)
             queue = AgentQueue(agent)
-            self._agent_queues[chat_id] = queue
+            self._agent_queues[channel_id] = queue
             # Start consumer task if service is running
             if self._running:
                 self._tasks.append(asyncio.create_task(queue.run_consumer()))
-        return self._agent_queues[chat_id]
+        return self._agent_queues[channel_id]
 
-    def _get_default_queue(self) -> AgentQueue:
-        """Get the default queue shared by stdin/socket clients.
+    def _get_channel_queue(self, channel_id: str) -> AgentQueue:
+        """Get or create a queue for any channel.
 
-        Uses the primary Telegram chat agent if configured, else the
-        default agent.
+        Args:
+            channel_id: The channel ID
 
         Returns:
-            AgentQueue for the default/shared agent
+            AgentQueue wrapping the channel's agent
+        """
+        if channel_id not in self._agent_queues:
+            ch = self.channels.get(channel_id)
+            if ch is None:
+                raise KeyError(f"Channel '{channel_id}' does not exist")
+            queue = AgentQueue(ch.agent)
+            self._agent_queues[channel_id] = queue
+            if self._running:
+                self._tasks.append(asyncio.create_task(queue.run_consumer()))
+        return self._agent_queues[channel_id]
+
+    def _get_default_queue(self) -> AgentQueue:
+        """Get the default queue for the main channel.
+
+        Uses the primary Telegram chat agent if configured (shared context),
+        else the main channel agent.
+
+        Returns:
+            AgentQueue for the main/default agent
         """
         if self._default_queue is None:
             if settings.telegram_chat_id:
                 agent = self._get_chat_agent(settings.telegram_chat_id)
             else:
-                agent = self.agent
+                agent = self.channels.get("main").agent
             self._default_queue = AgentQueue(agent)
         return self._default_queue
 
@@ -368,8 +394,9 @@ class MacbotService:
 
             # Handle special commands (only for plain text)
             if isinstance(content, str) and content.strip().lower() in ("/reset", "/clear", "/new"):
-                if chat_id in self._chat_agents:
-                    self._chat_agents[chat_id].reset()
+                ch = self.channels.get(f"telegram:{chat_id}")
+                if ch is not None:
+                    ch.reset()
                 reply = "Conversation cleared. Starting fresh!"
                 if self._emit:
                     self._emit({"type": "telegram_message", "text": reply, "chat_id": chat_id, "direction": "outgoing"})
@@ -383,9 +410,9 @@ class MacbotService:
                 tools_called: list[str] = []
 
                 def _combined_emit(obj: dict) -> None:
-                    # Forward to GUI
+                    # Forward to GUI with channel tag
                     if self._emit:
-                        self._emit(obj)
+                        self._emit({**obj, "channel": f"telegram:{chat_id}"})
                     # Track tool calls for Telegram progress
                     if obj.get("type") == "tool_call":
                         tools_called.append(obj.get("name", "?"))
@@ -481,7 +508,7 @@ class MacbotService:
 
                 self._console.print(f"\n[{timestamp}] 💓 Heartbeat: {content[:100]}{'...' if len(content) > 100 else ''}")
                 logger.info(f"Heartbeat: Running '{content[:50]}...'")
-                result = await self._cron_queue.submit(content)
+                result = await self._heartbeat_queue.submit(content)
                 logger.info(f"Heartbeat: Completed, result length: {len(result)}")
                 from rich.markdown import Markdown
                 from rich.panel import Panel
@@ -662,7 +689,15 @@ class MacbotService:
             except Exception:
                 return None
 
-        _emit({"type": "ready"})
+        # Emit ready with channel info
+        _emit({
+            "type": "ready",
+            "channels": [
+                {"id": c.id, "name": c.name, "kind": c.kind.value}
+                for c in self.channels.list_channels()
+            ],
+            "active_channel": self.channels.active_id,
+        })
 
         while self._running:
             try:
@@ -685,6 +720,34 @@ class MacbotService:
                     continue
 
                 msg_type = msg.get("type")
+
+                # Channel management commands
+                if msg_type == "channel_list":
+                    _emit({
+                        "type": "channel_list",
+                        "channels": [
+                            {"id": c.id, "name": c.name, "kind": c.kind.value,
+                             "messages": len(c.agent.messages),
+                             "active": c.id == self.channels.active_id}
+                            for c in self.channels.list_channels()
+                        ],
+                    })
+                    continue
+
+                if msg_type == "channel_switch":
+                    target = msg.get("channel", "")
+                    try:
+                        ch = self.channels.switch(target)
+                        queue = self._get_channel_queue(target)
+                        _emit({
+                            "type": "channel_switch",
+                            "channel": ch.id,
+                            "name": ch.name,
+                            "kind": ch.kind.value,
+                        })
+                    except KeyError:
+                        _emit({"type": "error", "text": f"Channel '{target}' not found"})
+                    continue
 
                 if msg_type == "audio_message":
                     # Voice-to-text: transcribe then process as normal message
@@ -711,8 +774,13 @@ class MacbotService:
                     continue
 
                 try:
-                    result = await queue.submit(text, emit=_emit)
-                    _emit({"type": "chunk", "text": result})
+                    active_ch = self.channels.active_id
+
+                    def _channel_emit(obj: dict) -> None:
+                        _emit({**obj, "channel": active_ch})
+
+                    result = await queue.submit(text, emit=_channel_emit)
+                    _emit({"type": "chunk", "text": result, "channel": active_ch})
                 except Exception as e:
                     _emit({"type": "error", "text": str(e)})
 
@@ -720,6 +788,7 @@ class MacbotService:
                     "type": "done",
                     **queue.agent.get_interaction_cost(),
                     "monthly": queue._usage_tracker.get_monthly_summary(),
+                    "channel": self.channels.active_id,
                 })
 
             except EOFError:
@@ -922,8 +991,13 @@ class MacbotService:
                     continue
 
                 try:
-                    result = await queue.submit(text, emit=_emit)
-                    _emit({"type": "chunk", "text": result})
+                    active_ch = self.channels.active_id
+
+                    def _channel_emit(obj: dict) -> None:
+                        _emit({**obj, "channel": active_ch})
+
+                    result = await queue.submit(text, emit=_channel_emit)
+                    _emit({"type": "chunk", "text": result, "channel": active_ch})
                 except Exception as e:
                     _emit({"type": "error", "text": str(e)})
 
@@ -931,6 +1005,7 @@ class MacbotService:
                     "type": "done",
                     **queue.agent.get_interaction_cost(),
                     "monthly": queue._usage_tracker.get_monthly_summary(),
+                    "channel": self.channels.active_id,
                 })
                 await writer.drain()
 
@@ -973,11 +1048,17 @@ class MacbotService:
         has_cron = self._setup_cron()
         has_telegram = self._setup_telegram()
 
-        # Initialize cron queue (shared by cron jobs and heartbeat)
-        self._cron_queue = AgentQueue(self.agent)
+        # Initialize tasks channel queue (for cron jobs)
+        tasks_ch = self.channels.get("tasks")
+        self._cron_queue = AgentQueue(tasks_ch.agent)
         self._tasks.append(asyncio.create_task(self._cron_queue.run_consumer()))
 
-        # Initialize default queue (shared by stdin/socket/interactive)
+        # Initialize heartbeat channel queue (separate from tasks)
+        heartbeat_ch = self.channels.get("heartbeat")
+        self._heartbeat_queue = AgentQueue(heartbeat_ch.agent)
+        self._tasks.append(asyncio.create_task(self._heartbeat_queue.run_consumer()))
+
+        # Initialize default queue (main channel, shared by stdin/socket/interactive)
         default_queue = self._get_default_queue()
         self._tasks.append(asyncio.create_task(default_queue.run_consumer()))
 
@@ -1033,9 +1114,14 @@ class MacbotService:
         # Stop socket server
         await self._stop_socket_server()
 
+        # Save all channel sessions before stopping
+        self.channels.save_all_sessions()
+
         # Stop all queues
         if self._cron_queue:
             self._cron_queue.stop()
+        if self._heartbeat_queue:
+            self._heartbeat_queue.stop()
         if self._default_queue:
             self._default_queue.stop()
         for q in self._agent_queues.values():
@@ -1212,8 +1298,11 @@ def run_service(
                 # Full-screen TUI mode (default)
                 try:
                     from macbot.tui import ChatApp
-                    queue = service._get_default_queue()
-                    app = ChatApp(queue=queue, service_mode=True, service=service)
+                    app = ChatApp(
+                        service_mode=True,
+                        service=service,
+                        channels=service.channels,
+                    )
                     app.run()
                 except ImportError:
                     # Fallback to classic interactive mode if textual not available

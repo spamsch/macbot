@@ -1,6 +1,6 @@
 <script lang="ts">
   import { Button } from "$lib/components/ui";
-  import { chatStore, type ChatMessage, type ToolCall } from "$lib/stores/chat.svelte";
+  import { chatStore, type ChatMessage, type ToolCall, type ChannelInfo } from "$lib/stores/chat.svelte";
   import { marked } from "marked";
   import { openUrl } from "@tauri-apps/plugin-opener";
   import { onMount } from "svelte";
@@ -40,6 +40,7 @@
   let inputEl: HTMLTextAreaElement | undefined = $state();
   let transcriptEl: HTMLDivElement | undefined = $state();
   let showHistory = $state(false);
+  let showChannels = $state(false);
 
   // Audio recording state
   let isRecording = $state(false);
@@ -249,6 +250,22 @@
     showHistory = false;
   }
 
+  async function handleSwitchChannel(channelId: string) {
+    await chatStore.switchChannel(channelId);
+    showChannels = false;
+  }
+
+  function channelKindIcon(kind: string): string {
+    switch (kind) {
+      case "main": return "💬";
+      case "tasks": return "⏰";
+      case "heartbeat": return "💓";
+      case "telegram": return "📱";
+      case "custom": return "📌";
+      default: return "📋";
+    }
+  }
+
   async function handleLoadConversation(id: string) {
     await chatStore.loadConversation(id);
     showHistory = false;
@@ -286,6 +303,44 @@
       <div class="flex items-center justify-between p-4 border-b border-border">
         <div class="flex items-center gap-3">
           <h2 class="text-lg font-bold text-text">Chat</h2>
+          <!-- Channel selector -->
+          {#if chatStore.channels.length > 0}
+            <div class="relative">
+              <button
+                type="button"
+                class="flex items-center gap-1 px-2 py-1 text-xs text-text-muted hover:text-text hover:bg-bg-input rounded-lg transition-colors"
+                onclick={() => { showChannels = !showChannels; if (showChannels) chatStore.requestChannelList(); }}
+                title="Switch channel"
+              >
+                <span>{channelKindIcon(chatStore.channels.find(c => c.id === chatStore.activeChannelId)?.kind ?? "main")}</span>
+                <span class="font-medium">{chatStore.activeChannelName}</span>
+                <ChevronDown class="w-3 h-3 transition-transform {showChannels ? 'rotate-180' : ''}" />
+              </button>
+              {#if showChannels}
+                <div class="absolute top-full left-0 mt-1 w-56 max-h-64 overflow-y-auto bg-bg-card border border-border rounded-xl shadow-lg z-10">
+                  {#each chatStore.channels as ch (ch.id)}
+                    <button
+                      type="button"
+                      class="w-full text-left px-3 py-2 hover:bg-bg-input transition-colors border-b border-border/50 last:border-b-0
+                        {ch.id === chatStore.activeChannelId ? 'bg-primary/10' : ''}"
+                      onclick={() => handleSwitchChannel(ch.id)}
+                    >
+                      <div class="flex items-center gap-2">
+                        <span>{channelKindIcon(ch.kind)}</span>
+                        <div class="flex-1 min-w-0">
+                          <div class="text-sm text-text truncate">{ch.name}</div>
+                          <div class="text-[10px] text-text-muted">{ch.kind}{ch.messages ? ` · ${ch.messages} msgs` : ""}</div>
+                        </div>
+                        {#if ch.id === chatStore.activeChannelId}
+                          <Check class="w-3.5 h-3.5 text-success flex-shrink-0" />
+                        {/if}
+                      </div>
+                    </button>
+                  {/each}
+                </div>
+              {/if}
+            </div>
+          {/if}
           <div class="flex items-center gap-1.5">
             {#if chatStore.connectionState === "connected"}
               <Wifi class="w-3.5 h-3.5 {statusColor(chatStore.connectionState)}" />

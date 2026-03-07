@@ -22,6 +22,7 @@ from textual.widgets import Footer, Markdown, Static, TextArea
 from macbot import __version__
 from macbot.config import settings
 from macbot.core.agent import Agent
+from macbot.core.channel import ChannelKind, ChannelRegistry
 from macbot.providers.base import Message
 from macbot.tasks import create_default_registry
 from macbot.tui import history
@@ -159,11 +160,28 @@ class ChatCommands(Provider):
         yield Hit(0.9, "Show stats", app.action_show_stats, help="Token usage statistics")
         yield Hit(0.8, "Show tasks", app._show_tasks, help="List available agent tasks")
         yield Hit(0.7, "Sessions", app._show_sessions, help="List saved sessions")
+        yield Hit(0.6, "Channels", app._show_channels, help="List all channels")
         yield Hit(0.5, "Quit", app.action_quit, help="Exit the application")
+
+        # List channels as switchable items
+        if app._channels is not None:
+            for ch in app._channels.list_channels():
+                active = " (active)" if ch.id == app._channels.active_id else ""
+                msg_count = len(ch.agent.messages)
+
+                def _make_switcher(_cid: str = ch.id) -> None:
+                    app._switch_channel(_cid)
+
+                yield Hit(
+                    0.55,
+                    f"Switch to channel: {ch.name}{active}",
+                    _make_switcher,
+                    help=f"{ch.id} · {ch.kind.value} · {msg_count} msgs",
+                )
 
         # List saved sessions as loadable items
         sessions = history.list_sessions()
-        for s in sessions[:15]:
+        for s in sessions[:5]:
             sid = s["id"]
             title = s["title"] or "(untitled)"
             if len(title) > 50:
@@ -271,9 +289,12 @@ class ChatApp(App[None]):
         agent: Agent | None = None,
         service_mode: bool = False,
         service: Any | None = None,
+        channels: ChannelRegistry | None = None,
+        **kwargs: Any,
     ) -> None:
         super().__init__()
         self._agent = agent
+        self._channels = channels
         self._service_mode = service_mode
         self._service = service
         self._cancel_event: asyncio.Event | None = None
@@ -288,12 +309,18 @@ class ChatApp(App[None]):
         yield Footer()
 
     async def on_mount(self) -> None:
-        if self._agent is None:
+        if self._channels is not None:
+            # Use the active channel's agent
+            self._agent = self._channels.active.agent
+        elif self._agent is None:
             registry = create_default_registry()
             self._agent = Agent(registry)
 
         bar = self.query_one("#status-bar", StatusBar)
-        bar.model_name = settings.model
+        if self._channels is not None:
+            bar.model_name = f"{settings.model} | {self._channels.active.name}"
+        else:
+            bar.model_name = settings.model
         bar.task_count = len(self._agent.task_registry)
 
         # Start a fresh session
@@ -326,7 +353,8 @@ class ChatApp(App[None]):
             return
         if cmd == "help":
             self._add_md(
-                "**Commands:** quit, clear, stats, help, tasks, sessions, load &lt;id&gt;\n\n"
+                "**Commands:** quit, clear, stats, help, tasks, sessions, load &lt;id&gt;, "
+                "channels, ch &lt;id&gt;, channel new &lt;name&gt;, channel close &lt;id&gt;\n\n"
                 "**Keys:** Enter=send, Shift+Enter=newline, Escape=cancel, "
                 "Ctrl+P=command palette, Ctrl+L=clear, Ctrl+T=stats"
             )
@@ -339,6 +367,26 @@ class ChatApp(App[None]):
             return
         if cmd.startswith("load "):
             self._load_session(text[5:].strip())
+            return
+        if cmd in ("channels", "ch"):
+            self._show_channels()
+            return
+        if cmd.startswith("ch ") or cmd.startswith("channel switch "):
+            target = text.split(maxsplit=2)[-1].strip() if " " in text else ""
+            if target:
+                self._switch_channel(target)
+            else:
+                self._show_channels()
+            return
+        if cmd.startswith("channel new "):
+            name = text[len("channel new "):].strip()
+            if name:
+                self._create_channel(name)
+            return
+        if cmd.startswith("channel close "):
+            cid = text[len("channel close "):].strip()
+            if cid:
+                self._close_channel(cid)
             return
 
         self._add_text(f"You: {text}", "msg-user")
@@ -532,6 +580,71 @@ class ChatApp(App[None]):
         area = self.query_one("#messages", VerticalScroll)
         area.scroll_end(animate=False)
         self._add_text(f"Session '{session_id}' loaded.", "msg-status")
+
+    # ----- Channel management -----
+
+    def _show_channels(self) -> None:
+        if self._channels is None:
+            self._add_text("Channels not available (not in service mode).", "msg-status")
+            return
+        lines = ["**Channels** (use command palette to switch)\n"]
+        for ch in self._channels.list_channels():
+            active = " **[active]**" if ch.id == self._channels.active_id else ""
+            msg_count = len(ch.agent.messages)
+            lines.append(f"- `{ch.id}` {ch.name} ({ch.kind.value}, {msg_count} msgs){active}")
+        self._add_md("\n".join(lines))
+
+    def _switch_channel(self, channel_id: str) -> None:
+        if self._channels is None:
+            self._add_text("Channels not available.", "msg-error")
+            return
+        try:
+            ch = self._channels.switch(channel_id)
+        except KeyError:
+            self._add_text(f"Channel '{channel_id}' not found.", "msg-error")
+            return
+
+        # Switch agent and clear UI
+        self._agent = ch.agent
+        self.query_one("#messages", VerticalScroll).remove_children()
+
+        # Create a new session for this channel view
+        self._session_id = history.create_session()
+
+        # Replay existing agent messages into UI
+        for msg in ch.agent.messages:
+            if msg.role == "user":
+                self._add_text(f"You: {msg.content_text}", "msg-user")
+            elif msg.role == "assistant" and not msg.tool_calls:
+                self._add_md(msg.content_text)
+                self._add_text("─" * 60, "msg-sep")
+
+        self._update_token_bar()
+        bar = self.query_one("#status-bar", StatusBar)
+        bar.model_name = f"{settings.model} | {ch.name}"
+        self._add_text(f"Switched to channel: {ch.name} ({ch.id})", "msg-status")
+
+    def _create_channel(self, name: str) -> None:
+        if self._channels is None:
+            self._add_text("Channels not available.", "msg-error")
+            return
+        try:
+            ch = self._channels.create_custom_channel(name)
+            self._add_text(f"Created channel: {ch.name} ({ch.id})", "msg-status")
+        except ValueError as e:
+            self._add_text(str(e), "msg-error")
+
+    def _close_channel(self, channel_id: str) -> None:
+        if self._channels is None:
+            self._add_text("Channels not available.", "msg-error")
+            return
+        if self._channels.close(channel_id):
+            self._add_text(f"Closed channel: {channel_id}", "msg-status")
+            # If we closed the active channel, switch to main
+            if self._channels.active_id == "main" and channel_id != "main":
+                self._switch_channel("main")
+        else:
+            self._add_text(f"Cannot close '{channel_id}' (not found or not a custom channel).", "msg-error")
 
     # ----- Actions -----
 

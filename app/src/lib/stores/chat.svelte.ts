@@ -39,6 +39,14 @@ export interface ConversationSummary {
   updatedAt: number;
 }
 
+export interface ChannelInfo {
+  id: string;
+  name: string;
+  kind: string;
+  messages?: number;
+  active?: boolean;
+}
+
 interface ConversationFile {
   id: string;
   title: string;
@@ -71,6 +79,8 @@ class ChatStore {
   private _monthlyCost = $state(0);
   private _monthlyTokens = $state(0);
   private _monthlyInteractions = $state(0);
+  private _channels = $state<ChannelInfo[]>([]);
+  private _activeChannelId = $state<string>("main");
 
   get messages() {
     return this._messages;
@@ -134,6 +144,19 @@ class ChatStore {
 
   get monthlyInteractions() {
     return this._monthlyInteractions;
+  }
+
+  get channels() {
+    return this._channels;
+  }
+
+  get activeChannelId() {
+    return this._activeChannelId;
+  }
+
+  get activeChannelName(): string {
+    const ch = this._channels.find((c) => c.id === this._activeChannelId);
+    return ch?.name ?? this._activeChannelId;
   }
 
   private async getHistoryDir(): Promise<string> {
@@ -434,6 +457,18 @@ class ChatStore {
     await this.connect();
   }
 
+  async switchChannel(channelId: string) {
+    if (!this._child || this._connectionState !== "connected") return;
+    const payload = JSON.stringify({ type: "channel_switch", channel: channelId }) + "\n";
+    await this._child.write(payload);
+  }
+
+  async requestChannelList() {
+    if (!this._child || this._connectionState !== "connected") return;
+    const payload = JSON.stringify({ type: "channel_list" }) + "\n";
+    await this._child.write(payload);
+  }
+
   clear() {
     this.newConversation();
   }
@@ -460,7 +495,25 @@ class ChatStore {
       switch (msg.type) {
         case "ready":
           this._connectionState = "connected";
+          // Load channel info from ready message
+          if (msg.channels) {
+            this._channels = msg.channels as ChannelInfo[];
+          }
+          if (msg.active_channel) {
+            this._activeChannelId = msg.active_channel as string;
+          }
           break;
+
+        case "channel_list":
+          this._channels = (msg.channels ?? []) as ChannelInfo[];
+          break;
+
+        case "channel_switch": {
+          this._activeChannelId = msg.channel as string;
+          // Refresh channel list to update message counts
+          this.requestChannelList();
+          break;
+        }
 
         case "telegram_message": {
           const direction = msg.direction as string;
@@ -536,6 +589,9 @@ class ChatStore {
         }
 
         case "tool_call": {
+          // Only show tool calls from the active channel (or untagged for compat)
+          const eventChannel = msg.channel as string | undefined;
+          if (eventChannel && eventChannel !== this._activeChannelId) break;
           const targetId = this._currentAssistantId ?? this._telegramAssistantId;
           if (targetId) {
             const idx = this._messages.findIndex(
@@ -555,6 +611,8 @@ class ChatStore {
         }
 
         case "tool_result": {
+          const eventChannel = msg.channel as string | undefined;
+          if (eventChannel && eventChannel !== this._activeChannelId) break;
           const targetId = this._currentAssistantId ?? this._telegramAssistantId;
           if (targetId) {
             const idx = this._messages.findIndex(
@@ -580,7 +638,9 @@ class ChatStore {
           break;
         }
 
-        case "chunk":
+        case "chunk": {
+          const eventChannel = msg.channel as string | undefined;
+          if (eventChannel && eventChannel !== this._activeChannelId) break;
           if (this._currentAssistantId && msg.text) {
             const idx = this._messages.findIndex(
               (m) => m.id === this._currentAssistantId
@@ -593,8 +653,11 @@ class ChatStore {
             }
           }
           break;
+        }
 
-        case "done":
+        case "done": {
+          const eventChannel = msg.channel as string | undefined;
+          if (eventChannel && eventChannel !== this._activeChannelId) break;
           if (this._currentAssistantId) {
             const idx = this._messages.findIndex(
               (m) => m.id === this._currentAssistantId
@@ -630,6 +693,7 @@ class ChatStore {
             this.saveConversation();
           }
           break;
+        }
 
         case "error":
           // Clean up pending audio transcription state
