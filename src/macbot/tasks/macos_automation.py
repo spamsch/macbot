@@ -163,7 +163,6 @@ class SearchEmailsTask(Task):
         mailbox: str | None = None,
         today_only: bool = False,
         days: int | None = None,
-        all_mailboxes: bool = False,
         with_content: bool = False,
         with_links: bool = False,
         limit: int = 20
@@ -176,10 +175,9 @@ class SearchEmailsTask(Task):
             subject: Search for emails with subject containing this pattern.
             message_id: Search for specific email by Message-ID (fast direct lookup).
             account: Search in specified account (e.g., "waas.rent" for all emails in that account).
-            mailbox: Search specific mailbox (e.g., "Archive", "Sent Items").
+            mailbox: Search specific mailbox (e.g., "Archive", "Sent Items"). By default all mailboxes are searched.
             today_only: Only return emails from today.
             days: Only return emails from the last N days.
-            all_mailboxes: Search all mailboxes including Sent, Trash, etc.
             with_content: Include the full email body text (use when you need to read the email content).
             with_links: Also extract hyperlinks from HTML email source (slower, use only when URLs are needed). Requires with_content.
             limit: Maximum number of results to return.
