@@ -122,49 +122,46 @@ def _find_rowids_from_envelope_index(
         # Spotlight date_received can differ from Envelope date_sent by up to
         # ~2 hours due to timezone handling and send/receive delay.
         epoch = int(dt.timestamp())
-        conn = sqlite3.connect(f"file:{envelope_idx}?mode=ro&immutable=1", uri=True)
-
-        # If we have a subject, find the subject ID first for precise matching
-        subject_ids: list[int] = []
-        if subject:
-            # subjects table: ROWID, subject, normalized_subject
-            clean_subject = subject.removeprefix("Re: ").removeprefix("Fwd: ").removeprefix("AW: ").removeprefix("WG: ")
-            srows = conn.execute(
-                "SELECT ROWID FROM subjects WHERE subject LIKE ?",
-                (f"%{clean_subject}%",),
-            ).fetchall()
-            subject_ids = [r[0] for r in srows]
-
-        if account_id:
-            rows = conn.execute(
-                "SELECT ROWID FROM mailboxes WHERE url LIKE ?",
-                (f"%{account_id}%",),
-            ).fetchall()
-            mbox_ids = [r[0] for r in rows]
-            if not mbox_ids:
-                conn.close()
-                return []
-            placeholders = ','.join('?' * len(mbox_ids))
-            if subject_ids:
-                subj_placeholders = ','.join('?' * len(subject_ids))
-                results = conn.execute(
-                    f"SELECT ROWID FROM messages WHERE mailbox IN ({placeholders}) "
-                    f"AND subject IN ({subj_placeholders}) "
-                    "AND date_sent BETWEEN ? AND ? ORDER BY ROWID DESC",
-                    [*mbox_ids, *subject_ids, epoch - 7200, epoch + 7200],
+        with sqlite3.connect(f"file:{envelope_idx}?mode=ro&immutable=1", uri=True) as conn:
+            # If we have a subject, find the subject ID first for precise matching
+            subject_ids: list[int] = []
+            if subject:
+                # subjects table: ROWID, subject, normalized_subject
+                clean_subject = subject.removeprefix("Re: ").removeprefix("Fwd: ").removeprefix("AW: ").removeprefix("WG: ")
+                srows = conn.execute(
+                    "SELECT ROWID FROM subjects WHERE subject LIKE ?",
+                    (f"%{clean_subject}%",),
                 ).fetchall()
+                subject_ids = [r[0] for r in srows]
+
+            if account_id:
+                rows = conn.execute(
+                    "SELECT ROWID FROM mailboxes WHERE url LIKE ?",
+                    (f"%{account_id}%",),
+                ).fetchall()
+                mbox_ids = [r[0] for r in rows]
+                if not mbox_ids:
+                    return []
+                placeholders = ','.join('?' * len(mbox_ids))
+                if subject_ids:
+                    subj_placeholders = ','.join('?' * len(subject_ids))
+                    results = conn.execute(
+                        f"SELECT ROWID FROM messages WHERE mailbox IN ({placeholders}) "
+                        f"AND subject IN ({subj_placeholders}) "
+                        "AND date_sent BETWEEN ? AND ? ORDER BY ROWID DESC",
+                        [*mbox_ids, *subject_ids, epoch - 7200, epoch + 7200],
+                    ).fetchall()
+                else:
+                    results = conn.execute(
+                        f"SELECT ROWID FROM messages WHERE mailbox IN ({placeholders}) "
+                        "AND date_sent BETWEEN ? AND ? ORDER BY ROWID DESC",
+                        [*mbox_ids, epoch - 7200, epoch + 7200],
+                    ).fetchall()
             else:
                 results = conn.execute(
-                    f"SELECT ROWID FROM messages WHERE mailbox IN ({placeholders}) "
-                    "AND date_sent BETWEEN ? AND ? ORDER BY ROWID DESC",
-                    [*mbox_ids, epoch - 7200, epoch + 7200],
+                    "SELECT ROWID FROM messages WHERE date_sent BETWEEN ? AND ? ORDER BY ROWID DESC",
+                    (epoch - 7200, epoch + 7200),
                 ).fetchall()
-        else:
-            results = conn.execute(
-                "SELECT ROWID FROM messages WHERE date_sent BETWEEN ? AND ? ORDER BY ROWID DESC",
-                (epoch - 7200, epoch + 7200),
-            ).fetchall()
-        conn.close()
         return [r[0] for r in results]
     except Exception:
         log.debug("Envelope Index lookup failed", exc_info=True)
