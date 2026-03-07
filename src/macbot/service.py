@@ -19,7 +19,7 @@ from typing import Any
 
 from macbot.config import settings
 from macbot.core.agent import Agent
-from macbot.core.channel import Channel, ChannelKind, ChannelRegistry
+from macbot.core.channel import ChannelKind, ChannelRegistry
 from macbot.cron import CronPayload, CronService
 from macbot.tasks import create_default_registry
 from macbot.usage import UsageTracker
