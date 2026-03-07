@@ -25,7 +25,7 @@ from textual.widgets import Footer, Markdown, Static, TextArea
 from macbot import __version__
 from macbot.config import settings
 from macbot.core.agent import Agent
-from macbot.core.channel import ChannelKind, ChannelRegistry
+from macbot.core.channel import ChannelRegistry
 from macbot.providers.base import Message
 from macbot.tasks import create_default_registry
 from macbot.tui import history
