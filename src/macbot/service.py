@@ -178,6 +178,7 @@ class MacbotService:
         self.telegram_service = None
         self._running = False
         self._tasks: list[asyncio.Task] = []
+        self._consumer_tasks: list[asyncio.Task] = []
         self._emit: Callable | None = None
         self._socket_server: asyncio.Server | None = None
 
@@ -225,7 +226,9 @@ class MacbotService:
             self._agent_queues[channel_id] = queue
             # Start consumer task if service is running
             if self._running:
-                self._tasks.append(asyncio.create_task(queue.run_consumer()))
+                t = asyncio.create_task(queue.run_consumer())
+                self._tasks.append(t)
+                self._consumer_tasks.append(t)
         return self._agent_queues[channel_id]
 
     def _get_channel_queue(self, channel_id: str) -> AgentQueue:
@@ -244,7 +247,9 @@ class MacbotService:
             queue = AgentQueue(ch.agent)
             self._agent_queues[channel_id] = queue
             if self._running:
-                self._tasks.append(asyncio.create_task(queue.run_consumer()))
+                t = asyncio.create_task(queue.run_consumer())
+                self._tasks.append(t)
+                self._consumer_tasks.append(t)
         return self._agent_queues[channel_id]
 
     def _get_default_queue(self) -> AgentQueue:
@@ -1051,16 +1056,22 @@ class MacbotService:
         # Initialize tasks channel queue (for cron jobs)
         tasks_ch = self.channels.get("tasks")
         self._cron_queue = AgentQueue(tasks_ch.agent)
-        self._tasks.append(asyncio.create_task(self._cron_queue.run_consumer()))
+        t = asyncio.create_task(self._cron_queue.run_consumer())
+        self._tasks.append(t)
+        self._consumer_tasks.append(t)
 
         # Initialize heartbeat channel queue (separate from tasks)
         heartbeat_ch = self.channels.get("heartbeat")
         self._heartbeat_queue = AgentQueue(heartbeat_ch.agent)
-        self._tasks.append(asyncio.create_task(self._heartbeat_queue.run_consumer()))
+        t = asyncio.create_task(self._heartbeat_queue.run_consumer())
+        self._tasks.append(t)
+        self._consumer_tasks.append(t)
 
         # Initialize default queue (main channel, shared by stdin/socket/interactive)
         default_queue = self._get_default_queue()
-        self._tasks.append(asyncio.create_task(default_queue.run_consumer()))
+        t = asyncio.create_task(default_queue.run_consumer())
+        self._tasks.append(t)
+        self._consumer_tasks.append(t)
 
         # Heartbeat always runs
         logger.info(f"Starting heartbeat (every {settings.heartbeat_interval}s)")
@@ -1114,10 +1125,7 @@ class MacbotService:
         # Stop socket server
         await self._stop_socket_server()
 
-        # Save all channel sessions before stopping
-        self.channels.save_all_sessions()
-
-        # Stop all queues
+        # Stop all queues (signals each consumer to exit after current message)
         if self._cron_queue:
             self._cron_queue.stop()
         if self._heartbeat_queue:
@@ -1132,6 +1140,13 @@ class MacbotService:
 
         if self.cron_service:
             await self.cron_service.stop()
+
+        # Wait for all consumers to finish processing their current message before
+        # saving sessions, so the persisted state reflects a consistent final state.
+        if self._consumer_tasks:
+            await asyncio.gather(*self._consumer_tasks, return_exceptions=True)
+
+        self.channels.save_all_sessions()
 
         for task in self._tasks:
             task.cancel()
