@@ -25,6 +25,7 @@ import os
 import re
 import sqlite3
 import sys
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -317,12 +318,15 @@ class MailSearchIndex:
         self._cache_path.parent.mkdir(parents=True, exist_ok=True)
         self._conn: sqlite3.Connection | None = None
         self._store_mtime: float = 0
+        self._ready = threading.Event()
+        self._ready.set()  # starts ready; cleared during rebuild
 
     def _get_conn(self) -> sqlite3.Connection:
         if self._conn is None:
             self._conn = sqlite3.connect(str(self._cache_path), check_same_thread=False)
             self._conn.row_factory = sqlite3.Row
             self._conn.execute("PRAGMA journal_mode=WAL")
+            self._conn.execute("PRAGMA busy_timeout=30000")
             self._conn.execute("PRAGMA synchronous=NORMAL")
             self._create_tables()
         return self._conn
@@ -434,44 +438,48 @@ class MailSearchIndex:
         if store_db is None:
             raise FileNotFoundError("No Core Spotlight store.db found")
 
-        store_mtime = store_db.stat().st_mtime
-        conn = self._get_conn()
+        self._ready.clear()
+        try:
+            store_mtime = store_db.stat().st_mtime
+            conn = self._get_conn()
 
-        # Clear existing data
-        conn.execute("DELETE FROM messages")
-        conn.execute("DELETE FROM messages_fts")
-        conn.commit()
+            # Clear existing data
+            conn.execute("DELETE FROM messages")
+            conn.execute("DELETE FROM messages_fts")
+            conn.commit()
 
-        count = 0
-        batch: list[tuple] = []
-        batch_size = 500
+            count = 0
+            batch: list[tuple] = []
+            batch_size = 500
 
-        with SpotlightStoreReader(store_db) as reader:
-            for item in reader.iter_items():
-                entity_type = item.props.get('_kMDItemAppEntityTypeIdentifier')
-                if entity_type != _MAIL_ENTITY_TYPE:
-                    continue
+            with SpotlightStoreReader(store_db) as reader:
+                for item in reader.iter_items():
+                    entity_type = item.props.get('_kMDItemAppEntityTypeIdentifier')
+                    if entity_type != _MAIL_ENTITY_TYPE:
+                        continue
 
-                row = self._item_to_row(item)
-                batch.append(row)
-                count += 1
+                    row = self._item_to_row(item)
+                    batch.append(row)
+                    count += 1
 
-                if len(batch) >= batch_size:
+                    if len(batch) >= batch_size:
+                        self._insert_batch(conn, batch)
+                        batch.clear()
+                        if progress_callback:
+                            progress_callback(count)
+
+                if batch:
                     self._insert_batch(conn, batch)
-                    batch.clear()
-                    if progress_callback:
-                        progress_callback(count)
 
-            if batch:
-                self._insert_batch(conn, batch)
+            self._set_meta("last_store_mtime", str(store_mtime))
+            self._set_meta("last_rebuild", datetime.datetime.now().isoformat())
+            self._set_meta("message_count", str(count))
+            conn.commit()
 
-        self._set_meta("last_store_mtime", str(store_mtime))
-        self._set_meta("last_rebuild", datetime.datetime.now().isoformat())
-        self._set_meta("message_count", str(count))
-        conn.commit()
-
-        log.info("Indexed %d mail messages", count)
-        return count
+            log.info("Indexed %d mail messages", count)
+            return count
+        finally:
+            self._ready.set()
 
     def _item_to_row(self, item: Any) -> tuple:
         p = item.props
@@ -612,6 +620,9 @@ class MailSearchIndex:
             with_content: Include full email body from .emlx file.
             with_links: Also extract hyperlinks from HTML email (requires with_content).
         """
+        # Wait for any in-progress rebuild to finish (max 30s)
+        if not self._ready.wait(timeout=30):
+            log.warning("Search proceeding after rebuild timeout")
         conn = self._get_conn()
         conditions: list[str] = []
         params: list[Any] = []

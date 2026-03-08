@@ -108,6 +108,11 @@ SENDER_ESCAPED=$(escape_for_applescript "$SENDER_PATTERN")
 SUBJECT_ESCAPED=$(escape_for_applescript "$SUBJECT_PATTERN")
 MESSAGE_ID_ESCAPED=$(escape_for_applescript "$MESSAGE_ID")
 ACCOUNT_ESCAPED=$(escape_for_applescript "$ACCOUNT")
+# Normalize mailbox: "inbox" (any case) → use unified inbox
+MAILBOX_LOWER=$(echo "$MAILBOX" | tr '[:upper:]' '[:lower:]')
+if [[ "$MAILBOX_LOWER" == "inbox" ]]; then
+    MAILBOX=""
+fi
 MAILBOX_ESCAPED=$(escape_for_applescript "$MAILBOX")
 OUTPUT_ESCAPED=$(escape_for_applescript "$OUTPUT_DIR_ABS")
 

@@ -40,7 +40,7 @@ class TestSearchEmailsSpotlightRouting:
         """Metadata-only search should use Spotlight index."""
         index = MockIndex.return_value
         index.message_count.return_value = 100
-        index.needs_rebuild.return_value = False
+        # needs_rebuild is no longer called (watcher handles freshness)
         index.search.return_value = [_spotlight_result()]
 
         result = await task.execute(sender="alice", days=7)
@@ -51,6 +51,7 @@ class TestSearchEmailsSpotlightRouting:
         kwargs = index.search.call_args.kwargs
         assert kwargs["sender"] == "alice"
         assert kwargs["days"] == 7
+        assert kwargs["resolve_urls"] is True
 
     @pytest.mark.asyncio
     @patch("macbot.spotlight.mail_search.MailSearchIndex")
@@ -58,7 +59,7 @@ class TestSearchEmailsSpotlightRouting:
         """with_content=True should be forwarded to Spotlight search."""
         index = MockIndex.return_value
         index.message_count.return_value = 100
-        index.needs_rebuild.return_value = False
+        # needs_rebuild is no longer called (watcher handles freshness)
         index.search.return_value = [_spotlight_result(content="Full body text")]
 
         result = await task.execute(sender="alice", with_content=True, days=7)
@@ -73,7 +74,7 @@ class TestSearchEmailsSpotlightRouting:
         """with_links=True should be forwarded to Spotlight search."""
         index = MockIndex.return_value
         index.message_count.return_value = 100
-        index.needs_rebuild.return_value = False
+        # needs_rebuild is no longer called (watcher handles freshness)
         index.search.return_value = [_spotlight_result()]
 
         result = await task.execute(sender="alice", with_content=True, with_links=True, days=7)
@@ -89,7 +90,6 @@ class TestSearchEmailsSpotlightRouting:
         """Empty index should trigger a rebuild before searching."""
         index = MockIndex.return_value
         index.message_count.return_value = 0
-        index.needs_rebuild.return_value = True
         index.search.return_value = [_spotlight_result()]
 
         result = await task.execute(sender="alice", days=7)
@@ -114,7 +114,7 @@ class TestSearchEmailsSpotlightRouting:
         """Numeric message_id should be passed as int to Spotlight."""
         index = MockIndex.return_value
         index.message_count.return_value = 100
-        index.needs_rebuild.return_value = False
+        # needs_rebuild is no longer called (watcher handles freshness)
         index.search.return_value = [_spotlight_result()]
 
         result = await task.execute(message_id="12345")
@@ -145,7 +145,7 @@ class TestSearchEmailsSpotlightRouting:
         """account parameter should be passed through to Spotlight."""
         index = MockIndex.return_value
         index.message_count.return_value = 100
-        index.needs_rebuild.return_value = False
+        # needs_rebuild is no longer called (watcher handles freshness)
         index.search.return_value = [_spotlight_result()]
 
         await task.execute(account="work@example.com", days=7)
@@ -159,7 +159,7 @@ class TestSearchEmailsSpotlightRouting:
         """Result should have expected structure with email fields."""
         index = MockIndex.return_value
         index.message_count.return_value = 100
-        index.needs_rebuild.return_value = False
+        # needs_rebuild is no longer called (watcher handles freshness)
         index.search.return_value = [_spotlight_result(subject="Invoice", sender="bob@test.com")]
 
         result = await task.execute(sender="bob", days=7)
@@ -169,3 +169,20 @@ class TestSearchEmailsSpotlightRouting:
         email = result["emails"][0]
         assert email["subject"] == "Invoice"
         assert email["sender"] == "bob@test.com"
+
+    @pytest.mark.asyncio
+    @patch("macbot.spotlight.mail_search.MailSearchIndex")
+    async def test_rfc_message_id_exposed_as_message_id(self, MockIndex: MagicMock, task: SearchEmailsTask) -> None:
+        """RFC Message-ID should be exposed as 'message_id' without angle brackets."""
+        index = MockIndex.return_value
+        index.message_count.return_value = 100
+        # needs_rebuild is no longer called (watcher handles freshness)
+        r = _spotlight_result()
+        r["rfc_message_id"] = "<abc123@example.com>"
+        index.search.return_value = [r]
+
+        result = await task.execute(sender="alice", days=7)
+
+        email = result["emails"][0]
+        assert email["message_id"] == "abc123@example.com"
+        assert "mail_message_id" not in email
