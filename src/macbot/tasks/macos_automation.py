@@ -230,8 +230,10 @@ class SearchEmailsTask(Task):
 
             def _search() -> tuple[bool, list[dict[str, Any]]]:
                 index = MailSearchIndex()
-                # Auto-rebuild if index is empty or stale
-                if index.message_count() == 0 or index.needs_rebuild():
+                # Only rebuild if cache is empty (first run, no watcher).
+                # When the background watcher is running it handles freshness;
+                # triggering rebuild here would compete for the DB write lock.
+                if index.message_count() == 0:
                     try:
                         index.rebuild()
                     except FileNotFoundError:
@@ -241,6 +243,7 @@ class SearchEmailsTask(Task):
                     sender=sender, recipient=recipient, subject=subject,
                     message_id=msg_id_int, account=account, mailbox=mailbox,
                     today_only=today_only, days=days, limit=limit,
+                    resolve_urls=True,
                     with_content=with_content, with_links=with_links,
                 )
                 index.close()
@@ -272,7 +275,9 @@ class SearchEmailsTask(Task):
                     email["account"] = r["account"]
                 if r.get("mailboxes"):
                     email["mailbox"] = r["mailboxes"]
-                if r.get("mail_message_id"):
+                if r.get("rfc_message_id"):
+                    email["message_id"] = r["rfc_message_id"].strip("<>")
+                elif r.get("mail_message_id"):
                     email["mail_message_id"] = r["mail_message_id"]
                 emails.append(email)
 
