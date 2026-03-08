@@ -351,18 +351,11 @@
               {statusLabel(chatStore.connectionState)}
             </span>
           </div>
-          {#if chatStore.sessionTokens > 0 || chatStore.monthlyTokens > 0}
+          {#if chatStore.sessionTokens > 0}
             <div class="flex items-center gap-1.5">
-              {#if chatStore.sessionTokens > 0}
-                <span class="text-[10px] text-text-muted bg-bg-input px-1.5 py-0.5 rounded-md" title="Session usage">
-                  {formatTokens(chatStore.sessionTokens)} tokens{#if chatStore.sessionCost > 0} · {formatCost(chatStore.sessionCost)}{/if}
-                </span>
-              {/if}
-              {#if chatStore.monthlyTokens > 0}
-                <span class="text-[10px] text-text-muted bg-bg-input px-1.5 py-0.5 rounded-md" title="Monthly usage ({chatStore.monthlyInteractions} interactions)">
-                  Month: {formatTokens(chatStore.monthlyTokens)}{#if chatStore.monthlyCost > 0} · {formatCost(chatStore.monthlyCost)}{/if}
-                </span>
-              {/if}
+              <span class="text-[10px] text-text-muted bg-bg-input px-1.5 py-0.5 rounded-md" title="Session usage">
+                {formatTokens(chatStore.sessionTokens)} tokens{#if chatStore.sessionCost > 0} · {formatCost(chatStore.sessionCost)}{/if}
+              </span>
             </div>
           {/if}
           <!-- History dropdown toggle -->
@@ -525,7 +518,7 @@
               <span class="text-[10px] text-text-muted px-1">
                 {formatTime(msg.timestamp)}
                 {#if msg.role === "assistant" && msg.status === "complete" && msg.totalTokens}
-                  <span class="ml-1">{formatTokens(msg.totalTokens)} tokens{#if typeof msg.cost === "number"} · {formatCost(msg.cost)}{/if}</span>
+                  <span class="ml-1">{formatTokens(msg.totalTokens)} tokens{#if typeof msg.cost === "number"} · {formatCost(msg.cost)}{/if}{#if msg.model} · {msg.model.replace("openai/", "")}{/if}</span>
                 {/if}
               </span>
             </div>

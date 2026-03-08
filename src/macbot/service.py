@@ -95,11 +95,17 @@ class AgentQueue:
                 # Poison pill — shut down
                 break
             try:
+                # Create on_status callback that only forwards routing messages
+                def _on_status(text: str, _emit=msg.emit) -> None:
+                    if _emit and "Routed:" in text:
+                        _emit({"type": "status", "text": text.strip()})
+
                 result = await self.agent.run(
                     msg.content,
                     stream=False,
                     continue_conversation=True,
                     on_event=msg.emit,
+                    on_status=_on_status,
                     model_override=msg.model_override,
                     disable_routing=msg.disable_routing,
                 )

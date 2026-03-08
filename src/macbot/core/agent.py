@@ -141,6 +141,7 @@ class Agent:
             old_model = self._current_model
             logger.info("Switching model: %s → %s", old_model, new_model)
             self._current_model = new_model
+            self._interaction_model = new_model
             api_key = self.config.get_api_key_for_model(new_model)
             api_base = self.config.get_api_base_for_model(new_model)
             self.provider = LiteLLMProvider(model=new_model, api_key=api_key, api_base=api_base)
@@ -203,6 +204,7 @@ class Agent:
         self.iteration = 0
         self._interaction_input_tokens = 0
         self._interaction_output_tokens = 0
+        self._interaction_model = self._current_model
 
         # Model override: switch provider for this run, skip routing
         self._saved_model: str | None = None
@@ -242,6 +244,7 @@ class Agent:
                 old_model = self._current_model
                 logger.info("Intent pre-routing: %s → %s", old_model, intent_model)
                 self._current_model = intent_model
+                self._interaction_model = intent_model
                 api_key = self.config.get_api_key_for_model(intent_model)
                 api_base = self.config.get_api_base_for_model(intent_model)
                 self.provider = LiteLLMProvider(model=intent_model, api_key=api_key, api_base=api_base)
@@ -1169,7 +1172,7 @@ When an email, document, or conversation implies that information is available o
         input_tokens = self._interaction_input_tokens
         output_tokens = self._interaction_output_tokens
         total_tokens = input_tokens + output_tokens
-        model = self._current_model
+        model = getattr(self, "_interaction_model", self._current_model)
 
         cost: float | None = None
         try:

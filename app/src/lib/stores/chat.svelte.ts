@@ -1,5 +1,5 @@
 import { Command, type Child } from "@tauri-apps/plugin-shell";
-import { resourceDir, join, dirname, homeDir } from "@tauri-apps/api/path";
+import { join, homeDir } from "@tauri-apps/api/path";
 import { readTextFile, writeTextFile, exists, mkdir, readDir, remove } from "@tauri-apps/plugin-fs";
 
 export interface ToolCall {
@@ -65,7 +65,6 @@ class ChatStore {
   private _currentAssistantId: string | null = null;
   private _telegramAssistantId: string | null = null;
   private _buffer = "";
-  private _sonPath: string | null = null;
   private _historyDir: string | null = null;
   private _permissions = $state<AppPermissions | null>(null);
   private _checkingPermissions = $state(false);
@@ -81,6 +80,7 @@ class ChatStore {
   private _monthlyInteractions = $state(0);
   private _channels = $state<ChannelInfo[]>([]);
   private _activeChannelId = $state<string>("main");
+  private _channelMessages = new Map<string, { messages: ChatMessage[]; conversationId: string }>();
 
   get messages() {
     return this._messages;
@@ -298,22 +298,19 @@ class ChatStore {
     }
   }
 
-  private async getSonPath(): Promise<string> {
-    if (this._sonPath) return this._sonPath;
-    const resourcePath = await resourceDir();
-    const contentsPath = await dirname(resourcePath);
-    this._sonPath = await join(contentsPath, "MacOS", "son");
-    return this._sonPath;
+  private createSonCommand(args: string[]): ReturnType<typeof Command.create> {
+    // Dev mode: use son from venv via shell (no sidecar bundling needed)
+    const isDev = import.meta.env.DEV;
+    if (isDev) {
+      return Command.create("exec-sh", ["-c", `son ${args.map(a => `"${a}"`).join(" ")}`]);
+    }
+    return Command.sidecar("binaries/son", args);
   }
 
   async checkPermissions(): Promise<AppPermissions> {
     this._checkingPermissions = true;
     try {
-      const sonPath = await this.getSonPath();
-      const command = Command.create("exec-sh", [
-        "-c",
-        `"${sonPath}" doctor --json`,
-      ]);
+      const command = this.createSonCommand(["doctor", "--json"]);
       const output = await command.execute();
       const result = JSON.parse(output.stdout);
       const automation = result.permissions?.automation ?? {};
@@ -342,12 +339,7 @@ class ChatStore {
     this._error = null;
 
     try {
-      const sonPath = await this.getSonPath();
-
-      const command = Command.create("exec-sh", [
-        "-c",
-        `"${sonPath}" start --foreground`,
-      ]);
+      const command = this.createSonCommand(["start", "--foreground"]);
 
       command.stdout.on("data", (line: string) => {
         this._handleStdout(line);
@@ -509,7 +501,22 @@ class ChatStore {
           break;
 
         case "channel_switch": {
-          this._activeChannelId = msg.channel as string;
+          const newChannel = msg.channel as string;
+          // Save current channel state
+          this._channelMessages.set(this._activeChannelId, {
+            messages: [...this._messages],
+            conversationId: this._conversationId,
+          });
+          // Restore or initialize new channel state
+          const saved = this._channelMessages.get(newChannel);
+          if (saved) {
+            this._messages = saved.messages;
+            this._conversationId = saved.conversationId;
+          } else {
+            this._messages = [];
+            this._conversationId = crypto.randomUUID();
+          }
+          this._activeChannelId = newChannel;
           // Refresh channel list to update message counts
           this.requestChannelList();
           break;
@@ -587,6 +594,10 @@ class ChatStore {
           }
           break;
         }
+
+        case "status":
+          // Routing status — ignored in chat, model shown in response metadata
+          break;
 
         case "tool_call": {
           // Only show tool calls from the active channel (or untagged for compat)
