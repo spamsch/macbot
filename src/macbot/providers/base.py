@@ -52,6 +52,8 @@ class LLMResponse(BaseModel):
     tool_calls: list[ToolCall] = []
     stop_reason: str | None = None
     usage: dict[str, int] = {}
+    internal_reasoning: str | None = None
+    """Model reasoning extracted from protocol tokens before stripping (e.g. gpt-4.1 analysis blocks)."""
 
 
 class LLMProvider(ABC):

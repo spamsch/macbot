@@ -402,7 +402,10 @@ class LiteLLMProvider(LLMProvider):
         if not tool_calls and content:
             tool_calls = self._extract_tool_calls_from_protocol(content)
 
+        # Extract internal reasoning from protocol tokens before stripping
+        internal_reasoning = None
         if content:
+            internal_reasoning = self._extract_reasoning_from_protocol(content)
             content = self._strip_protocol_tokens(content)
 
         return LLMResponse(
@@ -410,6 +413,7 @@ class LiteLLMProvider(LLMProvider):
             tool_calls=tool_calls,
             stop_reason=finish_reason,
             usage=usage,
+            internal_reasoning=internal_reasoning,
         )
 
     @staticmethod
@@ -452,6 +456,28 @@ class LiteLLMProvider(LLMProvider):
                 arguments=arguments,
             ))
         return calls
+
+    @staticmethod
+    def _extract_reasoning_from_protocol(text: str) -> str | None:
+        """Extract internal reasoning/analysis from protocol tokens.
+
+        Models like gpt-4.1 produce reasoning in protocol blocks:
+            <|channel|>analysis<|message|>...reasoning...<|end|>
+        This extracts that reasoning before _strip_protocol_tokens removes it.
+        """
+        # Match analysis or commentary blocks
+        reasoning_parts: list[str] = []
+        for match in re.finditer(
+            r"<\|channel\|>(?:analysis|commentary)\s*<\|(?:constrain\|>\w+<\|)?message\|>"
+            r"(.*?)"
+            r"(?:<\|end\|>|<\|start\|>|$)",
+            text,
+            re.DOTALL,
+        ):
+            part = match.group(1).strip()
+            if part:
+                reasoning_parts.append(part)
+        return "\n".join(reasoning_parts) if reasoning_parts else None
 
     @staticmethod
     def _strip_protocol_tokens(text: str) -> str:
@@ -524,7 +550,10 @@ class LiteLLMProvider(LLMProvider):
         if not tool_calls and content:
             tool_calls = self._extract_tool_calls_from_protocol(content)
 
+        # Extract internal reasoning from protocol tokens before stripping
+        internal_reasoning = None
         if content:
+            internal_reasoning = self._extract_reasoning_from_protocol(content)
             content = self._strip_protocol_tokens(content)
 
         return LLMResponse(
@@ -535,6 +564,7 @@ class LiteLLMProvider(LLMProvider):
                 "input_tokens": response.usage.prompt_tokens if response.usage else 0,
                 "output_tokens": response.usage.completion_tokens if response.usage else 0,
             },
+            internal_reasoning=internal_reasoning,
         )
 
     def format_tool_result(
