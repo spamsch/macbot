@@ -1,4 +1,10 @@
-- **CLI usage tracking** — Record and display monthly usage statistics in the stats command
-- **PDF pagination** — Add `start_page` parameter to ReadFileTask for more flexible document reading
-- **Paperless tag resolution** — Automatically resolve tag names to IDs and improve string type handling for custom fields
-- **Paperless document metadata** — Include created date in document update operations and fix custom field string coercion
+- **Core Spotlight Mail Search** — Integrated fast indexed mail search from macOS Spotlight to replace AppleScript/SQLite email lookups
+- **Email Search Improvements** — Fixed .emlx content retrieval, added recipient search, and improved full email content reading
+- **Excel Support** — Added `read_excel` and `write_excel` tools for .xlsx file manipulation
+- **Full-Screen Terminal UI** — New Textual-based TUI for `son chat` and `son start` with readline-compatible input and image drag-and-drop support
+- **Multi-Channel Agent Architecture** — Support for isolated agent instances per Telegram chat
+- **Query-Aware Tool Filtering** — Tools are now filtered based on query relevance for better performance
+- **Model Routing & Context Profiles** — Added dynamic provider routing and conversation context management
+- **Telegram Message Updates** — Progress messages now update in-place instead of creating duplicates
+- **Mail Automation Fixes** — Fixed email body retrieval and move-email script reliability
+- **Bug Fixes** — Fixed PDF truncation, Paperless correspondent/tag resolution, schedule_task crashes, Telegram markdown, and 403 errors on enterprise sites with proper User-Agent headers
