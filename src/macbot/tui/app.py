@@ -544,15 +544,12 @@ class ChatApp(App[None]):
             dbg.add_label(f"Model: {self._agent._current_model}")
             dbg.add_label(f"Profile: {self._agent._get_effective_profile()}")
             model = self._agent._current_model
-            is_anthropic = "anthropic" in model or "claude" in model
-            _OPAQUE = ("openai/gpt-4.1", "openai/o1", "openai/o3", "openai/o4")
-            has_opaque = any(model.startswith(p) for p in _OPAQUE)
-            if is_anthropic:
-                cot_mode = "prefill"
-            elif has_opaque:
-                cot_mode = "built-in (opaque reasoning)"
+            _REASONING = ("openai/o1", "openai/o3", "openai/o4")
+            has_reasoning = any(model.startswith(p) for p in _REASONING)
+            if has_reasoning:
+                cot_mode = "built-in (reasoning model)"
             else:
-                cot_mode = "two-turn"
+                cot_mode = "inline (system prompt)"
             dbg.add_label(f"CoT strategy: {cot_mode}")
             dbg.add_label(f"Messages in context: {len(self._agent.messages)}")
             dbg.add_separator()
@@ -691,38 +688,9 @@ class ChatApp(App[None]):
             for msg_line in event.get("messages", []):
                 dbg.add_content(f"  {msg_line}")
 
-        elif event_type == "debug_two_turn_thinking":
-            if event.get("skipped"):
-                dbg.add_label("🧠 CoT skipped:")
-                dbg.add_thinking(f"  {event.get('reason', '')}")
-                return
-            dbg.add_label("🧠 Two-turn thinking response:")
-            dbg.add_content(f"  Has content: {event.get('has_content', False)}")
-            dbg.add_content(f"  Has internal reasoning: {event.get('has_internal_reasoning', False)}")
-            dbg.add_content(f"  Content type: {event.get('content_type', '?')}")
-            dbg.add_content(f"  Stop reason: {event.get('stop_reason', '?')}")
-            dbg.add_content(f"  Tool calls: {event.get('tool_calls_count', 0)}")
-            usage = event.get("usage", {})
-            if usage:
-                dbg.add_content(f"  Tokens: in={usage.get('input_tokens', 0)} "
-                                f"out={usage.get('output_tokens', 0)}")
-            # Show internal reasoning if available (gpt-4.1+ protocol tokens)
-            reasoning = event.get("internal_reasoning", "")
-            if reasoning:
-                dbg.add_label("  Internal reasoning (from protocol tokens):")
-                for line in reasoning.split("\n"):
-                    dbg.add_thinking(f"  {line}")
-            # Show regular content
-            thinking = event.get("thinking_text", "")
-            if thinking and thinking != reasoning:
-                dbg.add_label("  Thinking text:")
-                for line in thinking.split("\n"):
-                    dbg.add_thinking(f"  {line}")
-            # Show raw repr for debugging
-            if not reasoning and not thinking:
-                content_repr = event.get("content_repr", "")
-                dbg.add_label("  Raw content repr:")
-                dbg.add_content(f"  {content_repr}")
+        elif event_type == "debug_cot_info":
+            dbg.add_label("🧠 CoT info:")
+            dbg.add_thinking(f"  {event.get('reason', '')}")
 
         else:
             # Any other event type

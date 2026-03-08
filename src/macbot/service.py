@@ -557,9 +557,7 @@ class MacbotService:
 
                 self._console.print(f"\n[{timestamp}] 💓 Heartbeat: {content[:100]}{'...' if len(content) > 100 else ''}")
                 logger.info(f"Heartbeat: Running '{content[:50]}...'")
-                result = await self._heartbeat_queue.submit(
-                    content, disable_routing=True,
-                )
+                result = await self._heartbeat_queue.submit(content)
                 logger.info(f"Heartbeat: Completed, result length: {len(result)}")
                 from rich.markdown import Markdown
                 from rich.panel import Panel

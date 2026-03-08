@@ -292,9 +292,9 @@ class Agent:
                 if thinking:
                     if on_event:
                         on_event({"type": "thinking", "content": thinking})
-                    if on_status:
+                    elif on_status:
                         on_status(f"  💭 {thinking}")
-                    elif not on_event:
+                    else:
                         console.print(f"[dim italic]  💭 {thinking}[/dim italic]")
 
             # Check if we have tool calls to execute
@@ -630,7 +630,7 @@ When an email, document, or conversation implies that information is available o
                         "Call this if the user's request needs tools from a "
                         "group not yet loaded."
                     ),
-                    "parameters": {
+                    "input_schema": {
                         "type": "object",
                         "properties": {
                             "skill_ids": {
@@ -805,94 +805,19 @@ When an email, document, or conversation implies that information is available o
         messages = self._cap_messages(self.messages)
         messages = self._trim_messages_to_fit(messages, system_prompt, tools)
 
-        # Chain-of-thought: force the model to reason before acting.
-        # - Anthropic: assistant prefill (model produces text + tool_use together)
-        # - OpenAI: two-turn approach — first call without tools to get thinking,
-        #   then inject it as context for the real call with tools. OpenAI models
-        #   return content=null alongside tool_calls, so prefill doesn't work.
-        # Skipped for local models (ollama) and minimal profile.
-        prefill = ""
-        profile = self._get_effective_profile()
-        is_anthropic = "anthropic" in self._current_model or "claude" in self._current_model
-        is_local = self._current_model.startswith("ollama")
-        use_cot = not is_local and profile != "minimal" and messages and messages[-1].role in ("user", "tool")
-        thinking_resp: LLMResponse | None = None
+        # Chain-of-thought strategy: all models use inline CoT via system prompt
+        # (the system prompt contains <thinking> block instructions).
+        # - OpenAI reasoning models (o1/o3/o4): have built-in opaque reasoning
+        # - All other models: guided by system prompt to produce <thinking> blocks
+        # No prefill or two-turn tricks needed.
+        _REASONING_MODEL_PREFIXES = ("openai/o1", "openai/o3", "openai/o4")
+        has_opaque_reasoning = any(self._current_model.startswith(p) for p in _REASONING_MODEL_PREFIXES)
 
-        # Models with opaque reasoning (gpt-4.1*, o1*, o3*) use server-side
-        # reasoning tokens that are never exposed in the response. The two-turn
-        # approach wastes tokens for these — they already think internally.
-        _OPAQUE_REASONING_PREFIXES = ("openai/gpt-4.1", "openai/o1", "openai/o3", "openai/o4")
-        has_opaque_reasoning = any(self._current_model.startswith(p) for p in _OPAQUE_REASONING_PREFIXES)
-
-        if use_cot and is_anthropic:
-            prefill = "<thinking>"
-            messages = [*messages, Message(role="assistant", content=prefill)]
-        elif use_cot and not is_anthropic and not has_opaque_reasoning:
-            # Two-turn CoT for providers without built-in reasoning:
-            # quick thinking call without tools, then inject into the real call.
-            thinking_messages = [
-                *messages,
-                Message(
-                    role="user",
-                    content=(
-                        "Before responding, briefly think through your approach "
-                        "in 1-3 sentences inside <thinking> tags. "
-                        "What tools will you use and in what order? "
-                        "Then I'll let you act."
-                    ),
-                ),
-            ]
-            thinking_resp = await self.provider.chat(
-                messages=thinking_messages,
-                tools=None,  # No tools — forces text-only response
-                system_prompt=system_prompt,
-            )
-            # Use content if available, fall back to internal_reasoning
-            # (some models put reasoning in protocol tokens that get stripped)
-            thinking_text = thinking_resp.content or thinking_resp.internal_reasoning
-
-            # Emit debug for the two-turn thinking response
-            if on_event:
-                on_event({
-                    "type": "debug_two_turn_thinking",
-                    "has_content": bool(thinking_resp.content),
-                    "has_internal_reasoning": bool(thinking_resp.internal_reasoning),
-                    "content_type": type(thinking_resp.content).__name__,
-                    "content_repr": repr(thinking_resp.content)[:300] if thinking_resp.content is not None else "None",
-                    "thinking_text": (thinking_text or "")[:300],
-                    "internal_reasoning": (thinking_resp.internal_reasoning or "")[:300],
-                    "usage": thinking_resp.usage or {},
-                    "stop_reason": thinking_resp.stop_reason,
-                    "tool_calls_count": len(thinking_resp.tool_calls),
-                })
-            if thinking_text:
-                # Track tokens from the thinking call
-                if thinking_resp.usage:
-                    t_in = thinking_resp.usage.get("input_tokens", 0)
-                    t_out = thinking_resp.usage.get("output_tokens", 0)
-                    self._session_input_tokens += t_in
-                    self._session_output_tokens += t_out
-                    self._interaction_input_tokens += t_in
-                    self._interaction_output_tokens += t_out
-                # Wrap in <thinking> tags if not already present
-                if "<thinking>" not in thinking_text:
-                    thinking_text = f"<thinking>{thinking_text}</thinking>"
-                # Inject thinking into message history so the model sees
-                # its own reasoning when making tool calls
-                messages = [
-                    *messages,
-                    Message(role="assistant", content=thinking_text),
-                    Message(role="user", content="Go ahead."),
-                ]
-        elif use_cot and has_opaque_reasoning and on_event:
-            # Model has built-in reasoning — emit debug note, no extra call
+        if has_opaque_reasoning and on_event:
             on_event({
-                "type": "debug_two_turn_thinking",
-                "has_content": False,
-                "has_internal_reasoning": False,
+                "type": "debug_cot_info",
                 "skipped": True,
-                "reason": f"Model {self._current_model} has built-in opaque reasoning — CoT call skipped",
-                "usage": {},
+                "reason": f"Model {self._current_model} has built-in opaque reasoning — CoT via system prompt only",
             })
 
         # Emit debug: messages being sent to LLM
@@ -913,7 +838,7 @@ When an email, document, or conversation implies that information is available o
                 "messages": msg_summary,
                 "has_tools": bool(tools),
                 "tool_count": len(tools) if tools else 0,
-                "cot_strategy": "prefill" if prefill else ("two-turn" if thinking_resp else ("built-in" if has_opaque_reasoning else "none")),
+                "cot_strategy": "built-in" if has_opaque_reasoning else "inline",
                 "system_prompt_length": len(system_prompt) if system_prompt else 0,
             })
 
@@ -934,29 +859,6 @@ When an email, document, or conversation implies that information is available o
             system_prompt=system_prompt,
             stream_callback=cb,
         )
-
-        # Anthropic prefill: prepend to response so <thinking>...</thinking>
-        # is a complete block that _extract_thinking can parse.
-        if prefill and response.content:
-            response = LLMResponse(
-                content=prefill + response.content,
-                tool_calls=response.tool_calls,
-                stop_reason=response.stop_reason,
-                usage=response.usage,
-            )
-        # OpenAI two-turn: thinking was in the separate call, attach it
-        # to the response content so the display logic can extract it.
-        elif use_cot and not is_anthropic and thinking_resp:
-            thinking_text_final = thinking_resp.content or thinking_resp.internal_reasoning
-            if thinking_text_final:
-                if "<thinking>" not in thinking_text_final:
-                    thinking_text_final = f"<thinking>{thinking_text_final}</thinking>"
-                response = LLMResponse(
-                    content=thinking_text_final,
-                    tool_calls=response.tool_calls,
-                    stop_reason=response.stop_reason,
-                    usage=response.usage,
-                )
 
         # Track token usage
         if response.usage:
