@@ -91,6 +91,12 @@ fi
 # Normalize destination
 DEST_LOWER=$(echo "$DESTINATION" | tr '[:upper:]' '[:lower:]')
 
+# Normalize mailbox: "inbox" (any case) → use unified inbox (avoids INBOX vs Inbox mismatch)
+MAILBOX_LOWER=$(echo "$MAILBOX" | tr '[:upper:]' '[:lower:]')
+if [[ "$MAILBOX_LOWER" == "inbox" ]]; then
+    MAILBOX=""
+fi
+
 # Escape patterns for AppleScript
 SENDER_ESCAPED=$(escape_for_applescript "$SENDER_PATTERN")
 SUBJECT_ESCAPED=$(escape_for_applescript "$SUBJECT_PATTERN")
@@ -302,7 +308,7 @@ tell application "Mail"
         set foundMsgs to (messages of srcMailbox whose message id is targetId)
         if (count of foundMsgs) > 0 then
             set msg to item 1 of foundMsgs
-            set msgAcct to account of srcMailbox
+            set msgAcct to account of mailbox of msg
             set moved to false
 
             if destType is "archive" then

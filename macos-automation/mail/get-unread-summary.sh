@@ -37,7 +37,7 @@ if [[ "$COUNT_ONLY" == "true" ]]; then
     end tell
     '
 else
-    # Return full summary
+    # Return full summary (per-message iteration; bulk fetch fails on unified inbox)
     osascript <<'EOF'
 tell application "Mail"
     set unreadMsgs to (messages of inbox whose read status is false)
@@ -50,6 +50,8 @@ tell application "Mail"
     set output to "=== UNREAD EMAILS (" & msgCount & ") ===" & return & return
 
     repeat with msg in unreadMsgs
+        set output to output & "Message-ID: " & message id of msg & return
+        set output to output & "Account: " & name of account of mailbox of msg & return
         set output to output & "Subject: " & subject of msg & return
         set output to output & "From: " & sender of msg & return
         set output to output & "Date: " & (date received of msg as string) & return
