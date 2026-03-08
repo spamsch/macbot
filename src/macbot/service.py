@@ -95,10 +95,13 @@ class AgentQueue:
                 # Poison pill — shut down
                 break
             try:
-                # Create on_status callback that only forwards routing messages
+                # Create on_status callback that forwards routing and thinking messages
                 def _on_status(text: str, _emit=msg.emit) -> None:
                     if _emit and "Routed:" in text:
                         _emit({"type": "status", "text": text.strip()})
+                    # Log thinking to console (on_event handles GUI/Telegram)
+                    if "💭" in text:
+                        logger.info("Agent thinking: %s", text.strip())
 
                 result = await self.agent.run(
                     msg.content,
@@ -438,10 +441,16 @@ class MacbotService:
                 # Build a combined emit that forwards to both GUI and Telegram progress
                 tools_called: list[str] = []
 
+                last_thinking: list[str] = []
+
                 def _combined_emit(obj: dict) -> None:
                     # Forward to GUI with channel tag
                     if self._emit:
                         self._emit({**obj, "channel": f"telegram:{chat_id}"})
+                    # Capture thinking for next progress update
+                    if obj.get("type") == "thinking":
+                        last_thinking.clear()
+                        last_thinking.append(obj.get("content", ""))
                     # Track tool calls and update progress in-place (no new notifications)
                     if obj.get("type") == "tool_call" and progress_msg_id is not None:
                         tools_called.append(obj.get("name", "?"))
@@ -452,6 +461,10 @@ class MacbotService:
                             progress = f"Working on it... `{name}`"
                         else:
                             progress = f"Working on it... `{name}` (step {count})"
+                        # Append thinking if available
+                        if last_thinking:
+                            progress += f"\n💭 _{last_thinking[0]}_"
+                            last_thinking.clear()
                         asyncio.get_event_loop().create_task(
                             self.telegram_service.edit_message(
                                 chat_id, progress_msg_id, progress, parse_mode="Markdown"
@@ -544,9 +557,7 @@ class MacbotService:
 
                 self._console.print(f"\n[{timestamp}] 💓 Heartbeat: {content[:100]}{'...' if len(content) > 100 else ''}")
                 logger.info(f"Heartbeat: Running '{content[:50]}...'")
-                result = await self._heartbeat_queue.submit(
-                    content, disable_routing=True,
-                )
+                result = await self._heartbeat_queue.submit(content)
                 logger.info(f"Heartbeat: Completed, result length: {len(result)}")
                 from rich.markdown import Markdown
                 from rich.panel import Panel

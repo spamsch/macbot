@@ -17,7 +17,7 @@ from textual import on, work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.command import Hit, Hits, Provider
-from textual.containers import Vertical, VerticalScroll
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.message import Message as TMessage
 from textual.reactive import reactive
 from textual.widgets import Footer, Markdown, Static, TextArea
@@ -83,6 +83,71 @@ class StatusBar(Static):
         if self.token_info:
             parts.append(self.token_info)
         return " | ".join(parts)
+
+
+class DebugPanel(VerticalScroll):
+    """Side panel showing detailed agent debug info (CoT, raw responses, etc.)."""
+
+    DEFAULT_CSS = """
+    DebugPanel {
+        width: 45%;
+        border-left: tall $warning-darken-2;
+        background: $surface-darken-1;
+        display: none;
+    }
+    DebugPanel.visible {
+        display: block;
+    }
+    DebugPanel .debug-header {
+        color: $warning;
+        text-style: bold;
+        padding: 0 1;
+        margin: 1 0 0 0;
+    }
+    DebugPanel .debug-label {
+        color: $warning-darken-1;
+        padding: 0 1;
+        margin: 0;
+    }
+    DebugPanel .debug-content {
+        color: $text-muted;
+        padding: 0 1 0 3;
+        margin: 0;
+    }
+    DebugPanel .debug-thinking {
+        color: $success;
+        padding: 0 1 0 3;
+        margin: 0;
+    }
+    DebugPanel .debug-separator {
+        color: $warning-darken-3;
+        padding: 0 1;
+        margin: 0;
+    }
+    """
+
+    def add_header(self, text: str) -> None:
+        self.mount(Static(text, classes="debug-header"))
+        self.scroll_end(animate=False)
+
+    def add_label(self, text: str) -> None:
+        self.mount(Static(text, classes="debug-label"))
+        self.scroll_end(animate=False)
+
+    def add_content(self, text: str) -> None:
+        self.mount(Static(text, classes="debug-content"))
+        self.scroll_end(animate=False)
+
+    def add_thinking(self, text: str) -> None:
+        self.mount(Static(text, classes="debug-thinking"))
+        self.scroll_end(animate=False)
+
+    def add_separator(self) -> None:
+        self.mount(Static("─" * 40, classes="debug-separator"))
+        self.scroll_end(animate=False)
+
+    def clear_panel(self) -> None:
+        self.remove_children()
 
 
 class PromptInput(TextArea):
@@ -166,6 +231,7 @@ class ChatCommands(Provider):
         assert isinstance(app, ChatApp)
 
         yield Hit(1.0, "Clear conversation", app.action_clear_chat, help="Reset chat and start a new session")
+        yield Hit(0.95, "Toggle debug panel", app.action_toggle_debug, help="Show/hide CoT debug panel (Ctrl+D)")
         yield Hit(0.9, "Show stats", app.action_show_stats, help="Token usage statistics")
         yield Hit(0.8, "Show tasks", app._show_tasks, help="List available agent tasks")
         yield Hit(0.7, "Sessions", app._show_sessions, help="List saved sessions")
@@ -282,8 +348,11 @@ class ChatApp(App[None]):
         color: $text;
         padding: 0 1;
     }
-    #messages {
+    #main-area {
         height: 1fr;
+    }
+    #messages {
+        width: 1fr;
         scrollbar-size: 1 1;
         border: round $primary-darken-2;
     }
@@ -326,6 +395,11 @@ class ChatApp(App[None]):
         padding: 0 1;
         color: $text-muted;
     }
+    .msg-thinking {
+        color: $success-darken-1;
+        padding: 0 1 0 3;
+        margin: 0;
+    }
     """
 
     BINDINGS = [
@@ -333,6 +407,7 @@ class ChatApp(App[None]):
         Binding("ctrl+q", "quit", "Quit", show=True),
         Binding("ctrl+l", "clear_chat", "Clear", show=True),
         Binding("ctrl+t", "show_stats", "Stats", show=True),
+        Binding("ctrl+d", "toggle_debug", "Debug", show=True),
     ]
 
     def __init__(
@@ -351,10 +426,13 @@ class ChatApp(App[None]):
         self._cancel_event: asyncio.Event | None = None
         self._service_task: asyncio.Task | None = None  # type: ignore[type-arg]
         self._session_id: str | None = None
+        self._debug: bool = False
 
     def compose(self) -> ComposeResult:
         yield StatusBar(id="status-bar")
-        yield VerticalScroll(id="messages")
+        with Horizontal(id="main-area"):
+            yield VerticalScroll(id="messages")
+            yield DebugPanel(id="debug-panel")
         with Vertical(id="input-container"):
             yield PromptInput(id="prompt")
         yield Footer()
@@ -403,9 +481,12 @@ class ChatApp(App[None]):
         if cmd == "stats":
             self.action_show_stats()
             return
+        if cmd == "debug":
+            self.action_toggle_debug()
+            return
         if cmd == "help":
             self._add_md(
-                "**Commands:** quit, clear, stats, help, tasks, profile [name], "
+                "**Commands:** quit, clear, stats, help, tasks, debug, profile [name], "
                 "sessions, load &lt;id&gt;, "
                 "channels, ch &lt;id&gt;, channel new &lt;name&gt;, channel close &lt;id&gt;\n\n"
                 "**Keys:** Enter=send, Shift+Enter=newline, Escape=cancel, "
@@ -479,6 +560,27 @@ class ChatApp(App[None]):
 
         area = self.query_one("#messages", VerticalScroll)
 
+        # Debug panel: log the new request
+        if self._debug:
+            dbg = self.query_one("#debug-panel", DebugPanel)
+            dbg.add_separator()
+            dbg.add_header("━━ New Request ━━")
+            input_text = text if isinstance(text, str) else str(text)[:300]
+            dbg.add_label("User input:")
+            dbg.add_content(str(input_text))
+            dbg.add_label(f"Model: {self._agent._current_model}")
+            dbg.add_label(f"Profile: {self._agent._get_effective_profile()}")
+            model = self._agent._current_model
+            _REASONING = ("openai/o1", "openai/o3", "openai/o4")
+            has_reasoning = any(model.startswith(p) for p in _REASONING)
+            if has_reasoning:
+                cot_mode = "built-in (reasoning model)"
+            else:
+                cot_mode = "inline (system prompt)"
+            dbg.add_label(f"CoT strategy: {cot_mode}")
+            dbg.add_label(f"Messages in context: {len(self._agent.messages)}")
+            dbg.add_separator()
+
         # Show thinking indicator
         thinking = ThinkingIndicator(classes="thinking")
         await area.mount(thinking)
@@ -547,10 +649,82 @@ class ChatApp(App[None]):
             prompt.focus()
 
     def _on_agent_event(self, event: dict[str, Any]) -> None:
-        """Handle on_event callbacks from the agent (tool_call / tool_result)."""
-        # These already get handled via on_status for the non-verbose path.
-        # on_event is kept for the JSON-lines protocol compatibility.
-        pass
+        """Handle on_event callbacks from the agent.
+
+        Thinking blocks always show in the main chat.
+        All events are mirrored to the debug panel when visible.
+        """
+        event_type = event.get("type", "")
+        dbg = self.query_one("#debug-panel", DebugPanel)
+
+        # Always show thinking in main chat area
+        if event_type == "thinking":
+            content = event.get("content", "")
+            self._add_text(f"  💭 {content}", "msg-thinking")
+
+        # --- Debug panel output (only when panel is visible) ---
+        if not self._debug:
+            return
+
+        if event_type == "debug_cot":
+            it = event.get("iteration", "?")
+            has_c = event.get("has_content", False)
+            has_t = event.get("has_tool_calls", False)
+            model = event.get("model", "?")
+            preview = event.get("content_preview", "")
+            dbg.add_header(f"━━ Iteration {it} ━━")
+            dbg.add_label(f"Model: {model}")
+            dbg.add_label(f"Has content: {has_c} | Has tools: {has_t}")
+            if preview:
+                dbg.add_label("Response content:")
+                # Show full preview, wrapping long lines
+                for line in preview.split("\n"):
+                    dbg.add_content(line)
+
+        elif event_type == "thinking":
+            content = event.get("content", "")
+            dbg.add_label("💭 Thinking:")
+            for line in content.split("\n"):
+                dbg.add_thinking(f"  {line}")
+
+        elif event_type == "tool_call":
+            name = event.get("name", "?")
+            args = event.get("arguments", {})
+            dbg.add_label(f"🔧 Tool call: {name}")
+            for k, v in args.items():
+                dbg.add_content(f"  {k}: {v}")
+
+        elif event_type == "tool_result":
+            success = event.get("success", "?")
+            output = str(event.get("output", ""))
+            label = "✓" if success else "✗"
+            dbg.add_label(f"📋 Result: {label}")
+            # Show up to 500 chars of output
+            if len(output) > 500:
+                output = output[:500] + "…"
+            for line in output.split("\n"):
+                dbg.add_content(line)
+            dbg.add_separator()
+
+        elif event_type == "debug_llm_request":
+            dbg.add_label(f"📤 LLM Request ({event.get('message_count', '?')} msgs, "
+                          f"{event.get('tool_count', '?')} tools)")
+            dbg.add_content(f"  CoT strategy: {event.get('cot_strategy', '?')}")
+            dbg.add_content(f"  System prompt: {event.get('system_prompt_length', '?')} chars")
+            # Show message summary
+            for msg_line in event.get("messages", []):
+                dbg.add_content(f"  {msg_line}")
+
+        elif event_type == "debug_cot_info":
+            dbg.add_label("🧠 CoT info:")
+            dbg.add_thinking(f"  {event.get('reason', '')}")
+
+        else:
+            # Any other event type
+            dbg.add_label(f"⚡ {event_type}")
+            for k, v in event.items():
+                if k != "type":
+                    dbg.add_content(f"  {k}: {v}")
 
     # ----- Profile management -----
 
@@ -782,6 +956,21 @@ class ChatApp(App[None]):
 
     # ----- Actions -----
 
+    def action_toggle_debug(self) -> None:
+        """Toggle the debug panel on/off."""
+        self._debug = not self._debug
+        panel = self.query_one("#debug-panel", DebugPanel)
+        if self._debug:
+            panel.add_class("visible")
+            panel.add_header("Debug panel active")
+            panel.add_label("Shows: CoT strategy, raw response content,")
+            panel.add_label("tool calls/results, thinking blocks")
+            panel.add_separator()
+            self.notify("Debug ON (Ctrl+D to hide)", timeout=2)
+        else:
+            panel.remove_class("visible")
+            self.notify("Debug OFF", timeout=1)
+
     def action_copy_or_quit(self) -> None:
         """Ctrl+C: copy selected text if any, otherwise quit."""
         text = self.screen.get_selected_text()
@@ -813,6 +1002,7 @@ class ChatApp(App[None]):
                 history.delete_session(self._session_id)
         self._session_id = history.create_session()
         self.query_one("#messages", VerticalScroll).remove_children()
+        self.query_one("#debug-panel", DebugPanel).clear_panel()
         self._add_text("Conversation cleared.", "msg-status")
 
     def action_show_stats(self) -> None:

@@ -11,6 +11,7 @@ The agent follows a ReAct-style pattern:
 import json
 import logging
 import platform
+import re
 import time
 from collections.abc import Callable
 from typing import Any
@@ -264,11 +265,37 @@ class Agent:
             # Get LLM response (with streaming if enabled)
             response = await self._get_llm_response(
                 stream=stream, verbose=verbose, stream_callback=stream_callback,
+                on_event=on_event,
             )
 
             # If not streaming and verbose, show the response
             if not stream and verbose and response.content:
                 console.print(Panel(response.content, title="Assistant"))
+
+            # Debug: emit raw response info for CoT diagnostics
+            if on_event:
+                has_content = bool(response.content)
+                has_tools = bool(response.tool_calls)
+                content_preview = (response.content or "")[:150]
+                on_event({
+                    "type": "debug_cot",
+                    "iteration": self.iteration,
+                    "has_content": has_content,
+                    "has_tool_calls": has_tools,
+                    "content_preview": content_preview,
+                    "model": self._current_model,
+                })
+
+            # Show thinking blocks (dimmed) if present alongside tool calls
+            if response.content and response.tool_calls:
+                thinking = self._extract_thinking(response.content)
+                if thinking:
+                    if on_event:
+                        on_event({"type": "thinking", "content": thinking})
+                    elif on_status:
+                        on_status(f"  💭 {thinking}")
+                    else:
+                        console.print(f"[dim italic]  💭 {thinking}[/dim italic]")
 
             # Check if we have tool calls to execute
             if response.tool_calls:
@@ -311,10 +338,12 @@ class Agent:
                     self._maybe_switch_model(response.tool_calls, on_status=on_status)
             else:
                 # No tool calls means the agent has finished
+                # Strip thinking blocks from final response shown to user
+                final_content = self._strip_thinking(response.content) if response.content else response.content
                 # Store the final response so multi-turn conversations include it
-                self.messages.append(Message(role="assistant", content=response.content))
+                self.messages.append(Message(role="assistant", content=final_content))
                 self._restore_model()
-                return response.content or "Task completed."
+                return final_content or "Task completed."
 
         self._restore_model()
         return f"Reached maximum iterations ({self.config.max_iterations}) without completing the goal. Increase MACBOT_MAX_ITERATIONS to allow more steps."
@@ -326,6 +355,17 @@ class Agent:
             self.provider = self._saved_provider  # type: ignore[assignment]
             self._saved_model = None
             self._saved_provider = None
+
+    @staticmethod
+    def _extract_thinking(content: str) -> str | None:
+        """Extract text from <thinking> blocks."""
+        match = re.search(r"<thinking>(.*?)</thinking>", content, re.DOTALL)
+        return match.group(1).strip() if match else None
+
+    @staticmethod
+    def _strip_thinking(content: str) -> str:
+        """Remove <thinking> blocks from content."""
+        return re.sub(r"<thinking>.*?</thinking>\s*", "", content, flags=re.DOTALL).strip()
 
     def _build_system_prompt(self) -> str:
         """Build a dynamic system prompt with platform and skills context.
@@ -399,7 +439,7 @@ class Agent:
         """
         prompt_parts = [
             "You are Son of Simon, a macOS automation assistant. "
-            "Call tools immediately — don't explain plans. "
+            "Before acting, briefly reason in a <thinking> block (1-2 sentences), then call tools. "
             "Check memory before searching. Confirm before destructive actions."
         ]
 
@@ -590,7 +630,7 @@ When an email, document, or conversation implies that information is available o
                         "Call this if the user's request needs tools from a "
                         "group not yet loaded."
                     ),
-                    "parameters": {
+                    "input_schema": {
                         "type": "object",
                         "properties": {
                             "skill_ids": {
@@ -757,12 +797,50 @@ When an email, document, or conversation implies that information is available o
         stream: bool = False,
         verbose: bool = False,
         stream_callback: Callable[[str], None] | None = None,
+        on_event: Callable[[dict[str, Any]], None] | None = None,
     ) -> LLMResponse:
         """Get a response from the LLM."""
         tools = self._get_tool_schemas()
         system_prompt = self._build_system_prompt()
         messages = self._cap_messages(self.messages)
         messages = self._trim_messages_to_fit(messages, system_prompt, tools)
+
+        # Chain-of-thought strategy: all models use inline CoT via system prompt
+        # (the system prompt contains <thinking> block instructions).
+        # - OpenAI reasoning models (o1/o3/o4): have built-in opaque reasoning
+        # - All other models: guided by system prompt to produce <thinking> blocks
+        # No prefill or two-turn tricks needed.
+        _REASONING_MODEL_PREFIXES = ("openai/o1", "openai/o3", "openai/o4")
+        has_opaque_reasoning = any(self._current_model.startswith(p) for p in _REASONING_MODEL_PREFIXES)
+
+        if has_opaque_reasoning and on_event:
+            on_event({
+                "type": "debug_cot_info",
+                "skipped": True,
+                "reason": f"Model {self._current_model} has built-in opaque reasoning — CoT via system prompt only",
+            })
+
+        # Emit debug: messages being sent to LLM
+        if on_event:
+            msg_summary = []
+            for m in messages:
+                text_preview = (m.content_text or "")[:100] if hasattr(m, "content_text") else str(m.content)[:100]
+                tc_count = len(m.tool_calls) if m.tool_calls else 0
+                entry = f"[{m.role}]"
+                if tc_count:
+                    entry += f" ({tc_count} tool_calls)"
+                if text_preview:
+                    entry += f" {text_preview}"
+                msg_summary.append(entry)
+            on_event({
+                "type": "debug_llm_request",
+                "message_count": len(messages),
+                "messages": msg_summary,
+                "has_tools": bool(tools),
+                "tool_count": len(tools) if tools else 0,
+                "cot_strategy": "built-in" if has_opaque_reasoning else "inline",
+                "system_prompt_length": len(system_prompt) if system_prompt else 0,
+            })
 
         cb = stream_callback
         if stream and cb is None:
