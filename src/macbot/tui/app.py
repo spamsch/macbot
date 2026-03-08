@@ -172,6 +172,21 @@ class ChatCommands(Provider):
         yield Hit(0.6, "Channels", app._show_channels, help="List all channels")
         yield Hit(0.5, "Quit", app.action_quit, help="Exit the application")
 
+        # Theme switching
+        current_theme = app.theme or "textual-dark"
+        for t in app._THEMES:
+            label = f"{t} (active)" if t == current_theme else t
+
+            def _make_theme_switch(_t: str = t) -> None:
+                app.theme = _t
+
+            yield Hit(
+                0.45,
+                f"Theme: {label}",
+                _make_theme_switch,
+                help=f"Switch theme to {t}",
+            )
+
         # Profile switching
         current_profile = app._get_active_profile()
         for p in ("auto", "full", "compact", "minimal"):
@@ -243,6 +258,18 @@ class ChatApp(App[None]):
     TITLE = "Son of Simon"
     COMMANDS = {ChatCommands}
     COMMAND_PALETTE_BINDING = "ctrl+p"
+
+    _THEMES = [
+        "textual-dark",
+        "textual-light",
+        "nord",
+        "gruvbox",
+        "catppuccin-latte",
+        "dracula",
+        "tokyo-night",
+        "solarized-light",
+        "flexoki",
+    ]
 
     CSS = """
     Screen {

@@ -340,18 +340,20 @@ class RunScheduledTaskTask(Task):
     @property
     def description(self) -> str:
         return (
-            "Get a scheduled task's message so you can execute it right now. "
-            "Returns the task's goal/instruction for you to carry out inline."
+            "Run a scheduled task NOW by retrieving its goal. "
+            "IMPORTANT: After calling this tool, you MUST immediately execute "
+            "the returned goal/instruction as if the user had typed it. "
+            "Do NOT just report what the task does — actually carry it out."
         )
 
     async def execute(self, job_id: str) -> dict[str, Any]:
-        """Get the task's message for execution.
+        """Get the task's message for immediate execution.
 
         Args:
             job_id: The ID of the job to run
 
         Returns:
-            Dictionary with the task's message
+            Dictionary with the task's goal that must be executed
         """
         service = get_cron_service()
         job = service.get_job(job_id)
@@ -365,10 +367,8 @@ class RunScheduledTaskTask(Task):
             "success": True,
             "job_id": job.id,
             "name": job.name,
-            "message": job.payload.message,
-            "instruction": (
-                f"Execute the following goal for scheduled task '{job.name}': "
-                f"{job.payload.message}"
+            "action_required": (
+                f"YOU MUST NOW EXECUTE THIS GOAL: {job.payload.message}"
             ),
         }
 
