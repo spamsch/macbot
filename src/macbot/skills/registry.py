@@ -154,6 +154,7 @@ class SkillsRegistry:
             apps=dedupe_list(base.apps + extension.apps),
             tasks=dedupe_list(base.tasks + extension.tasks),
             essential_tasks=merged_essential,
+            keywords=dedupe_list(base.keywords + extension.keywords),
             examples=base.examples + extension.examples,  # Allow duplicates for examples
             safe_defaults={**base.safe_defaults, **extension.safe_defaults},
             confirm_before_write=dedupe_list(base.confirm_before_write + extension.confirm_before_write),
@@ -304,22 +305,57 @@ class SkillsRegistry:
         self._save_config()
         return True
 
+    # Minimum relevance score for a skill to be included in query-aware filtering
+    RELEVANCE_THRESHOLD = 0.3
+
+    # Skills always included regardless of query matching
+    ALWAYS_INCLUDE = {"core_utilities"}
+
+    def get_relevant_skills(self, query: str) -> list[Skill]:
+        """Return enabled skills relevant to a user query.
+
+        If no skills match above the threshold, returns all enabled skills
+        as a fallback (ambiguous queries should not lose capabilities).
+        Core utility skills are always included.
+        """
+        enabled = self.list_enabled_skills()
+        scored = [(skill, skill.matches_query(query)) for skill in enabled]
+        matched = [(s, sc) for s, sc in scored if sc >= self.RELEVANCE_THRESHOLD]
+
+        if not matched:
+            return enabled  # fallback: return all
+
+        # Sort by score descending
+        matched.sort(key=lambda x: x[1], reverse=True)
+        result = [s for s, _ in matched]
+
+        # Always include core skills
+        result_ids = {s.id for s in result}
+        for skill in enabled:
+            if skill.id in self.ALWAYS_INCLUDE and skill.id not in result_ids:
+                result.append(skill)
+
+        return result
+
     def get_all_tool_schemas(
         self, task_registry: TaskRegistry, compact: bool = False,
+        skills: list[Skill] | None = None,
     ) -> list[dict[str, Any]]:
-        """Get tool schemas for all enabled skills.
+        """Get tool schemas for skills.
 
         Args:
             task_registry: Registry of available tasks.
             compact: If True, use essential_tasks; skip skills with empty essential_tasks.
+            skills: If provided, use only these skills. Otherwise uses all enabled skills.
 
         Returns:
             List of tool schemas (deduplicated by name).
         """
+        source = skills if skills is not None else self.list_enabled_skills()
         schemas: list[dict[str, Any]] = []
         seen: set[str] = set()
 
-        for skill in self.list_enabled_skills():
+        for skill in source:
             # In compact mode, skip skills whose effective task list is empty
             if compact and not skill.get_effective_tasks(compact=True):
                 continue
@@ -331,18 +367,22 @@ class SkillsRegistry:
 
         return schemas
 
-    def format_for_prompt(self, task_registry: TaskRegistry | None = None, compact: bool = False) -> str:
-        """Format all enabled skills for the agent's system prompt.
+    def format_for_prompt(
+        self, task_registry: TaskRegistry | None = None, compact: bool = False,
+        skills: list[Skill] | None = None,
+    ) -> str:
+        """Format skills for the agent's system prompt.
 
         Args:
             task_registry: Optional registry to pass to skill formatting.
             compact: If True, use compact formatting (no examples/body).
+            skills: If provided, format only these skills. Otherwise formats all enabled skills.
 
         Returns:
             Formatted skills section for the system prompt
         """
-        enabled = self.list_enabled_skills()
-        if not enabled:
+        source = skills if skills is not None else self.list_enabled_skills()
+        if not source:
             return ""
 
         if compact:
@@ -352,7 +392,7 @@ class SkillsRegistry:
             lines.append("You have the following capabilities. Each one is a built-in feature you can use. "
                           "When listing your capabilities to the user, include ALL of these:\n")
 
-        for skill in sorted(enabled, key=lambda s: s.name):
+        for skill in sorted(source, key=lambda s: s.name):
             if compact:
                 # Skip skills with empty effective tasks in compact mode
                 if not skill.get_effective_tasks(compact=True):

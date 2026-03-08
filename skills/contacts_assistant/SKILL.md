@@ -10,6 +10,7 @@ tasks:
   - create_contact
   - list_contact_groups
 essential_tasks: []
+keywords: ["kontakt", "kontakte", "adressbuch", "telefonnummer"]
 examples:
   - "What's Joe's phone number?"
   - "Find contacts at Acme Corp"

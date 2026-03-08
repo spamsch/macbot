@@ -171,6 +171,12 @@ class Task(ABC):
 
             param_type = param.type.lower()
 
+            # Strip Optional / union-with-None (e.g. "int | None" → "int")
+            if " | none" in param_type:
+                param_type = param_type.replace(" | none", "").strip()
+            elif "none | " in param_type:
+                param_type = param_type.replace("none | ", "").strip()
+
             # Handle generic types like list[float], dict[str, Any]
             if param_type.startswith("list"):
                 prop["type"] = "array"

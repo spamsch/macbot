@@ -129,7 +129,7 @@ def load_skill_from_string(
     known_fields = {
         "id", "name", "description", "apps", "tasks", "essential_tasks",
         "examples", "safe_defaults", "confirm_before_write",
-        "requires_permissions", "extends", "allowed-tools",
+        "requires_permissions", "extends", "allowed-tools", "keywords",
     }
     metadata = {k: v for k, v in frontmatter.items() if k not in known_fields}
 
@@ -142,6 +142,7 @@ def load_skill_from_string(
         tasks=tasks,
         essential_tasks=essential_tasks,
         examples=ensure_list(frontmatter.get("examples")),
+        keywords=ensure_list(frontmatter.get("keywords")),
         safe_defaults=frontmatter.get("safe_defaults") or {},
         confirm_before_write=ensure_list(frontmatter.get("confirm_before_write")),
         requires_permissions=ensure_list(frontmatter.get("requires_permissions")),

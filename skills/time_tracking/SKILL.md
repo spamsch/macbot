@@ -11,6 +11,7 @@ essential_tasks:
   - timer_start
   - timer_stop
   - timer_status
+keywords: ["zeiterfassung", "stoppuhr", "timer"]
 examples:
   - "Start a timer for the meeting"
   - "Stop my current timer"

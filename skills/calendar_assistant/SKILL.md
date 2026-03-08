@@ -12,6 +12,7 @@ tasks:
 essential_tasks:
   - get_today_events
   - create_calendar_event
+keywords: ["kalender", "termin", "termine", "terminkalender", "besprechung"]
 examples:
   - "What's on my calendar today?"
   - "Show me my schedule for this week"

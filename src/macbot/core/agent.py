@@ -70,6 +70,10 @@ class Agent:
         self._preferences = CorePreferences()
         self._preferences.ensure_directories()
 
+        # Query-aware tool filtering
+        self._active_skills: list | None = None  # Set per interaction
+        self._active_skill_names: list[str] = []  # For display
+
         # Token tracking
         self._session_input_tokens = 0
         self._session_output_tokens = 0
@@ -108,7 +112,11 @@ class Agent:
             logger.debug("Routing engine not available: %s", e)
         return None
 
-    def _maybe_switch_model(self, tool_calls) -> None:
+    def _maybe_switch_model(
+        self,
+        tool_calls,
+        on_status: Callable[[str], None] | None = None,
+    ) -> None:
         """Switch model based on routing rules if applicable.
 
         Called after tool execution each turn. If a route matches the
@@ -130,11 +138,14 @@ class Agent:
             new_model = self.config.get_model()
 
         if new_model != self._current_model:
-            logger.info("Switching model: %s → %s", self._current_model, new_model)
+            old_model = self._current_model
+            logger.info("Switching model: %s → %s", old_model, new_model)
             self._current_model = new_model
             api_key = self.config.get_api_key_for_model(new_model)
             api_base = self.config.get_api_base_for_model(new_model)
             self.provider = LiteLLMProvider(model=new_model, api_key=api_key, api_base=api_base)
+            if on_status:
+                on_status(f"  ↗ Routed: {old_model} → {new_model}")
 
     def _get_effective_profile(self) -> str:
         """Get the context profile, accounting for hybrid routing model switches.
@@ -156,6 +167,8 @@ class Agent:
         on_event: Callable[[dict[str, Any]], None] | None = None,
         stream_callback: Callable[[str], None] | None = None,
         on_status: Callable[[str], None] | None = None,
+        model_override: str | None = None,
+        disable_routing: bool = False,
     ) -> str:
         """Run the agent loop to achieve a goal.
 
@@ -171,6 +184,9 @@ class Agent:
                             When provided, overrides the default console streaming.
             on_status: Optional callback for status messages (tool calls, results).
                       When provided, overrides the default console status output.
+            model_override: Use this model instead of the configured default.
+                           Bypasses routing for this run.
+            disable_routing: If True, skip intent pre-routing and tool-based routing.
 
         Returns:
             The final response from the agent
@@ -188,16 +204,49 @@ class Agent:
         self._interaction_input_tokens = 0
         self._interaction_output_tokens = 0
 
+        # Model override: switch provider for this run, skip routing
+        self._saved_model: str | None = None
+        self._saved_provider: LLMProvider | None = None
+        if model_override:
+            self._saved_model = self._current_model
+            self._saved_provider = self.provider
+            self._current_model = model_override
+            api_key = self.config.get_api_key_for_model(model_override)
+            api_base = self.config.get_api_base_for_model(model_override)
+            self.provider = LiteLLMProvider(model=model_override, api_key=api_key, api_base=api_base)
+            disable_routing = True  # model_override implies no routing
+            logger.info("Model override: %s (routing disabled)", model_override)
+
+        self._disable_routing = disable_routing
+
+        # Query-aware tool filtering: select relevant skills for this interaction
+        goal_text = goal if isinstance(goal, str) else Message(role="user", content=goal).content_text
+        relevant = self.skills_registry.get_relevant_skills(goal_text or "")
+        all_enabled = self.skills_registry.list_enabled_skills()
+        if len(relevant) < len(all_enabled):
+            self._active_skills = relevant
+            self._active_skill_names = [s.name for s in relevant]
+            logger.info(
+                "Tool filtering: %d/%d skills selected: %s",
+                len(relevant), len(all_enabled),
+                ", ".join(self._active_skill_names),
+            )
+        else:
+            self._active_skills = None  # No filtering, use all
+            self._active_skill_names = []
+
         # Intent-based pre-routing: check keywords before the first LLM call
-        if self._routing_engine is not None and self._routing_engine.has_routes:
-            goal_text = goal if isinstance(goal, str) else Message(role="user", content=goal).content_text
+        if not self._disable_routing and self._routing_engine is not None and self._routing_engine.has_routes:
             intent_model = self._routing_engine.resolve_intent(goal_text or "")
             if intent_model and intent_model != self._current_model:
-                logger.info("Intent pre-routing: %s → %s", self._current_model, intent_model)
+                old_model = self._current_model
+                logger.info("Intent pre-routing: %s → %s", old_model, intent_model)
                 self._current_model = intent_model
                 api_key = self.config.get_api_key_for_model(intent_model)
                 api_base = self.config.get_api_base_for_model(intent_model)
                 self.provider = LiteLLMProvider(model=intent_model, api_key=api_key, api_base=api_base)
+                if on_status:
+                    on_status(f"  ↗ Routed: {old_model} → {intent_model}")
 
         if verbose:
             goal_preview = goal if isinstance(goal, str) else Message(role="user", content=goal).content_text
@@ -255,14 +304,25 @@ class Agent:
                 await self._execute_tool_calls(
                     response, verbose, on_event=on_event, on_status=on_status,
                 )
-                self._maybe_switch_model(response.tool_calls)
+                if not self._disable_routing:
+                    self._maybe_switch_model(response.tool_calls, on_status=on_status)
             else:
                 # No tool calls means the agent has finished
                 # Store the final response so multi-turn conversations include it
                 self.messages.append(Message(role="assistant", content=response.content))
+                self._restore_model()
                 return response.content or "Task completed."
 
+        self._restore_model()
         return f"Reached maximum iterations ({self.config.max_iterations}) without completing the goal. Increase MACBOT_MAX_ITERATIONS to allow more steps."
+
+    def _restore_model(self) -> None:
+        """Restore the original model/provider after a model_override run."""
+        if self._saved_model is not None:
+            self._current_model = self._saved_model
+            self.provider = self._saved_provider  # type: ignore[assignment]
+            self._saved_model = None
+            self._saved_provider = None
 
     def _build_system_prompt(self) -> str:
         """Build a dynamic system prompt with platform and skills context.
@@ -303,8 +363,10 @@ class Agent:
         if prefs_text:
             prompt_parts.append("\n" + prefs_text)
 
-        # Add skills with their tools
-        skills_text = self.skills_registry.format_for_prompt(self.task_registry)
+        # Add skills with their tools (filtered if query-aware filtering is active)
+        skills_text = self.skills_registry.format_for_prompt(
+            self.task_registry, skills=self._active_skills,
+        )
         if skills_text:
             prompt_parts.append(skills_text)
 
@@ -344,7 +406,9 @@ class Agent:
         if prefs_text:
             prompt_parts.append("\n" + prefs_text)
 
-        skills_text = self.skills_registry.format_for_prompt(self.task_registry, compact=True)
+        skills_text = self.skills_registry.format_for_prompt(
+            self.task_registry, compact=True, skills=self._active_skills,
+        )
         if skills_text:
             prompt_parts.append(skills_text)
 
@@ -487,18 +551,17 @@ When an email, document, or conversation implies that information is available o
     def _get_tool_schemas(self) -> list[dict[str, Any]]:
         """Get tool schemas appropriate for the current context profile.
 
-        All profiles filter tools through enabled skills. The profile controls
-        whether to use full or essential task lists, and whether to strip
-        parameter descriptions to save tokens.
-
-        Internal tools (memory, tracking, plumbing) are always included
-        regardless of skill filtering.
+        Uses query-aware filtering when active skills are set (via run()).
+        Internal tools (memory, tracking, plumbing) are always included.
+        When skills are filtered, a request_tools meta-tool is added so the
+        LLM can request additional tool groups if needed.
         """
         profile = self._get_effective_profile()
         compact = profile in ("compact", "minimal")
 
         schemas = self.skills_registry.get_all_tool_schemas(
             self.task_registry, compact=compact,
+            skills=self._active_skills,
         )
 
         # Always append internal tools that aren't already included
@@ -509,6 +572,33 @@ When an email, document, or conversation implies that information is available o
                 if task is not None:
                     schemas.append(task.to_tool_schema())
                     seen.add(tool_name)
+
+        # When skills are filtered, add the request_tools escape hatch
+        if self._active_skills is not None and "request_tools" not in seen:
+            all_skills = self.skills_registry.list_enabled_skills()
+            available = [s.id for s in all_skills
+                         if s not in (self._active_skills or [])]
+            if available:
+                schemas.append({
+                    "name": "request_tools",
+                    "description": (
+                        "Load additional tool groups not currently available. "
+                        f"Available groups: {', '.join(available)}. "
+                        "Call this if the user's request needs tools from a "
+                        "group not yet loaded."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "skill_ids": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": "Skill group IDs to load",
+                            },
+                        },
+                        "required": ["skill_ids"],
+                    },
+                })
 
         if compact:
             # Strip parameter descriptions to save tokens
@@ -762,9 +852,16 @@ When an email, document, or conversation implies that information is available o
                 })
 
             t0 = time.monotonic()
-            result = await self.task_registry.execute(
-                tool_call.name, **tool_call.arguments
-            )
+
+            # Handle request_tools meta-tool internally
+            if tool_call.name == "request_tools":
+                result = self._handle_request_tools(
+                    tool_call.arguments.get("skill_ids", [])
+                )
+            else:
+                result = await self.task_registry.execute(
+                    tool_call.name, **tool_call.arguments
+                )
             elapsed = time.monotonic() - t0
 
             # Emit tool_result event
@@ -805,6 +902,31 @@ When an email, document, or conversation implies that information is available o
             result_content = self._format_tool_result(result)
             tool_msg = self.provider.format_tool_result(tool_call.id, result_content)
             self.messages.append(tool_msg)
+
+    def _handle_request_tools(self, skill_ids: list[str]) -> TaskResult:
+        """Handle the request_tools meta-tool by loading additional skill groups."""
+        loaded = []
+        not_found = []
+        for sid in skill_ids:
+            skill = self.skills_registry.get(sid)
+            if skill and skill.enabled:
+                if self._active_skills is not None and skill not in self._active_skills:
+                    self._active_skills.append(skill)
+                    self._active_skill_names.append(skill.name)
+                    loaded.append(sid)
+                else:
+                    loaded.append(f"{sid} (already loaded)")
+            else:
+                not_found.append(sid)
+
+        parts = []
+        if loaded:
+            parts.append(f"Loaded: {', '.join(loaded)}")
+        if not_found:
+            parts.append(f"Not found: {', '.join(not_found)}")
+        parts.append("New tools are now available. Proceed with the user's request.")
+        logger.info("request_tools: loaded %s", loaded)
+        return TaskResult(success=True, output=". ".join(parts))
 
     def _format_tool_result(self, result: TaskResult) -> str | list[dict[str, Any]]:
         """Format a task result for the LLM.
@@ -1006,6 +1128,8 @@ When an email, document, or conversation implies that information is available o
         self.messages = []
         self.iteration = 0
         self._last_context_tokens = 0
+        self._active_skills = None
+        self._active_skill_names = []
 
     def reset_session(self) -> None:
         """Fully reset the agent including session token counts."""
@@ -1033,6 +1157,7 @@ When an email, document, or conversation implies that information is available o
             "session_total_tokens": self._session_input_tokens + self._session_output_tokens,
             "session_cost": self._session_cost,
             "message_count": len(self.messages),
+            "active_skills": self._active_skill_names,
         }
 
     def get_interaction_cost(self) -> dict[str, Any]:

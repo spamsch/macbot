@@ -12,6 +12,7 @@ tasks:
 essential_tasks:
   - schedule_task
   - list_scheduled_tasks
+keywords: ["zeitplan", "geplant", "cronjob", "regelmäßig"]
 examples:
   - "Every Monday at 8am, compile a news summary from my emails"
   - "Schedule a daily check of my inbox at 9am"

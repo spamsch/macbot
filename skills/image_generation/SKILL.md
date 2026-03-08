@@ -5,6 +5,7 @@ description: Generate images from text descriptions using models with native ima
 apps: []
 tasks: []
 essential_tasks: []
+keywords: ["bild", "bilder", "zeichne", "generiere"]
 examples:
   - "Generate an image of a sunset over mountains"
   - "Create a picture of a cartoon cat wearing a hat"

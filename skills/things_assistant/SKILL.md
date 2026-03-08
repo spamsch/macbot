@@ -21,6 +21,7 @@ essential_tasks:
   - show_things_today
   - create_things_todo
   - complete_things_todo
+keywords: ["aufgabe", "aufgaben", "todo", "todos", "projekt", "projekte"]
 examples:
   - "Show my Things today list"
   - "What's in my Things inbox?"

@@ -62,9 +62,11 @@ class ThinkingIndicator(Static):
 
 
 class StatusBar(Static):
-    """Top status bar: model, tasks, token stats, cost."""
+    """Top status bar: model, profile, skills/tasks, token stats, cost."""
 
     model_name: reactive[str] = reactive("")
+    profile_name: reactive[str] = reactive("")
+    skills_info: reactive[str] = reactive("")
     token_info: reactive[str] = reactive("")
     task_count: reactive[int] = reactive(0)
 
@@ -72,7 +74,11 @@ class StatusBar(Static):
         parts = [f"Son of Simon v{__version__}"]
         if self.model_name:
             parts.append(f"Model: {self.model_name}")
-        if self.task_count:
+        if self.profile_name:
+            parts.append(f"Profile: {self.profile_name}")
+        if self.skills_info:
+            parts.append(self.skills_info)
+        elif self.task_count:
             parts.append(f"Tasks: {self.task_count}")
         if self.token_info:
             parts.append(self.token_info)
@@ -165,6 +171,21 @@ class ChatCommands(Provider):
         yield Hit(0.7, "Sessions", app._show_sessions, help="List saved sessions")
         yield Hit(0.6, "Channels", app._show_channels, help="List all channels")
         yield Hit(0.5, "Quit", app.action_quit, help="Exit the application")
+
+        # Profile switching
+        current_profile = app._get_active_profile()
+        for p in ("auto", "full", "compact", "minimal"):
+            label = f"{p} (active)" if p == current_profile else p
+
+            def _make_profile_switch(_p: str = p) -> None:
+                app._set_profile(_p)
+
+            yield Hit(
+                0.75,
+                f"Profile: {label}",
+                _make_profile_switch,
+                help=f"Switch context profile to {p}",
+            )
 
         # List channels as switchable items
         if app._channels is not None:
@@ -325,6 +346,7 @@ class ChatApp(App[None]):
         else:
             bar.model_name = settings.model
         bar.task_count = len(self._agent.task_registry)
+        bar.profile_name = self._get_active_profile()
 
         # Start a fresh session
         self._session_id = history.create_session()
@@ -356,11 +378,19 @@ class ChatApp(App[None]):
             return
         if cmd == "help":
             self._add_md(
-                "**Commands:** quit, clear, stats, help, tasks, sessions, load &lt;id&gt;, "
+                "**Commands:** quit, clear, stats, help, tasks, profile [name], "
+                "sessions, load &lt;id&gt;, "
                 "channels, ch &lt;id&gt;, channel new &lt;name&gt;, channel close &lt;id&gt;\n\n"
                 "**Keys:** Enter=send, Shift+Enter=newline, Escape=cancel, "
                 "Ctrl+P=command palette, Ctrl+L=clear, Ctrl+T=stats"
             )
+            return
+        if cmd == "profile":
+            self._show_profile()
+            return
+        if cmd.startswith("profile "):
+            name = text.split(maxsplit=1)[1].strip().lower()
+            self._set_profile(name)
             return
         if cmd == "tasks":
             self._show_tasks()
@@ -495,6 +525,56 @@ class ChatApp(App[None]):
         # on_event is kept for the JSON-lines protocol compatibility.
         pass
 
+    # ----- Profile management -----
+
+    _VALID_PROFILES = ("auto", "full", "compact", "minimal")
+
+    def _get_active_profile(self) -> str:
+        """Return the effective profile name."""
+        if self._agent:
+            return self._agent._get_effective_profile()
+        return settings.context_profile
+
+    def _set_profile(self, name: str) -> None:
+        """Switch the context profile and reinitialize the agent context."""
+        if name not in self._VALID_PROFILES:
+            self._add_text(
+                f"Invalid profile '{name}'. Choose from: {', '.join(self._VALID_PROFILES)}",
+                "msg-error",
+            )
+            return
+
+        old = self._get_active_profile()
+        settings.context_profile = name
+
+        if self._agent:
+            self._agent.config.context_profile = name
+
+        new = self._get_active_profile()
+        bar = self.query_one("#status-bar", StatusBar)
+        bar.profile_name = new
+        bar.task_count = len(self._agent.task_registry) if self._agent else 0
+        self._add_text(f"Profile switched: {old} → {new}", "msg-status")
+
+    def _show_profile(self) -> None:
+        """Display current profile and available options."""
+        current = self._get_active_profile()
+        configured = settings.context_profile
+        lines = [
+            "**Context Profile**\n",
+            f"- Configured: `{configured}`",
+            f"- Active: `{current}`",
+            "",
+            "**Available profiles:** `auto`, `full`, `compact`, `minimal`",
+            "- `auto` — full for cloud models, compact for local/pico",
+            "- `full` — all skills, examples, memory (best quality, most tokens)",
+            "- `compact` — shorter prompts, no examples (good balance)",
+            "- `minimal` — bare minimum context (lowest token usage)",
+            "",
+            "Switch with: `profile <name>`",
+        ]
+        self._add_md("\n".join(lines))
+
     # ----- UI helpers -----
 
     def _add_text(self, text: str, css_class: str = "") -> None:
@@ -517,7 +597,24 @@ class ChatApp(App[None]):
         parts = [f"ctx:{ctx}", f"total:{total}"]
         if cost:
             parts.append(cost)
-        self.query_one("#status-bar", StatusBar).token_info = " ".join(parts)
+        bar = self.query_one("#status-bar", StatusBar)
+        bar.token_info = " ".join(parts)
+        bar.profile_name = self._get_active_profile()
+
+        # Update model name to reflect routing changes
+        current_model = getattr(self._agent, "_current_model", settings.model)
+        if self._channels is not None:
+            bar.model_name = f"{current_model} | {self._channels.active.name}"
+        else:
+            bar.model_name = current_model
+
+        # Show active skills filtering info
+        active = stats.get("active_skills", [])
+        if active:
+            bar.skills_info = f"Skills: {', '.join(active)}"
+        else:
+            bar.skills_info = ""
+            bar.task_count = len(self._agent.task_registry)
 
     def _show_tasks(self) -> None:
         if not self._agent:
@@ -706,6 +803,11 @@ class ChatApp(App[None]):
         ]
         if cost:
             lines.append(f"- Cost: {cost}")
+        active = stats.get("active_skills", [])
+        if active:
+            lines.append(f"\n**Active skills:** {', '.join(active)}")
+        else:
+            lines.append("\n**Active skills:** all (no query filtering)")
         try:
             from macbot.usage import UsageTracker
             monthly = UsageTracker().get_monthly_summary()

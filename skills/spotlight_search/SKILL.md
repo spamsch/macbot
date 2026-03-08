@@ -7,6 +7,7 @@ apps:
   - Finder
 tasks:
   - spotlight_search
+keywords: ["datei", "dateien", "dokument", "dokumente", "suche"]
 examples:
   - "What files did I work on today?"
   - "Which documents did I open this week?"

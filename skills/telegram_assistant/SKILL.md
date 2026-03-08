@@ -6,6 +6,7 @@ tasks:
   - telegram_send
 essential_tasks:
   - telegram_send
+keywords: ["telegram", "nachricht"]
 examples:
   - "Send a Telegram message saying I'm on my way"
   - "Message me on Telegram with the summary"

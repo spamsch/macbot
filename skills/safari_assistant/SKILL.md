@@ -16,6 +16,7 @@ essential_tasks:
   - open_url_in_safari
   - web_search
   - web_fetch
+keywords: ["browser", "webseite", "seite", "tabs"]
 examples:
   - "Open GitHub in Safari"
   - "Show me my open tabs"

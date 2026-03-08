@@ -40,6 +40,8 @@ class QueuedMessage:
 
     content: str | list[dict[str, Any]]  # str for text, list for multimodal content blocks
     emit: Callable[[dict], None] | None = None
+    model_override: str | None = None
+    disable_routing: bool = False
     result_future: asyncio.Future = field(default_factory=lambda: asyncio.get_event_loop().create_future())
 
 
@@ -57,18 +59,30 @@ class AgentQueue:
         self._running = False
         self._usage_tracker = usage_tracker or UsageTracker()
 
-    async def submit(self, content: str | list[dict[str, Any]], emit: Callable[[dict], None] | None = None) -> str:
+    async def submit(
+        self,
+        content: str | list[dict[str, Any]],
+        emit: Callable[[dict], None] | None = None,
+        model_override: str | None = None,
+        disable_routing: bool = False,
+    ) -> str:
         """Enqueue a message and wait for the result.
 
         Args:
             content: The user message (str) or multimodal content blocks (list).
             emit: Optional callback for streaming events.
+            model_override: Use this model for the run (bypasses routing).
+            disable_routing: If True, skip all routing for this run.
 
         Returns:
             The agent's text response.
         """
         loop = asyncio.get_event_loop()
-        msg = QueuedMessage(content=content, emit=emit, result_future=loop.create_future())
+        msg = QueuedMessage(
+            content=content, emit=emit,
+            model_override=model_override, disable_routing=disable_routing,
+            result_future=loop.create_future(),
+        )
         await self._queue.put(msg)
         return await msg.result_future
 
@@ -86,6 +100,8 @@ class AgentQueue:
                     stream=False,
                     continue_conversation=True,
                     on_event=msg.emit,
+                    model_override=msg.model_override,
+                    disable_routing=msg.disable_routing,
                 )
                 try:
                     self._usage_tracker.record(self.agent.get_interaction_cost())
@@ -335,10 +351,14 @@ class MacbotService:
             from macbot.cron.executor import ExecutionResult
             try:
                 timestamp = datetime.now().strftime("%H:%M:%S")
+                model_info = f" [{payload.model}]" if payload.model else ""
                 # Show cron job in console
-                self._console.print(f"\n[{timestamp}] ⏰ Cron: {payload.message[:100]}{'...' if len(payload.message) > 100 else ''}")
-                logger.info(f"Cron: Running '{payload.message[:50]}...'")
-                result = await self._cron_queue.submit(payload.message)
+                self._console.print(f"\n[{timestamp}] ⏰ Cron{model_info}: {payload.message[:100]}{'...' if len(payload.message) > 100 else ''}")
+                logger.info(f"Cron: Running '{payload.message[:50]}...'{model_info}")
+                result = await self._cron_queue.submit(
+                    payload.message,
+                    model_override=payload.model,
+                )
                 logger.info(f"Cron: Completed, result length: {len(result)}")
                 return ExecutionResult(success=True, output=result)
             except Exception as e:
@@ -518,7 +538,9 @@ class MacbotService:
 
                 self._console.print(f"\n[{timestamp}] 💓 Heartbeat: {content[:100]}{'...' if len(content) > 100 else ''}")
                 logger.info(f"Heartbeat: Running '{content[:50]}...'")
-                result = await self._heartbeat_queue.submit(content)
+                result = await self._heartbeat_queue.submit(
+                    content, disable_routing=True,
+                )
                 logger.info(f"Heartbeat: Completed, result length: {len(result)}")
                 from rich.markdown import Markdown
                 from rich.panel import Panel

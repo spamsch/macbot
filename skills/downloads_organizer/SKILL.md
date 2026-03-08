@@ -9,6 +9,7 @@ tasks:
   - run_shell_command
   - spotlight_search
 essential_tasks: []
+keywords: ["downloads", "sortieren", "aufräumen", "ordner"]
 examples:
   - "Organize my Downloads folder"
   - "Clean up Downloads"

@@ -14,6 +14,7 @@ tasks:
   - toggle_dnd
 essential_tasks:
   - get_system_status
+keywords: ["wlan", "wifi", "lautstärke", "dunkel", "helligkeit", "bluetooth"]
 examples:
   - "Turn off WiFi"
   - "Set volume to 50%"

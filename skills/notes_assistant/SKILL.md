@@ -19,6 +19,7 @@ essential_tasks:
   - search_notes
   - read_note
   - create_note
+keywords: ["notiz", "notizen", "anmerkung"]
 examples:
   - "Search my notes for the wifi password"
   - "Create a note about today's meeting"

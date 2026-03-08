@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -58,6 +59,12 @@ class Skill(BaseModel):
         description="macOS permissions required (e.g., 'Automation:Mail')",
     )
 
+    # Additional keywords for query matching (e.g., multilingual terms)
+    keywords: list[str] = Field(
+        default_factory=list,
+        description="Extra keywords for query matching (e.g., German equivalents)",
+    )
+
     # Markdown body with detailed behavior notes
     body: str = Field(
         default="",
@@ -89,6 +96,87 @@ class Skill(BaseModel):
         default=True,
         description="Whether this skill is currently enabled",
     )
+
+    # Common words that appear in many skills — not useful for disambiguation
+    _STOP_WORDS = frozenset({
+        "a", "an", "the", "is", "are", "was", "were", "be", "been", "being",
+        "have", "has", "had", "do", "does", "did", "will", "would", "could",
+        "should", "may", "might", "can", "shall", "to", "of", "in", "for",
+        "on", "with", "at", "by", "from", "as", "into", "about", "like",
+        "and", "or", "but", "not", "no", "if", "then", "so", "up", "out",
+        "it", "its", "i", "me", "my", "you", "your", "we", "our", "they",
+        "this", "that", "what", "which", "who", "how", "when", "where",
+        "all", "any", "some", "each", "every", "much", "many", "more",
+        "new", "get", "set", "show", "list", "create", "add", "make",
+        "find", "search", "check", "update", "delete", "remove", "run",
+        "open", "close", "start", "stop", "send", "read", "write",
+        "using", "use", "via", "also", "just", "please", "help",
+        "today", "tomorrow", "yesterday", "now", "here", "there",
+        "call", "name", "last", "first", "next", "current",
+    })
+
+    def matches_query(self, query: str) -> float:
+        """Score how relevant this skill is to a user query.
+
+        Returns a score between 0.0 (no match) and 1.0 (strong match).
+        Uses keyword matching against skill name, description, apps,
+        task names, and examples. Filters out common stop words.
+        """
+        if not query:
+            return 0.0
+
+        query_lower = query.lower()
+        all_words = set(re.findall(r"[a-z]+", query_lower))
+        words = all_words - self._STOP_WORDS
+        score = 0.0
+
+        # App name match (strong signal) — uses full query, not just content words
+        for app in self.apps:
+            app_lower = app.lower()
+            if app_lower in query_lower:
+                score = max(score, 0.9)
+            app_base = app_lower.replace(".app", "").replace(" ", "")
+            if app_base in query_lower:
+                score = max(score, 0.9)
+
+        # Explicit keywords match (supports multilingual terms)
+        for kw in self.keywords:
+            if kw.lower() in query_lower:
+                score = max(score, 0.85)
+
+        # No content words after filtering? Can't match on keywords.
+        if not words:
+            return score
+
+        # Skill name/id match
+        name_words = set(re.findall(r"[a-z]+", self.name.lower())) - self._STOP_WORDS
+        id_words = set(re.findall(r"[a-z]+", self.id.lower())) - self._STOP_WORDS
+        if name_words & words:
+            score = max(score, 0.8)
+        if id_words & words:
+            score = max(score, 0.7)
+
+        # Task name match — only match on non-verb parts of task names
+        # e.g., "reminder" in "create_reminder" matches, but "create" doesn't
+        for task_name in self.tasks:
+            task_words = set(task_name.lower().split("_")) - self._STOP_WORDS
+            if task_words & words:
+                score = max(score, 0.7)
+
+        # Description keyword overlap (needs 2+ content word matches)
+        desc_words = set(re.findall(r"[a-z]+", self.description.lower())) - self._STOP_WORDS
+        overlap = words & desc_words
+        if len(overlap) >= 2:
+            score = max(score, min(0.6, 0.15 * len(overlap)))
+
+        # Example match (needs 2+ content word matches)
+        for example in self.examples:
+            example_words = set(re.findall(r"[a-z]+", example.lower())) - self._STOP_WORDS
+            overlap = words & example_words
+            if len(overlap) >= 2:
+                score = max(score, 0.5)
+
+        return score
 
     def get_effective_tasks(self, compact: bool = False) -> list[str]:
         """Return the task list appropriate for the context profile.

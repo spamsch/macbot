@@ -11,6 +11,7 @@ tasks:
 essential_tasks:
   - send_imessage
   - search_imessages
+keywords: ["imessage", "sms", "textnachricht", "chatverlauf"]
 examples:
   - "Send a message to +15551234567 saying hello"
   - "Show my recent chats"

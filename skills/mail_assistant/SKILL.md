@@ -15,6 +15,7 @@ essential_tasks:
   - search_emails
   - get_unread_emails
   - send_email
+keywords: ["e-mail", "e-mails", "mail", "mails", "posteingang", "nachricht", "anhang", "anhänge"]
 examples:
   - "Summarize unread emails from today"
   - "Find emails from UPS and show tracking numbers"
