@@ -117,9 +117,11 @@ SENDER_ESCAPED=$(escape_for_applescript "$SENDER_PATTERN")
 SUBJECT_ESCAPED=$(escape_for_applescript "$SUBJECT_PATTERN")
 MESSAGE_ID_ESCAPED=$(escape_for_applescript "$MESSAGE_ID")
 ACCOUNT_ESCAPED=$(escape_for_applescript "$ACCOUNT")
-# Normalize mailbox: "inbox" (any case) → use unified inbox
+# Detect inbox request — we'll handle it specially in AppleScript
 MAILBOX_LOWER=$(echo "$MAILBOX" | tr '[:upper:]' '[:lower:]')
+INBOX_ONLY=false
 if [[ "$MAILBOX_LOWER" == "inbox" ]]; then
+    INBOX_ONLY=true
     MAILBOX=""
 fi
 MAILBOX_ESCAPED=$(escape_for_applescript "$MAILBOX")
@@ -210,6 +212,9 @@ tell application "Mail"
                 set mailboxesToSearch to mailboxesToSearch & {mailbox "[Gmail]/All Mail" of acct}
             end try
         end if
+    else if $INBOX_ONLY then
+        -- Use unified inbox (works across all accounts regardless of mailbox naming)
+        set mailboxesToSearch to {inbox}
     else if "$MAILBOX_ESCAPED" is not "" then
         -- Search specific mailbox name across all accounts
         repeat with acct in accounts
