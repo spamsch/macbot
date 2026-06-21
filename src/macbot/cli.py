@@ -1165,7 +1165,8 @@ def cmd_onboard(args: argparse.Namespace) -> None:
         choice = prompt_choice(
             "Which LLM provider would you like to use?",
             [
-                "OpenAI (GPT-4o) - Recommended",
+                "ChatGPT subscription (Codex login, no API key) - Recommended",
+                "OpenAI (GPT-4o)",
                 "Anthropic (Claude)",
                 "Pico AI Server (Local, no API key needed)",
             ],
@@ -1173,13 +1174,30 @@ def cmd_onboard(args: argparse.Namespace) -> None:
         )
 
         if choice == 1:
+            # ChatGPT subscription (Codex / GPT-5.x). Reuses the Codex CLI login —
+            # no API key. Tokens are read from ~/.codex/auth.json.
+            from macbot.providers.chatgpt_auth import chatgpt_auth_status
+
+            env_vars["MACBOT_MODEL"] = "chatgpt/gpt-5.5"
+            status = chatgpt_auth_status()
+            if status["available"]:
+                detail = "Codex login found"
+                if status["account_id"]:
+                    detail += f" (account {status['account_id']})"
+                console.print(f"[green]✓ {detail}[/green]")
+            else:
+                console.print(
+                    "[yellow]No Codex login found.[/yellow] Sign in with the Codex CLI "
+                    "('codex login'), then run 'son doctor' to confirm."
+                )
+        elif choice == 2:
             console.print("\nGet your API key from: [link]https://platform.openai.com/api-keys[/link]")
             api_key = prompt_secret("Enter your OpenAI API key")
             if api_key:
                 env_vars["MACBOT_MODEL"] = "openai/gpt-4o"
                 env_vars["MACBOT_OPENAI_API_KEY"] = api_key
                 console.print("[green]✓ API key saved[/green]")
-        elif choice == 2:
+        elif choice == 3:
             console.print("\nGet your API key from: [link]https://console.anthropic.com/[/link]")
             api_key = prompt_secret("Enter your Anthropic API key")
             if api_key:
@@ -1653,7 +1671,24 @@ def cmd_doctor(args: argparse.Namespace) -> None:
     # API Key / Local Server
     provider = settings.get_provider()
 
-    if provider == "pico":
+    if provider == "chatgpt":
+        # ChatGPT subscription (Codex / GPT-5.x): OAuth via the Codex CLI login,
+        # no API key. Verify Codex credentials are discoverable.
+        from macbot.providers.chatgpt_auth import chatgpt_auth_status
+
+        status = chatgpt_auth_status()
+        results["config"]["chatgpt_auth"] = status
+        if status["available"]:
+            detail = "Codex credentials found"
+            if status["account_id"]:
+                detail += f" (account {status['account_id']})"
+            check("ChatGPT Auth", True, detail)
+            if not json_mode and status["codex_auth_path"]:
+                console.print(f"    [dim]• source: {status['codex_auth_path']}[/dim]")
+        else:
+            check("ChatGPT Auth", False, "No Codex credentials found",
+                  "Sign in with the Codex CLI ('codex login') or set MACBOT_CHATGPT_TOKEN_DIR")
+    elif provider == "pico":
         # For Pico, check server reachability instead of API key
         pico_url = settings.pico_api_base
         check("Provider", True, f"Pico AI Server ({pico_url})")
@@ -2130,7 +2165,10 @@ def cmd_doctor(args: argparse.Namespace) -> None:
              "Run 'son onboard' or set MACBOT_PAPERLESS_URL and MACBOT_PAPERLESS_API_TOKEN")
 
     # Update config info in results
-    results["config"]["api_key_configured"] = bool(settings.get_api_key_for_model()) or settings.get_provider() == "pico"
+    results["config"]["api_key_configured"] = (
+        bool(settings.get_api_key_for_model())
+        or settings.get_provider() in ("pico", "chatgpt")
+    )
     results["config"]["telegram_configured"] = bool(settings.telegram_bot_token)
     results["config"]["model"] = settings.model
     results["all_ok"] = all_ok

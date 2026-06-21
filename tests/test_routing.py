@@ -369,3 +369,117 @@ class TestRoutingEngine:
         engine = RoutingEngine(config_path=config_path, skills_registry=registry)
         warnings = engine.validate()
         assert any("disabled" in w for w in warnings)
+
+
+class TestTieredDecide:
+    """Tests for the tiered, scored, complexity-aware decide() router."""
+
+    FAST = "chatgpt/gpt-5.4-mini"
+    SMART = "chatgpt/gpt-5.5"
+
+    def _engine(self, tmp_path: Path, extra: dict | None = None) -> RoutingEngine:
+        config = {
+            "tiers": {"fast": self.FAST, "smart": self.SMART},
+            "order": ["fast", "smart"],
+            "default_tier": "fast",
+            "complexity": {
+                "enabled": True,
+                "min_words": 40,
+                "multi_skill_threshold": 3,
+                "escalate_to": "smart",
+                "hard_verbs": ["analyze", "compare", "summarize"],
+            },
+            "routes": [
+                {
+                    "name": "mail",
+                    "tier": "smart",
+                    "skills": ["mail_assistant"],
+                    "min_score": 1.0,
+                    "exclude_keywords": ["paperless", "document"],
+                    "keywords": [
+                        {"word": "inbox", "weight": 0.5},
+                        "email", "unread",
+                    ],
+                },
+            ],
+        }
+        if extra:
+            config.update(extra)
+        path = tmp_path / "routing.json"
+        path.write_text(json.dumps(config))
+        return RoutingEngine(config_path=path)
+
+    def test_base_when_nothing_matches(self, tmp_path: Path) -> None:
+        eng = self._engine(tmp_path)
+        assert eng.decide("what's on my calendar today", [], self.FAST) == self.FAST
+
+    def test_generic_keyword_alone_does_not_escalate(self, tmp_path: Path) -> None:
+        # "inbox" weighs 0.5 < min_score 1.0 — the original false-positive bug.
+        eng = self._engine(tmp_path)
+        assert eng.decide("how many documents in my paperless inbox?", [], self.FAST) == self.FAST
+        assert eng.decide("check my inbox", [], self.FAST) == self.FAST
+
+    def test_exclude_keyword_blocks_route(self, tmp_path: Path) -> None:
+        eng = self._engine(tmp_path)
+        # "paperless" excludes the mail route even though "email" would match.
+        assert eng.decide("find the paperless email document", [], self.FAST) == self.FAST
+
+    def test_corroborated_keywords_escalate(self, tmp_path: Path) -> None:
+        eng = self._engine(tmp_path)
+        # inbox(0.5) + unread(1.0) = 1.5 >= 1.0
+        assert eng.decide("any unread mail in my inbox?", [], self.FAST) == self.SMART
+
+    def test_skill_match_escalates(self, tmp_path: Path) -> None:
+        eng = self._engine(tmp_path)
+        assert eng.decide("do the thing", ["mail_assistant"], self.FAST) == self.SMART
+
+    def test_word_boundary_no_substring_false_positive(self, tmp_path: Path) -> None:
+        eng = self._engine(tmp_path)
+        # "email" must not match inside "emailing-strategy" only via substring;
+        # but "wholesale" must not match "sale" etc. Here: "themailbox" != "mail".
+        assert eng.decide("themailbox is a word", [], self.FAST) == self.FAST
+
+    def test_complexity_hard_verb_escalates(self, tmp_path: Path) -> None:
+        eng = self._engine(tmp_path)
+        assert eng.decide("analyze my spending", [], self.FAST) == self.SMART
+
+    def test_complexity_long_message_escalates(self, tmp_path: Path) -> None:
+        eng = self._engine(tmp_path)
+        long_msg = " ".join(["word"] * 45)
+        assert eng.decide(long_msg, [], self.FAST) == self.SMART
+
+    def test_complexity_multi_skill_escalates(self, tmp_path: Path) -> None:
+        eng = self._engine(tmp_path)
+        assert eng.decide("hi", ["a", "b", "c"], self.FAST) == self.SMART
+
+    def test_complexity_can_be_disabled(self, tmp_path: Path) -> None:
+        eng = self._engine(tmp_path, extra={
+            "complexity": {"enabled": False, "hard_verbs": ["analyze"]},
+        })
+        assert eng.decide("analyze my spending", [], self.FAST) == self.FAST
+
+    def test_default_tier_overrides_passed_base(self, tmp_path: Path) -> None:
+        eng = self._engine(tmp_path)
+        # Even if caller passes the smart model as base, default_tier=fast floors it.
+        assert eng.decide("what's the weather", [], self.SMART) == self.FAST
+
+    def test_tier_rank_orders_models(self, tmp_path: Path) -> None:
+        eng = self._engine(tmp_path)
+        assert eng.tier_rank(self.SMART, self.FAST) > eng.tier_rank(self.FAST, self.FAST)
+        # Unknown model ranks at the floor, never escalates.
+        assert eng.tier_rank("unknown/model", self.FAST) == 0
+
+    def test_decide_with_no_tiers_legacy_config(self, tmp_path: Path) -> None:
+        # Legacy config: literal models, flat keywords, no tiers/complexity off.
+        path = tmp_path / "routing.json"
+        path.write_text(json.dumps({
+            "complexity": {"enabled": False},
+            "routes": [
+                {"name": "mail", "skills": ["mail_assistant"],
+                 "model": "anthropic/claude-sonnet-4-5", "keywords": ["email"]},
+            ],
+        }))
+        eng = RoutingEngine(config_path=path)
+        base = "chatgpt/gpt-5.4-mini"
+        assert eng.decide("send an email", [], base) == "anthropic/claude-sonnet-4-5"
+        assert eng.decide("what time is it", [], base) == base

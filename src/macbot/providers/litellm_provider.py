@@ -49,6 +49,18 @@ class LiteLLMProvider(LLMProvider):
         if model.startswith("pico/"):
             model = "ollama_chat/" + model[5:]
 
+        # ChatGPT subscription models (Codex / GPT-5.x) authenticate with OAuth
+        # tokens, not an API key. Bridge the Codex CLI credentials into the
+        # environment LiteLLM's chatgpt/ provider expects.
+        if model.startswith("chatgpt/"):
+            from macbot.providers.chatgpt_auth import sync_codex_auth
+
+            if not sync_codex_auth():
+                logger.warning(
+                    "chatgpt/ model selected but no Codex credentials found. "
+                    "Sign in with the Codex CLI (`codex login`) or set CHATGPT_TOKEN_DIR."
+                )
+
         super().__init__(api_key or "", model)
         self.api_base = api_base
         self._context_window: int | None = None
@@ -182,6 +194,12 @@ class LiteLLMProvider(LLMProvider):
         Returns:
             LLM response with content and/or tool calls
         """
+        # ChatGPT subscription (Codex backend) is Responses-API native and
+        # rejects the chat/completions route for most models. Route it through
+        # the Responses API instead.
+        if self.model.startswith("chatgpt/"):
+            return await self._chat_responses(messages, tools, system_prompt, stream_callback)
+
         # Build messages in OpenAI format (LiteLLM uses this internally)
         litellm_messages: list[dict[str, Any]] = []
 
@@ -424,6 +442,168 @@ class LiteLLMProvider(LLMProvider):
             stop_reason=finish_reason,
             usage=usage,
             internal_reasoning=internal_reasoning,
+        )
+
+    async def _chat_responses(
+        self,
+        messages: list[Message],
+        tools: list[dict[str, Any]] | None,
+        system_prompt: str | None,
+        stream_callback: StreamCallback | None,
+    ) -> LLMResponse:
+        """Send a request via the OpenAI Responses API (ChatGPT/Codex backend).
+
+        The ChatGPT subscription backend is Responses-native and streaming-only;
+        LiteLLM aggregates the backend stream into a single response for us. We
+        therefore make a non-streaming call and, when a stream_callback is given,
+        forward the final text once (token-level streaming is not exposed cleanly
+        for this backend in LiteLLM).
+        """
+        input_items = self._to_responses_input(messages)
+
+        kwargs: dict[str, Any] = {
+            "model": self.model,
+            "input": input_items,
+        }
+        if system_prompt:
+            kwargs["instructions"] = system_prompt
+        if self.api_base:
+            kwargs["api_base"] = self.api_base
+        if tools:
+            kwargs["tools"] = [
+                {
+                    "type": "function",
+                    "name": t["name"],
+                    "description": t.get("description", ""),
+                    "parameters": t.get("input_schema", {}),
+                }
+                for t in tools
+            ]
+
+        response = await litellm.aresponses(**kwargs)
+        result = self._parse_responses(response)
+
+        if stream_callback and result.content:
+            stream_callback(result.content)
+
+        return result
+
+    @staticmethod
+    def _to_responses_input(messages: list[Message]) -> list[dict[str, Any]]:
+        """Translate internal Message history into Responses API input items."""
+        items: list[dict[str, Any]] = []
+        for msg in messages:
+            if msg.role == "assistant":
+                text = msg.content_text
+                if text:
+                    items.append({
+                        "role": "assistant",
+                        "content": [{"type": "output_text", "text": text}],
+                    })
+                for tc in msg.tool_calls or []:
+                    items.append({
+                        "type": "function_call",
+                        "call_id": tc.id,
+                        "name": tc.name,
+                        "arguments": json.dumps(tc.arguments),
+                    })
+            elif msg.role == "tool":
+                items.append({
+                    "type": "function_call_output",
+                    "call_id": msg.tool_call_id,
+                    "output": msg.content_text,
+                })
+            elif msg.role == "system":
+                items.append({
+                    "role": "system",
+                    "content": [{"type": "input_text", "text": msg.content_text}],
+                })
+            else:  # user
+                items.append({
+                    "role": "user",
+                    "content": LiteLLMProvider._to_responses_content(msg.content),
+                })
+        return items
+
+    @staticmethod
+    def _to_responses_content(
+        content: str | list[dict[str, Any]] | None,
+    ) -> list[dict[str, Any]]:
+        """Convert message content into Responses API input content parts."""
+        if isinstance(content, str):
+            return [{"type": "input_text", "text": content}]
+        if isinstance(content, list):
+            parts: list[dict[str, Any]] = []
+            for block in content:
+                if not isinstance(block, dict):
+                    parts.append({"type": "input_text", "text": str(block)})
+                    continue
+                btype = block.get("type")
+                if btype == "text":
+                    parts.append({"type": "input_text", "text": block.get("text", "")})
+                elif btype == "input_text":
+                    parts.append(block)
+                elif btype == "image_url":
+                    image = block.get("image_url")
+                    url = image.get("url") if isinstance(image, dict) else image
+                    parts.append({"type": "input_image", "image_url": url})
+                elif btype == "input_image":
+                    parts.append(block)
+                else:
+                    parts.append({"type": "input_text", "text": str(block)})
+            return parts
+        return [{"type": "input_text", "text": ""}]
+
+    def _parse_responses(self, response: Any) -> LLMResponse:
+        """Parse a LiteLLM Responses API result into an LLMResponse."""
+        content_parts: list[str] = []
+        reasoning_parts: list[str] = []
+        tool_calls: list[ToolCall] = []
+
+        for item in getattr(response, "output", None) or []:
+            data = item.model_dump() if hasattr(item, "model_dump") else dict(item)
+            itype = data.get("type")
+            if itype == "message":
+                for block in data.get("content") or []:
+                    if isinstance(block, dict) and block.get("type") == "output_text":
+                        content_parts.append(block.get("text", ""))
+            elif itype == "function_call":
+                raw_args = data.get("arguments") or ""
+                try:
+                    arguments = json.loads(raw_args) if raw_args else {}
+                except json.JSONDecodeError:
+                    arguments = {"raw": raw_args}
+                tool_calls.append(
+                    ToolCall(
+                        id=data.get("call_id") or data.get("id") or "",
+                        name=data.get("name", ""),
+                        arguments=arguments,
+                    )
+                )
+            elif itype == "reasoning":
+                for summary in data.get("summary") or []:
+                    if isinstance(summary, dict):
+                        text = summary.get("text", "")
+                        if text:
+                            reasoning_parts.append(text)
+
+        content = "".join(content_parts) or None
+        if content is None:
+            # Fall back to the convenience aggregate if no message items.
+            content = getattr(response, "output_text", None) or None
+
+        usage_obj = getattr(response, "usage", None)
+        usage = {
+            "input_tokens": getattr(usage_obj, "input_tokens", 0) if usage_obj else 0,
+            "output_tokens": getattr(usage_obj, "output_tokens", 0) if usage_obj else 0,
+        }
+
+        return LLMResponse(
+            content=content,
+            tool_calls=tool_calls,
+            stop_reason="tool_calls" if tool_calls else getattr(response, "status", None),
+            usage=usage,
+            internal_reasoning="\n".join(reasoning_parts).strip() or None,
         )
 
     @staticmethod

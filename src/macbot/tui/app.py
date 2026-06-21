@@ -127,23 +127,26 @@ class DebugPanel(VerticalScroll):
     """
 
     def add_header(self, text: str) -> None:
-        self.mount(Static(text, classes="debug-header"))
+        # markup=False: debug text is raw tool args/results that often contain
+        # '[' (e.g. "[{'value': 'USD222.12'}]") — Rich would try to parse it as
+        # markup and crash. Styling here comes from CSS classes, not inline tags.
+        self.mount(Static(text, classes="debug-header", markup=False))
         self.scroll_end(animate=False)
 
     def add_label(self, text: str) -> None:
-        self.mount(Static(text, classes="debug-label"))
+        self.mount(Static(text, classes="debug-label", markup=False))
         self.scroll_end(animate=False)
 
     def add_content(self, text: str) -> None:
-        self.mount(Static(text, classes="debug-content"))
+        self.mount(Static(text, classes="debug-content", markup=False))
         self.scroll_end(animate=False)
 
     def add_thinking(self, text: str) -> None:
-        self.mount(Static(text, classes="debug-thinking"))
+        self.mount(Static(text, classes="debug-thinking", markup=False))
         self.scroll_end(animate=False)
 
     def add_separator(self) -> None:
-        self.mount(Static("─" * 40, classes="debug-separator"))
+        self.mount(Static("─" * 40, classes="debug-separator", markup=False))
         self.scroll_end(animate=False)
 
     def clear_panel(self) -> None:
@@ -779,8 +782,11 @@ class ChatApp(App[None]):
     # ----- UI helpers -----
 
     def _add_text(self, text: str, css_class: str = "") -> None:
+        # markup=False: these lines carry user/tool/error text that can contain
+        # '[' (dict reprs, "[Cancelled]", "[2 image(s)]"); Rich markup parsing
+        # would raise MarkupError. Colors come from the CSS class.
         area = self.query_one("#messages", VerticalScroll)
-        area.mount(Static(text, classes=css_class))
+        area.mount(Static(text, classes=css_class, markup=False))
         area.scroll_end(animate=False)
 
     def _add_md(self, text: str) -> None:

@@ -54,11 +54,23 @@ ReAct-style loop: LLM reasons → calls tools → observes results → repeats. 
 - Implementations: `LiteLLMProvider` (100+ models), `AnthropicProvider`, `OpenAIProvider`
 - Provider selected via `MACBOT_LLM_PROVIDER` env var
 
+### Hybrid Routing (`src/macbot/core/routing.py`)
+Per-turn model selection from `~/.macbot/routing.json`. No file / no routes = no routing. The router keeps the agent on a cheap default and escalates only when a turn is genuinely harder.
+
+- **Tiers**: `tiers` maps names → model strings; `order` lists them weak→strong; `default_tier` is the floor. Routes/escalation reference a `tier` instead of a literal `model` (literal `model` still works for back-compat).
+- **One decision per turn, held for the turn.** `RoutingEngine.decide(message, skill_ids, base_model)` is called once up front in `agent.run()` from three signals: (1) skills selected for the turn (strong), (2) scored keyword match, (3) complexity heuristic. It returns the strongest model any signal asks for. `_maybe_switch_model` afterward is **escalate-only** (monotonic via `tier_rank`) — it never downgrades, so the model can't flip-flop mid-turn. This replaced the old intent-pre-route + reactive-reset design that caused `mini → smart → mini` flips.
+- **Scored keywords**: word-boundary (`\b`) matched, per-keyword `weight`, `exclude_keywords`, and `min_score`. A lone generic word (e.g. `inbox` at weight 0.5) can't escalate alone — it needs corroboration or a real signal. This fixed "paperless inbox" wrongly hitting the mail route.
+- **Complexity** (`complexity` block): escalates to `escalate_to` tier on long messages (`min_words`), many selected skills (`multi_skill_threshold`), or a bilingual `hard_verbs` match.
+- `resolve()` (tool→skill) and `resolve_intent()` (keyword) remain for back-compat/tests with first-match semantics.
+
 ### Configuration (`src/macbot/config.py`)
 Pydantic settings loaded from `~/.macbot/.env` with `MACBOT_` prefix. Key settings:
 - `MACBOT_LLM_PROVIDER` - `anthropic`, `openai`, or any LiteLLM provider
 - `MACBOT_ANTHROPIC_API_KEY`, `MACBOT_OPENAI_API_KEY`
 - `MACBOT_TELEGRAM_BOT_TOKEN`, `MACBOT_TELEGRAM_CHAT_ID`
+
+### ChatGPT subscription (Codex) provider
+`chatgpt/*` models (e.g. `chatgpt/gpt-5.5`) use LiteLLM's ChatGPT subscription provider, which authenticates with OAuth tokens instead of an API key. There is no `MACBOT_CHATGPT_API_KEY`. `src/macbot/providers/chatgpt_auth.py` discovers the Codex CLI login at `~/.codex/auth.json` (honors `CODEX_HOME`), flattens the nested `{tokens: {...}}` into the flat `{access_token, refresh_token, id_token, account_id}` shape LiteLLM's authenticator reads, writes it to `~/.macbot/chatgpt/auth.json` (override via `MACBOT_CHATGPT_TOKEN_DIR`), and points LiteLLM there via `CHATGPT_TOKEN_DIR`/`CHATGPT_AUTH_FILE`. `LiteLLMProvider.__init__` triggers this sync for any `chatgpt/` model. We never write back into `~/.codex` (the Codex CLI owns that file); LiteLLM refreshes tokens in our copy. Re-sync happens automatically when the Codex file's mtime is newer (e.g. after a fresh `codex login`). Codex backend models also require a ChatGPT plan entitled to use them.
 
 ### Skills System (`src/macbot/skills/`)
 Skills provide declarative guidance that improves agent reliability through examples, safe defaults, and behavior rules.
@@ -79,6 +91,8 @@ Skills provide declarative guidance that improves agent reliability through exam
 - `son skills show <id>` - Show skill details
 - `son skills enable <id>` / `son skills disable <id>`
 - Add `--json` for dashboard integration
+
+**Query-aware loading (lean by default):** Each turn, `SkillsRegistry.get_relevant_skills(query)` loads only the skills relevant to the goal (scored by `Skill.matches_query`), plus `core_utilities` (always). When nothing clears `skill_relevance_threshold` (default 0.3), it loads the top `skill_fallback_top_k` (default 5) best-guess partial matches — **not all skills** (the old behavior, which is why unrelated skills like Time Tracking showed up). Held-back skills stay reachable mid-run: when any skill is filtered out, `agent._get_tool_schemas` exposes a `request_tools` meta-tool whose description lists every available group (`id: description`), and the system prompt instructs the model to call it when a needed tool is missing rather than giving up. Note: `task_registry` holds *all* tasks regardless of filtering — selection only controls which schemas the model sees, so `request_tools` is purely about visibility. Tunable via `MACBOT_SKILL_RELEVANCE_THRESHOLD` and `MACBOT_SKILL_FALLBACK_TOP_K`.
 
 ### Service Architecture
 `MacbotService` runs cron scheduler + Telegram bot together. Uses PID file at `~/.macbot/service.pid`. Maintains separate agent instances per Telegram chat.

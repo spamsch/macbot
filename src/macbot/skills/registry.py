@@ -308,32 +308,60 @@ class SkillsRegistry:
     # Minimum relevance score for a skill to be included in query-aware filtering
     RELEVANCE_THRESHOLD = 0.3
 
+    # When no skill clears the threshold, load at most this many best-guess
+    # partial matches (plus core) instead of every skill. The rest stay
+    # reachable on demand via the request_tools escape hatch.
+    FALLBACK_TOP_K = 5
+
     # Skills always included regardless of query matching
     ALWAYS_INCLUDE = {"core_utilities"}
+
+    def _tuning(self) -> tuple[float, int]:
+        """Resolve (threshold, fallback_top_k), letting settings override."""
+        threshold = self.RELEVANCE_THRESHOLD
+        top_k = self.FALLBACK_TOP_K
+        try:
+            from macbot.config import settings
+            threshold = settings.skill_relevance_threshold
+            top_k = settings.skill_fallback_top_k
+        except Exception:
+            pass
+        return threshold, top_k
 
     def get_relevant_skills(self, query: str) -> list[Skill]:
         """Return enabled skills relevant to a user query.
 
-        If no skills match above the threshold, returns all enabled skills
-        as a fallback (ambiguous queries should not lose capabilities).
+        Loads a lean, focused set rather than everything. When nothing clears
+        the relevance threshold, falls back to the top-K best-guess partial
+        matches plus core utilities — NOT all skills. Anything held back stays
+        reachable mid-run via the request_tools escape hatch, so ambiguous
+        queries don't permanently lose capabilities; they just start lean.
+
         Core utility skills are always included.
         """
         enabled = self.list_enabled_skills()
+        threshold, top_k = self._tuning()
         scored = [(skill, skill.matches_query(query)) for skill in enabled]
-        matched = [(s, sc) for s, sc in scored if sc >= self.RELEVANCE_THRESHOLD]
+        matched = [(s, sc) for s, sc in scored if sc >= threshold]
 
-        if not matched:
-            return enabled  # fallback: return all
-
-        # Sort by score descending
-        matched.sort(key=lambda x: x[1], reverse=True)
-        result = [s for s, _ in matched]
+        if matched:
+            matched.sort(key=lambda x: x[1], reverse=True)
+            result = [s for s, _ in matched]
+        else:
+            # Conservative fallback: best-guess partial matches (score > 0),
+            # capped at top_k. If the query has no signal at all, this is empty
+            # and only core loads — the model expands via request_tools.
+            partial = sorted(
+                (p for p in scored if p[1] > 0.0), key=lambda x: x[1], reverse=True
+            )
+            result = [s for s, _ in partial[:top_k]]
 
         # Always include core skills
         result_ids = {s.id for s in result}
         for skill in enabled:
             if skill.id in self.ALWAYS_INCLUDE and skill.id not in result_ids:
                 result.append(skill)
+                result_ids.add(skill.id)
 
         return result
 

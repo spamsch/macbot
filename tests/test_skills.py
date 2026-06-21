@@ -1,7 +1,6 @@
 """Tests for the Skills system."""
 
 import json
-import tempfile
 from pathlib import Path
 
 import pytest
@@ -1499,3 +1498,62 @@ tasks:
                 assert task is not None, (
                     f"Skill '{skill.id}' essential_task '{task_name}' not found in task registry"
                 )
+
+
+class TestRelevanceFallback:
+    """Tests for lean, query-aware skill selection (get_relevant_skills)."""
+
+    def _registry(self, tmp_path: Path) -> SkillsRegistry:
+        builtin = tmp_path / "builtin"
+        defs = {
+            "core_utilities": ("Core Utilities", "Run shell commands and read files.", ""),
+            "mail_assistant": ("Mail Assistant", "Find and act on emails over IMAP.",
+                               "keywords:\n  - email\n  - inbox\n"),
+            "time_tracking": ("Time Tracking", "Start, stop, and report on time tracking timers.",
+                              "keywords:\n  - timer\n  - stopwatch\n"),
+            "weather": ("Weather", "Get the current weather and forecast.",
+                        "keywords:\n  - weather\n  - forecast\n"),
+            "calendar_assistant": ("Calendar", "View and manage calendar events.",
+                                   "keywords:\n  - calendar\n  - event\n"),
+        }
+        for sid, (name, desc, extra) in defs.items():
+            d = builtin / sid
+            d.mkdir(parents=True)
+            (d / "SKILL.md").write_text(
+                f"---\nid: {sid}\nname: {name}\ndescription: {desc}\n{extra}---\n"
+            )
+        return SkillsRegistry(
+            builtin_dir=builtin,
+            user_dir=tmp_path / "user",
+            config_file=tmp_path / "config.json",
+        )
+
+    def test_no_match_does_not_load_all(self, tmp_path: Path) -> None:
+        reg = self._registry(tmp_path)
+        # A query unrelated to any skill must NOT pull in every skill.
+        loaded = {s.id for s in reg.get_relevant_skills("what runs every minute on my mac")}
+        assert "time_tracking" not in loaded
+        assert loaded != {s.id for s in reg.list_enabled_skills()}
+        # Core is always present so the agent retains baseline tools.
+        assert "core_utilities" in loaded
+
+    def test_matched_skill_plus_core(self, tmp_path: Path) -> None:
+        reg = self._registry(tmp_path)
+        loaded = {s.id for s in reg.get_relevant_skills("check my email inbox")}
+        assert "mail_assistant" in loaded
+        assert "core_utilities" in loaded
+        assert "time_tracking" not in loaded
+
+    def test_zero_signal_loads_core_only(self, tmp_path: Path) -> None:
+        reg = self._registry(tmp_path)
+        loaded = {s.id for s in reg.get_relevant_skills("xyzzy plugh frobnicate")}
+        assert loaded == {"core_utilities"}
+
+    def test_fallback_top_k_caps_partial_matches(self, tmp_path: Path) -> None:
+        reg = self._registry(tmp_path)
+        reg.FALLBACK_TOP_K = 1
+        # "report" appears only in time_tracking's description (partial, < threshold).
+        loaded = reg.get_relevant_skills("please report")
+        # core + at most 1 partial guess
+        assert len(loaded) <= 2
+        assert any(s.id == "core_utilities" for s in loaded)

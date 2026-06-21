@@ -118,36 +118,38 @@ class Agent:
         tool_calls,
         on_status: Callable[[str], None] | None = None,
     ) -> None:
-        """Switch model based on routing rules if applicable.
+        """Escalate-only safety net based on the tools just called.
 
-        Called after tool execution each turn. If a route matches the
-        tools that were just called, switches to that route's model.
-        If no route matches, resets to the default model so routing
-        is truly per-turn (not sticky).
+        The per-turn model is decided up front in run(); this catches the rare
+        case where a tool call reveals a heavier skill the relevance pass
+        missed. It only ever escalates to a stronger tier — never downgrades —
+        so the model never flip-flops within a turn.
         """
         if self._routing_engine is None or not self._routing_engine.has_routes:
             return
-
         if not tool_calls:
             return
 
         tool_names = [tc.name for tc in tool_calls]
-        new_model = self._routing_engine.resolve(tool_names)
+        candidate = self._routing_engine.resolve(tool_names)
+        if not candidate:
+            return
 
-        # No match → fall back to the configured default model
-        if new_model is None:
-            new_model = self.config.get_model()
+        base = self.config.get_model()
+        if self._routing_engine.tier_rank(candidate, base) <= self._routing_engine.tier_rank(
+            self._current_model, base
+        ):
+            return  # not stronger than the current model — keep it
 
-        if new_model != self._current_model:
-            old_model = self._current_model
-            logger.info("Switching model: %s → %s", old_model, new_model)
-            self._current_model = new_model
-            self._interaction_model = new_model
-            api_key = self.config.get_api_key_for_model(new_model)
-            api_base = self.config.get_api_base_for_model(new_model)
-            self.provider = LiteLLMProvider(model=new_model, api_key=api_key, api_base=api_base)
-            if on_status:
-                on_status(f"  ↗ Routed: {old_model} → {new_model}")
+        old_model = self._current_model
+        logger.info("Routing escalation: %s → %s", old_model, candidate)
+        self._current_model = candidate
+        self._interaction_model = candidate
+        api_key = self.config.get_api_key_for_model(candidate)
+        api_base = self.config.get_api_base_for_model(candidate)
+        self.provider = LiteLLMProvider(model=candidate, api_key=api_key, api_base=api_base)
+        if on_status:
+            on_status(f"  ↗ Routed: {old_model} → {candidate}")
 
     def _get_effective_profile(self) -> str:
         """Get the context profile, accounting for hybrid routing model switches.
@@ -222,35 +224,50 @@ class Agent:
 
         self._disable_routing = disable_routing
 
-        # Query-aware tool filtering: select relevant skills for this interaction
+        # Query-aware tool filtering: select relevant skills for this interaction.
+        # Then trim to the provider's tool-count budget so we never exceed the
+        # cap (OpenAI hard-rejects >128 tools); dropped skills stay reachable
+        # via request_tools.
         goal_text = goal if isinstance(goal, str) else Message(role="user", content=goal).content_text
         relevant = self.skills_registry.get_relevant_skills(goal_text or "")
         all_enabled = self.skills_registry.list_enabled_skills()
-        if len(relevant) < len(all_enabled):
-            self._active_skills = relevant
-            self._active_skill_names = [s.name for s in relevant]
+        fitted = self._fit_skills_to_tool_budget(relevant)
+        if len(fitted) < len(all_enabled):
+            self._active_skills = fitted
+            self._active_skill_names = [s.name for s in fitted]
+            if len(fitted) < len(relevant):
+                logger.warning(
+                    "Tool budget: trimmed %d→%d skills to fit %d-tool cap; "
+                    "rest reachable via request_tools",
+                    len(relevant), len(fitted), self.config.max_tools,
+                )
             logger.info(
                 "Tool filtering: %d/%d skills selected: %s",
-                len(relevant), len(all_enabled),
+                len(fitted), len(all_enabled),
                 ", ".join(self._active_skill_names),
             )
         else:
-            self._active_skills = None  # No filtering, use all
+            self._active_skills = None  # Everything fits — use all
             self._active_skill_names = []
 
-        # Intent-based pre-routing: check keywords before the first LLM call
+        # Per-turn routing: one model decision up front from the user's message,
+        # the skills selected for this turn, and a complexity heuristic. Held for
+        # the whole turn (escalate-only afterwards) so the model never
+        # flip-flops. decide() always considers the base model, so a previous
+        # turn's escalation is reset here when this turn doesn't warrant it.
         if not self._disable_routing and self._routing_engine is not None and self._routing_engine.has_routes:
-            intent_model = self._routing_engine.resolve_intent(goal_text or "")
-            if intent_model and intent_model != self._current_model:
+            skill_ids = [s.id for s in relevant]
+            decided = self._routing_engine.decide(goal_text or "", skill_ids, self.config.get_model())
+            if decided and decided != self._current_model:
                 old_model = self._current_model
-                logger.info("Intent pre-routing: %s → %s", old_model, intent_model)
-                self._current_model = intent_model
-                self._interaction_model = intent_model
-                api_key = self.config.get_api_key_for_model(intent_model)
-                api_base = self.config.get_api_base_for_model(intent_model)
-                self.provider = LiteLLMProvider(model=intent_model, api_key=api_key, api_base=api_base)
+                logger.info("Routing decision: %s → %s", old_model, decided)
+                self._current_model = decided
+                self._interaction_model = decided
+                api_key = self.config.get_api_key_for_model(decided)
+                api_base = self.config.get_api_base_for_model(decided)
+                self.provider = LiteLLMProvider(model=decided, api_key=api_key, api_base=api_base)
                 if on_status:
-                    on_status(f"  ↗ Routed: {old_model} → {intent_model}")
+                    on_status(f"  ↗ Routed: {old_model} → {decided}")
 
         if verbose:
             goal_preview = goal if isinstance(goal, str) else Message(role="user", content=goal).content_text
@@ -605,6 +622,38 @@ When an email, document, or conversation implies that information is available o
         "run_subagent",
     }
 
+    def _fit_skills_to_tool_budget(self, skills: list[Any]) -> list[Any]:
+        """Trim a relevance-ordered skill list so its tools fit the provider cap.
+
+        Walks skills in priority order, accumulating their (deduplicated) tool
+        count, and stops before the running total would exceed the budget.
+        Reserves slots for internal tools and the request_tools escape hatch, so
+        the returned subset plus those always fits under config.max_tools.
+        """
+        profile = self._get_effective_profile()
+        compact = profile in ("compact", "minimal")
+        # Conservative reserve: internal tools may overlap skill tasks (then this
+        # over-reserves, which is safe), +1 for request_tools.
+        reserve = len(self.INTERNAL_TOOLS) + 1
+        budget = max(1, self.config.max_tools - reserve)
+
+        kept: list[Any] = []
+        seen: set[str] = set()
+        for skill in skills:
+            tasks = skill.get_effective_tasks(compact=compact) or []
+            new = {t for t in tasks if t not in seen}
+            if kept and len(seen) + len(new) > budget:
+                break  # adding this skill would overflow the budget
+            seen |= new
+            kept.append(skill)
+        return kept
+
+    @staticmethod
+    def _short_desc(description: str, limit: int = 100) -> str:
+        """First line of a skill description, clipped, for the request_tools menu."""
+        text = (description or "").strip().splitlines()[0] if description else ""
+        return text[: limit - 1] + "…" if len(text) > limit else text
+
     def _get_tool_schemas(self) -> list[dict[str, Any]]:
         """Get tool schemas appropriate for the current context profile.
 
@@ -630,19 +679,28 @@ When an email, document, or conversation implies that information is available o
                     schemas.append(task.to_tool_schema())
                     seen.add(tool_name)
 
-        # When skills are filtered, add the request_tools escape hatch
+        # When skills are filtered, add the request_tools escape hatch. Only a
+        # lean, relevant subset of tools is loaded each turn for speed; this
+        # meta-tool lets the model pull in any other group on demand when it
+        # hits a roadblock. The catalog (id + description) lets it pick the
+        # right group instead of guessing.
         if self._active_skills is not None and "request_tools" not in seen:
             all_skills = self.skills_registry.list_enabled_skills()
-            available = [s.id for s in all_skills
-                         if s not in (self._active_skills or [])]
+            available = [s for s in all_skills if s not in (self._active_skills or [])]
             if available:
+                catalog = "\n".join(
+                    f"- {s.id}: {self._short_desc(s.description)}"
+                    for s in sorted(available, key=lambda x: x.id)
+                )
                 schemas.append({
                     "name": "request_tools",
                     "description": (
-                        "Load additional tool groups not currently available. "
-                        f"Available groups: {', '.join(available)}. "
-                        "Call this if the user's request needs tools from a "
-                        "group not yet loaded."
+                        "Load additional tool groups that are not currently loaded. "
+                        "To stay fast, only a relevant subset of your tools is loaded "
+                        "each turn. If you can't find a tool you need for the user's "
+                        "request — or for the next step — DO NOT give up: call this "
+                        "with the matching group id(s), then continue. "
+                        "Available groups:\n" + catalog
                     ),
                     "input_schema": {
                         "type": "object",
@@ -650,12 +708,29 @@ When an email, document, or conversation implies that information is available o
                             "skill_ids": {
                                 "type": "array",
                                 "items": {"type": "string"},
-                                "description": "Skill group IDs to load",
+                                "description": "Skill group IDs to load (from the list above)",
                             },
                         },
                         "required": ["skill_ids"],
                     },
                 })
+
+        # Hard safety clamp: never exceed the provider cap, even if skills were
+        # pulled in mid-run via request_tools. Keep internal tools + request_tools,
+        # trim the skill tools to make room.
+        cap = self.config.max_tools
+        if len(schemas) > cap:
+            protected = [
+                s for s in schemas
+                if s.get("name") in self.INTERNAL_TOOLS or s.get("name") == "request_tools"
+            ]
+            skill_tools = [s for s in schemas if s not in protected]
+            room = max(0, cap - len(protected))
+            schemas = skill_tools[:room] + protected
+            logger.warning(
+                "Tool schemas clamped to cap (%d): kept %d skill tools + %d internal",
+                cap, min(room, len(skill_tools)), len(protected),
+            )
 
         if compact:
             # Strip parameter descriptions to save tokens

@@ -25,8 +25,8 @@ class Settings(BaseSettings):
 
     # LLM Model setting (provider/model format)
     model: str = Field(
-        default="anthropic/claude-sonnet-4-20250514",
-        description="Model in provider/model format (e.g., anthropic/claude-sonnet-4-20250514, openai/gpt-4o)",
+        default="chatgpt/gpt-5.5",
+        description="Model in provider/model format (e.g., chatgpt/gpt-5.5, anthropic/claude-sonnet-4-20250514, openai/gpt-4o)",
     )
 
     # API Keys (LiteLLM routes based on model prefix)
@@ -53,6 +53,15 @@ class Settings(BaseSettings):
         description="Pico AI Server URL (for pico/* models)",
     )
 
+    # ChatGPT subscription (Codex / GPT-5.x) settings. These models authenticate
+    # with OAuth tokens, not an API key — MacBot reuses the Codex CLI login at
+    # ~/.codex/auth.json. This dir holds the flattened copy LiteLLM reads.
+    chatgpt_token_dir: str = Field(
+        default="",
+        description="Directory for the ChatGPT OAuth auth file (empty = ~/.macbot/chatgpt). "
+                    "Used by chatgpt/* models; credentials are sourced from the Codex CLI.",
+    )
+
     # Context profile for controlling prompt size
     context_profile: str = Field(
         default="auto",
@@ -69,6 +78,23 @@ class Settings(BaseSettings):
         default=True,
         description="Show the model's reasoning (inline <thinking> blocks and "
                     "native reasoning tokens from reasoning models) in agent output",
+    )
+    max_tools: int = Field(
+        default=128,
+        description="Maximum number of tools sent to the LLM per request. OpenAI "
+                    "rejects more than 128; excess skills are trimmed and reachable "
+                    "via the request_tools escape hatch.",
+    )
+    skill_relevance_threshold: float = Field(
+        default=0.3,
+        description="Minimum relevance score (0-1) for a skill to load for a turn. "
+                    "Higher = leaner tool sets, more reliance on request_tools.",
+    )
+    skill_fallback_top_k: int = Field(
+        default=5,
+        description="When no skill clears the relevance threshold, load at most "
+                    "this many best-guess partial matches (plus core) instead of "
+                    "all skills. The rest stay reachable via request_tools.",
     )
     agent_system_prompt: str = Field(
         default="""You are Son of Simon, a proactive macOS automation assistant. Your job is to help users accomplish tasks on their Mac.
@@ -129,9 +155,10 @@ After thinking, immediately proceed with tool calls. Do NOT repeat your thinking
 7. **Be helpful, not helpless**: You have powerful tools. Use them creatively to solve the user's problem. Think for yourself instead of bouncing questions back at the user. If there are multiple possible interpretations, pick the most likely one and go with it. NEVER ask a clarifying question when the answer is obvious from the conversation context — just act. Bad: "Which website should I log into?" (when you just discussed Notion). Good: immediately open notion.so and navigate to billing.
 
 8. **Expand capabilities proactively**: When the user asks you to do something and you're not sure you can, don't just say you can't do it. Instead, follow this order:
-   1. **Check your skills first**: Review the Capabilities & Skills section in this prompt — you may already have an installed skill for it (e.g., Slack, Trello, WhatsApp). Also run `clawhub list --dir ~/.macbot/skills` to check for installed skills that may not be enabled yet. If a skill is already installed, use it immediately — don't search ClawHub for something you already have.
-   2. **Search ClawHub** for a community skill if nothing is installed: `clawhub search <keyword>`
-   3. **Search the web** using `web_search` for APIs, CLIs, or tools that could help
+   1. **Load more tools if needed**: To stay fast, only a relevant subset of your tools is loaded each turn. If you don't see a tool for the task — or for the next step — call `request_tools` with the matching group id(s) (its description lists every available group) and then continue. Hitting a missing-tool roadblock means request more tools, not give up.
+   2. **Check your skills first**: Review the Capabilities & Skills section in this prompt — you may already have an installed skill for it (e.g., Slack, Trello, WhatsApp). Also run `clawhub list --dir ~/.macbot/skills` to check for installed skills that may not be enabled yet. If a skill is already installed, use it immediately — don't search ClawHub for something you already have.
+   3. **Search ClawHub** for a community skill if nothing is installed: `clawhub search <keyword>`
+   4. **Search the web** using `web_search` for APIs, CLIs, or tools that could help
    - If a ClawHub skill exists, offer to install it and use it immediately
    - If a CLI tool or API exists, suggest how to set it up
    - Only say "this isn't possible" after you've checked your installed skills, searched ClawHub, and found nothing
@@ -354,7 +381,8 @@ Before starting a task, check `get_agent_memory` to see recent context and avoid
         model = model or self.get_model()
         provider = model.split("/")[0] if "/" in model else "openai"
 
-        if provider == "pico":
+        # Keyless providers: pico (local) and chatgpt (OAuth via Codex CLI).
+        if provider in ("pico", "chatgpt"):
             return None
 
         key_map = {

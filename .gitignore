@@ -49,6 +49,7 @@ htmlcov/
 # Environment
 .env
 .env.local
+.env.disabled
 
 # OS
 .DS_Store
