@@ -2358,14 +2358,23 @@ def cmd_mail_login(args: argparse.Namespace) -> None:
                 f"app-password login.[/red]"
             )
             sys.exit(1)
-        console.print(
-            f"[bold]{provider}[/bold] app-password login for [cyan]{args.email}[/cyan].\n"
-            f"Create one at [underline]https://myaccount.google.com/apppasswords[/underline] "
-            f"(Gmail; 2-Step Verification required) and paste it below."
-            if provider == "google" else
-            f"[bold]{provider}[/bold] app-password login for [cyan]{args.email}[/cyan]. "
-            f"Create an app-specific password in your Apple ID settings and paste it below."
-        )
+        if provider == "google":
+            console.print(
+                f"[bold]Gmail[/bold] app-password login for [cyan]{args.email}[/cyan]:\n"
+                f"  1. Turn on 2-Step Verification: "
+                f"[underline]https://myaccount.google.com/security[/underline]\n"
+                f"     (required — if the App Passwords page says \"not available for "
+                f"your account\", 2-Step Verification is OFF; enable it first)\n"
+                f"  2. Create an app password: "
+                f"[underline]https://myaccount.google.com/apppasswords[/underline]\n"
+                f"Sign in as [bold]{args.email}[/bold] (not another Google account), "
+                f"then paste the 16-character code below."
+            )
+        else:
+            console.print(
+                f"[bold]{provider}[/bold] app-password login for [cyan]{args.email}[/cyan]. "
+                f"Create an app-specific password in your Apple ID settings and paste it below."
+            )
         app_pw = getpass.getpass("App password: ").replace(" ", "")
         if not app_pw:
             console.print("[red]No password entered.[/red]")
@@ -2374,6 +2383,12 @@ def cmd_mail_login(args: argparse.Namespace) -> None:
             chosen = basic_login(args.email, provider, app_pw)
         except Exception as e:
             console.print(f"[red]Login failed:[/red] {e}")
+            if provider == "google":
+                console.print(
+                    "[yellow]Most Gmail failures here mean 2-Step Verification isn't "
+                    "enabled, or the app password was created on a different Google "
+                    "account. Enable 2SV, regenerate the password, and retry.[/yellow]"
+                )
             sys.exit(1)
         console.print(f"[green]Logged in:[/green] {args.email} [dim](transport: {chosen})[/dim]")
         return
