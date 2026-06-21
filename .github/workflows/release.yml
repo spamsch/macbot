@@ -88,7 +88,8 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: npm run tauri build -- --target aarch64-apple-darwin
+          RUST_BACKTRACE: '1'
+        run: npm run tauri build -- --target aarch64-apple-darwin --verbose
 
       - name: Get version
         id: version
