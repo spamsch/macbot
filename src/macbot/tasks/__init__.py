@@ -130,8 +130,9 @@ def create_default_registry(config: "Settings | None" = None) -> TaskRegistry:
     registry.register(GetCurrentTimeTask())
     registry.register(EchoTask())
 
-    # Register macOS automation tasks (Mail, Calendar, Reminders, Notes, Safari)
-    register_macos_tasks(registry)
+    # Register macOS automation tasks (Calendar, Reminders, Notes, Safari; the
+    # legacy Mail.app email tasks are gated off by default via config)
+    register_macos_tasks(registry, config)
 
     # Register browser automation tasks (ARIA-based Safari automation)
     from macbot.tasks.browser_automation import register_browser_tasks
@@ -164,6 +165,10 @@ def create_default_registry(config: "Settings | None" = None) -> TaskRegistry:
     # Register Microsoft Teams tasks
     from macbot.tasks.teams import register_teams_tasks
     register_teams_tasks(registry)
+
+    # Register headless IMAP mail tasks (search/mark/trash with Mail.app closed)
+    from macbot.tasks.mail_imap import register_mail_imap_tasks
+    register_mail_imap_tasks(registry)
 
     # Register Mindwtr GTD tasks (only when data path is configured)
     if config and config.mindwtr_data_path:

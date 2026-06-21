@@ -275,6 +275,21 @@ Before starting a task, check `get_agent_memory` to see recent context and avoid
         description="Path to Mindwtr sync data.json file (leave empty to disable Mindwtr integration)",
     )
 
+    # Mail.app (AppleScript) tasks. Off by default — they need Mail.app running and
+    # are superseded by the headless IMAP mail tasks (mail_imap_*). Set
+    # MACBOT_ENABLE_MAILAPP_TASKS=true to re-enable get_unread_emails, search_emails,
+    # send_email, move_email, download_attachments, mark_emails_read.
+    enable_mailapp_tasks: bool = Field(
+        default=False,
+        description="Enable the legacy Mail.app/AppleScript email tasks (default: disabled).",
+    )
+
+    # Headless IMAP mail: multi-tenant Azure app id used for Microsoft device-code login.
+    ms_oauth_client_id: str = Field(
+        default="",
+        description="Azure AD app (multi-tenant public client) id for headless IMAP OAuth.",
+    )
+
     def get_model(self) -> str:
         """Get the model string in provider/model format.
 
