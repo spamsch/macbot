@@ -304,6 +304,7 @@ class LiteLLMProvider(LLMProvider):
         kwargs["stream_options"] = {"include_usage": True}
 
         content_chunks: list[str] = []
+        reasoning_chunks: list[str] = []
         tool_calls_data: dict[int, dict[str, Any]] = {}
         finish_reason: str | None = None
         usage = {"input_tokens": 0, "output_tokens": 0}
@@ -334,6 +335,13 @@ class LiteLLMProvider(LLMProvider):
 
             if choice.finish_reason:
                 finish_reason = choice.finish_reason
+
+            # Capture native reasoning tokens from reasoning models (e.g.
+            # gpt-5.x, DeepSeek-R1). LiteLLM normalizes these to
+            # delta.reasoning_content, separate from user-facing content.
+            reasoning_piece = getattr(delta, "reasoning_content", None)
+            if reasoning_piece:
+                reasoning_chunks.append(reasoning_piece)
 
             # Handle content chunks
             if delta.content:
@@ -402,10 +410,12 @@ class LiteLLMProvider(LLMProvider):
         if not tool_calls and content:
             tool_calls = self._extract_tool_calls_from_protocol(content)
 
-        # Extract internal reasoning from protocol tokens before stripping
-        internal_reasoning = None
+        # Internal reasoning: native reasoning tokens (reasoning models) plus
+        # any reasoning leaked into protocol tokens (local gpt-oss models).
+        internal_reasoning = "".join(reasoning_chunks).strip() or None
         if content:
-            internal_reasoning = self._extract_reasoning_from_protocol(content)
+            protocol_reasoning = self._extract_reasoning_from_protocol(content)
+            internal_reasoning = self._merge_reasoning(internal_reasoning, protocol_reasoning)
             content = self._strip_protocol_tokens(content)
 
         return LLMResponse(
@@ -456,6 +466,16 @@ class LiteLLMProvider(LLMProvider):
                 arguments=arguments,
             ))
         return calls
+
+    @staticmethod
+    def _merge_reasoning(primary: str | None, extra: str | None) -> str | None:
+        """Combine two reasoning sources, dropping empties and duplicates."""
+        parts = [p.strip() for p in (primary, extra) if p and p.strip()]
+        if not parts:
+            return None
+        if len(parts) == 2 and parts[0] == parts[1]:
+            return parts[0]
+        return "\n".join(parts)
 
     @staticmethod
     def _extract_reasoning_from_protocol(text: str) -> str | None:
@@ -550,10 +570,12 @@ class LiteLLMProvider(LLMProvider):
         if not tool_calls and content:
             tool_calls = self._extract_tool_calls_from_protocol(content)
 
-        # Extract internal reasoning from protocol tokens before stripping
-        internal_reasoning = None
+        # Native reasoning tokens (reasoning models expose these on the
+        # message as reasoning_content) plus any protocol-token reasoning.
+        internal_reasoning = (getattr(message, "reasoning_content", None) or "").strip() or None
         if content:
-            internal_reasoning = self._extract_reasoning_from_protocol(content)
+            protocol_reasoning = self._extract_reasoning_from_protocol(content)
+            internal_reasoning = self._merge_reasoning(internal_reasoning, protocol_reasoning)
             content = self._strip_protocol_tokens(content)
 
         return LLMResponse(

@@ -17,9 +17,12 @@ operations are silent and agent-drivable.
 """
 from __future__ import annotations
 
+import base64
 import datetime
+import html as html_lib
 import imaplib
 import json
+import re
 import sqlite3
 from dataclasses import dataclass, field
 from email.header import decode_header, make_header
@@ -64,12 +67,15 @@ class Provider:
     imap_host: str = ""
     imap_port: int = 993
     trash_folder: str = ""
+    archive_folder: str = ""
 
 
 PROVIDERS: dict[str, Provider] = {
-    "microsoft": Provider("msal", ["imap", "graph"], "outlook.office365.com", 993, "Deleted Items"),
-    "google": Provider("app_password", ["basic"], "imap.gmail.com", 993, "[Gmail]/Trash"),
-    "icloud": Provider("app_password", ["basic"], "imap.mail.me.com", 993, "Deleted Messages"),
+    # Gmail's "Archive" is removing the inbox label; moving to [Gmail]/All Mail
+    # achieves exactly that over IMAP (the message already lives in All Mail).
+    "microsoft": Provider("msal", ["imap", "graph"], "outlook.office365.com", 993, "Deleted Items", "Archive"),
+    "google": Provider("app_password", ["basic"], "imap.gmail.com", 993, "[Gmail]/Trash", "[Gmail]/All Mail"),
+    "icloud": Provider("app_password", ["basic"], "imap.mail.me.com", 993, "Deleted Messages", "Archive"),
 }
 
 # Graph well-known folder ids keyed by names callers tend to pass.
@@ -99,6 +105,94 @@ def _decode(value: str | None) -> str:
 
 def _quote(folder: str) -> str:
     return '"' + folder.replace('"', '\\"') + '"'
+
+
+def _strip_html(s: str) -> str:
+    """Crude HTML → text: drop script/style, turn breaks into newlines, unescape."""
+    s = re.sub(r"(?is)<(script|style)\b.*?</\1>", "", s)
+    s = re.sub(r"(?is)<br\s*/?>", "\n", s)
+    s = re.sub(r"(?is)</(p|div|tr|h[1-6])>", "\n", s)
+    s = re.sub(r"(?s)<[^>]+>", "", s)
+    s = html_lib.unescape(s)
+    return re.sub(r"\n{3,}", "\n\n", s)
+
+
+def _safe_filename(name: str) -> str:
+    """Reduce an attachment name to a single safe path component."""
+    name = name.replace("\x00", "").strip().replace("/", "_").replace("\\", "_")
+    name = name.lstrip(".") or "attachment"
+    return name[:200]
+
+
+def _unique_path(path: "Path") -> "Path":
+    """Return a non-colliding path by appending ' (n)' before the suffix."""
+    if not path.exists():
+        return path
+    stem, suffix, parent = path.stem, path.suffix, path.parent
+    i = 1
+    while True:
+        candidate = parent / f"{stem} ({i}){suffix}"
+        if not candidate.exists():
+            return candidate
+        i += 1
+
+
+def _extract_body(msg: Any) -> tuple[str, str]:
+    """Best-effort plain-text body. Returns (text, format)."""
+    for pref, fmt in (("plain", "text"), ("html", "html-stripped")):
+        try:
+            part = msg.get_body(preferencelist=(pref,))
+        except Exception:
+            part = None
+        if part is not None:
+            content = part.get_content()
+            text = _strip_html(content) if pref == "html" else content
+            return text.strip(), fmt
+    if not msg.is_multipart():
+        try:
+            return (msg.get_content() or "").strip(), "text"
+        except Exception:
+            return "", "none"
+    return "", "none"
+
+
+def _attachment_meta(msg: Any) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for att in msg.iter_attachments():
+        try:
+            payload = att.get_content()
+            size = len(payload) if isinstance(payload, (bytes, bytearray, str)) else None
+        except Exception:
+            size = None
+        out.append({
+            "name": att.get_filename() or "(unnamed)",
+            "content_type": att.get_content_type(),
+            "size": size,
+        })
+    return out
+
+
+def _save_attachments(msg: Any, save_dir: str | None, uid: str) -> dict[str, Any]:
+    dest = Path(save_dir).expanduser() if save_dir else (Path.home() / "Downloads")
+    dest.mkdir(parents=True, exist_ok=True)
+    saved: list[dict[str, Any]] = []
+    for i, att in enumerate(msg.iter_attachments()):
+        try:
+            payload = att.get_content()
+        except Exception:
+            continue
+        if isinstance(payload, str):
+            payload = payload.encode("utf-8", "replace")
+        name = _safe_filename(att.get_filename() or f"attachment-{uid}-{i}")
+        path = _unique_path(dest / name)
+        path.write_bytes(payload)
+        saved.append({
+            "name": name,
+            "path": str(path),
+            "size": len(payload),
+            "content_type": att.get_content_type(),
+        })
+    return {"uid": uid, "count": len(saved), "saved": saved, "dir": str(dest)}
 
 
 def _kc_account(email: str) -> str:
@@ -391,6 +485,22 @@ class MailClient:
             return self._graph_trash(uid)
         return self._imap_trash(uid, mailbox)
 
+    def move_to_archive(self, uid: str, mailbox: str = "INBOX") -> dict[str, Any]:
+        if self.transport == "graph":
+            return self._graph_archive(uid)
+        return self._imap_archive(uid, mailbox)
+
+    def fetch_content(self, uid: str, mailbox: str = "INBOX", max_chars: int = 20000) -> dict[str, Any]:
+        if self.transport == "graph":
+            return self._graph_content(uid, max_chars)
+        return self._imap_content(uid, mailbox, max_chars)
+
+    def download_attachments(self, uid: str, mailbox: str = "INBOX",
+                             save_dir: str | None = None) -> dict[str, Any]:
+        if self.transport == "graph":
+            return self._graph_download_attachments(uid, save_dir)
+        return self._imap_download_attachments(uid, mailbox, save_dir)
+
     # --- IMAP transport (XOAUTH2 or app-password LOGIN) ----------------------
 
     def _imap_connect(self) -> imaplib.IMAP4_SSL:
@@ -502,6 +612,65 @@ class MailClient:
         finally:
             self._imap_logout(imap)
 
+    def _imap_archive(self, uid: str, mailbox: str) -> dict[str, Any]:
+        dest = self.provider.archive_folder
+        if not dest:
+            raise RuntimeError(f"No archive folder configured for '{self.email}'.")
+        imap = self._imap_connect()
+        try:
+            imap.select(_quote(mailbox))
+            archive = _quote(dest)
+            typ, data = imap.uid("MOVE", uid, archive)
+            if typ == "OK":
+                return {"uid": uid, "ok": True, "method": "MOVE",
+                        "transport": self.transport, "archive": dest}
+            imap.uid("COPY", uid, archive)
+            imap.uid("STORE", uid, "+FLAGS", "(\\Deleted)")
+            imap.expunge()
+            return {"uid": uid, "ok": True, "method": "COPY+EXPUNGE",
+                    "transport": self.transport, "archive": dest}
+        finally:
+            self._imap_logout(imap)
+
+    def _imap_fetch_message(self, uid: str, mailbox: str) -> Any:
+        """Fetch and parse a full message into an EmailMessage."""
+        imap = self._imap_connect()
+        try:
+            typ, _ = imap.select(_quote(mailbox), readonly=True)
+            if typ != "OK":
+                raise RuntimeError(f"SELECT {mailbox} failed")
+            typ, msg_data = imap.uid("FETCH", uid, "(BODY.PEEK[])")
+            if typ != "OK" or not msg_data:
+                raise RuntimeError(f"FETCH {uid} failed")
+            raw = next((p[1] for p in msg_data if isinstance(p, tuple)), None)
+            if raw is None:
+                raise RuntimeError(f"Message uid {uid} not found in {mailbox}")
+            return BytesParser(policy=default_policy).parsebytes(raw)
+        finally:
+            self._imap_logout(imap)
+
+    def _imap_content(self, uid: str, mailbox: str, max_chars: int) -> dict[str, Any]:
+        msg = self._imap_fetch_message(uid, mailbox)
+        body, fmt = _extract_body(msg)
+        return {
+            "uid": uid,
+            "transport": self.transport,
+            "subject": _decode(msg.get("subject")),
+            "from": _decode(msg.get("from")),
+            "to": _decode(msg.get("to")),
+            "date": msg.get("date", ""),
+            "message_id": msg.get("message-id", ""),
+            "body": body[:max_chars],
+            "body_format": fmt,
+            "truncated": len(body) > max_chars,
+            "attachments": _attachment_meta(msg),
+        }
+
+    def _imap_download_attachments(self, uid: str, mailbox: str,
+                                   save_dir: str | None) -> dict[str, Any]:
+        msg = self._imap_fetch_message(uid, mailbox)
+        return {**_save_attachments(msg, save_dir, uid), "transport": self.transport}
+
     @staticmethod
     def _imap_logout(imap: imaplib.IMAP4_SSL) -> None:
         try:
@@ -572,6 +741,81 @@ class MailClient:
             r.raise_for_status()
             return {"uid": uid, "ok": True, "method": "move", "transport": "graph",
                     "new_id": r.json().get("id"), "trash": "deleteditems"}
+
+    def _graph_archive(self, uid: str) -> dict[str, Any]:
+        with self._graph() as c:
+            r = c.post(f"/me/messages/{uid}/move", json={"destinationId": "archive"})
+            r.raise_for_status()
+            return {"uid": uid, "ok": True, "method": "move", "transport": "graph",
+                    "new_id": r.json().get("id"), "archive": "archive"}
+
+    def _graph_content(self, uid: str, max_chars: int) -> dict[str, Any]:
+        select = ("subject,from,toRecipients,receivedDateTime,internetMessageId,"
+                  "body,bodyPreview,hasAttachments")
+        with self._graph() as c:
+            r = c.get(f"/me/messages/{uid}", params={"$select": select})
+            r.raise_for_status()
+            m = r.json()
+            body = m.get("body") or {}
+            raw = body.get("content") or m.get("bodyPreview") or ""
+            if (body.get("contentType") or "").lower() == "html":
+                text, fmt = _strip_html(raw).strip(), "html-stripped"
+            else:
+                text, fmt = raw.strip(), "text"
+            attachments: list[dict[str, Any]] = []
+            if m.get("hasAttachments"):
+                ar = c.get(f"/me/messages/{uid}/attachments",
+                           params={"$select": "name,contentType,size"})
+                ar.raise_for_status()
+                for a in ar.json().get("value", []):
+                    attachments.append({
+                        "name": a.get("name"),
+                        "content_type": a.get("contentType"),
+                        "size": a.get("size"),
+                    })
+            to = ", ".join(
+                ((rcpt.get("emailAddress") or {}).get("address", ""))
+                for rcpt in (m.get("toRecipients") or [])
+            )
+            return {
+                "uid": uid,
+                "transport": "graph",
+                "subject": m.get("subject", ""),
+                "from": ((m.get("from") or {}).get("emailAddress") or {}).get("address", ""),
+                "to": to,
+                "date": m.get("receivedDateTime", ""),
+                "message_id": m.get("internetMessageId", ""),
+                "body": text[:max_chars],
+                "body_format": fmt,
+                "truncated": len(text) > max_chars,
+                "attachments": attachments,
+            }
+
+    def _graph_download_attachments(self, uid: str, save_dir: str | None) -> dict[str, Any]:
+        dest = Path(save_dir).expanduser() if save_dir else (Path.home() / "Downloads")
+        dest.mkdir(parents=True, exist_ok=True)
+        saved: list[dict[str, Any]] = []
+        with self._graph() as c:
+            r = c.get(f"/me/messages/{uid}/attachments")
+            r.raise_for_status()
+            for a in r.json().get("value", []):
+                if not str(a.get("@odata.type", "")).endswith("fileAttachment"):
+                    continue  # skip itemAttachment / referenceAttachment
+                content_bytes = a.get("contentBytes")
+                if not content_bytes:
+                    continue
+                data = base64.b64decode(content_bytes)
+                name = _safe_filename(a.get("name") or f"attachment-{uid}")
+                path = _unique_path(dest / name)
+                path.write_bytes(data)
+                saved.append({
+                    "name": name,
+                    "path": str(path),
+                    "size": len(data),
+                    "content_type": a.get("contentType"),
+                })
+        return {"uid": uid, "transport": "graph", "count": len(saved),
+                "saved": saved, "dir": str(dest)}
 
 
 # Back-compat alias (old name).

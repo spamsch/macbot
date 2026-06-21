@@ -286,9 +286,19 @@ class Agent:
                     "model": self._current_model,
                 })
 
-            # Show thinking blocks (dimmed) if present alongside tool calls
-            if response.content and response.tool_calls:
-                thinking = self._extract_thinking(response.content)
+            # Surface the model's reasoning every turn — inline <thinking>
+            # blocks and/or native reasoning tokens from reasoning models
+            # (e.g. gpt-5.x). Not gated on tool calls anymore, so reasoning
+            # shows on the final answer turn too.
+            if self.config.show_reasoning:
+                thinking_parts: list[str] = []
+                if response.content:
+                    inline = self._extract_thinking(response.content)
+                    if inline:
+                        thinking_parts.append(inline)
+                if response.internal_reasoning:
+                    thinking_parts.append(response.internal_reasoning.strip())
+                thinking = "\n".join(p for p in thinking_parts if p)
                 if thinking:
                     if on_event:
                         on_event({"type": "thinking", "content": thinking})
@@ -358,9 +368,13 @@ class Agent:
 
     @staticmethod
     def _extract_thinking(content: str) -> str | None:
-        """Extract text from <thinking> blocks."""
-        match = re.search(r"<thinking>(.*?)</thinking>", content, re.DOTALL)
-        return match.group(1).strip() if match else None
+        """Extract text from all <thinking> blocks, joined."""
+        parts = [
+            m.strip()
+            for m in re.findall(r"<thinking>(.*?)</thinking>", content, re.DOTALL)
+            if m.strip()
+        ]
+        return "\n".join(parts) if parts else None
 
     @staticmethod
     def _strip_thinking(content: str) -> str:

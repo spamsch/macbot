@@ -4,7 +4,7 @@ import asyncio
 import sys
 import termios
 import tty
-from typing import Any, Coroutine, TypeVar
+from typing import Any, Callable, Coroutine, TypeVar
 
 T = TypeVar("T")
 
@@ -63,12 +63,17 @@ async def _check_escape(stop_event: asyncio.Event) -> None:
 async def run_with_escape_cancel(
     coro: Coroutine[Any, Any, T],
     cancel_message: str = "\n[dim][Cancelled by Escape][/dim]",
+    on_cancel: "Callable[[], Any] | None" = None,
 ) -> tuple[T | None, bool]:
     """Run a coroutine with Escape key cancellation support.
 
     Args:
         coro: The coroutine to run
         cancel_message: Message to display on cancellation (ignored, caller handles)
+        on_cancel: Optional callback invoked the moment Escape is detected, before
+            the awaited coroutine is cancelled. Use it to stop work that runs in a
+            separate task (e.g. an agent run behind a queue) — cancelling `coro`
+            alone only abandons the wait, not the work.
 
     Returns:
         Tuple of (result, was_cancelled):
@@ -112,7 +117,13 @@ async def run_with_escape_cancel(
                 pass
             return main_task.result(), False
         else:
-            # Escape was pressed
+            # Escape was pressed — stop the real work first (on_cancel), then
+            # abandon the wait.
+            if on_cancel is not None:
+                try:
+                    on_cancel()
+                except Exception:
+                    pass
             main_task.cancel()
             try:
                 await main_task

@@ -247,6 +247,125 @@ class MailImapMoveToTrashTask(Task):
             return {"success": False, "error": f"Move to trash failed: {e}"}
 
 
+class MailImapArchiveTask(Task):
+    """Move a message to the archive folder over IMAP."""
+
+    @property
+    def name(self) -> str:
+        return "mail_imap_archive"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Archive a message over IMAP, with Mail.app closed — moves it out of the "
+            "inbox into the account's archive (Outlook/iCloud 'Archive', Gmail "
+            "'[Gmail]/All Mail', i.e. remove the inbox label). Needs the uid from "
+            "mail_imap_search. Use this for processed mail you want to keep; use "
+            "mail_imap_move_to_trash to discard instead."
+        )
+
+    async def execute(
+        self,
+        uid: str,
+        email: str | None = None,
+        mailbox: str = "INBOX",
+    ) -> dict[str, Any]:
+        from macbot.mail_imap import MailImapClient, NotLoggedInError
+
+        resolved = _resolve(email)
+        if isinstance(resolved, dict):
+            return resolved
+        client = MailImapClient(resolved)
+        try:
+            result = await asyncio.to_thread(client.move_to_archive, uid, mailbox)
+            return {"success": result.get("ok", False), "email": resolved, **result}
+        except NotLoggedInError as e:
+            return {"success": False, "error": str(e), "needs_login": True}
+        except Exception as e:
+            return {"success": False, "error": f"Archive failed: {e}"}
+
+
+class MailImapReadTask(Task):
+    """Read the full body (and attachment list) of a message over IMAP."""
+
+    @property
+    def name(self) -> str:
+        return "mail_imap_read"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Read the contents of a single email over IMAP, with Mail.app closed: "
+            "subject, from, to, date, the body as plain text (HTML mail is stripped "
+            "to text), and a list of attachments (name, content_type, size) — without "
+            "downloading them. Needs the uid from mail_imap_search. Use "
+            "mail_imap_download_attachments to actually save attachments to disk. "
+            "Body is truncated to max_chars (truncated=true when cut)."
+        )
+
+    async def execute(
+        self,
+        uid: str,
+        email: str | None = None,
+        mailbox: str = "INBOX",
+        max_chars: int = 20000,
+    ) -> dict[str, Any]:
+        from macbot.mail_imap import MailImapClient, NotLoggedInError
+
+        resolved = _resolve(email)
+        if isinstance(resolved, dict):
+            return resolved
+        client = MailImapClient(resolved)
+        try:
+            result = await asyncio.to_thread(client.fetch_content, uid, mailbox, max_chars)
+            return {"success": True, "email": resolved, **result}
+        except NotLoggedInError as e:
+            return {"success": False, "error": str(e), "needs_login": True}
+        except Exception as e:
+            return {"success": False, "error": f"Read failed: {e}"}
+
+
+class MailImapDownloadAttachmentsTask(Task):
+    """Download a message's attachments to disk over IMAP."""
+
+    @property
+    def name(self) -> str:
+        return "mail_imap_download_attachments"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Download all file attachments of an email over IMAP, with Mail.app "
+            "closed. Saves to save_dir (default ~/Downloads) and returns the saved "
+            "file paths, sizes, and content types. Needs the uid from "
+            "mail_imap_search. Filenames are sanitized and de-duplicated; nothing is "
+            "overwritten. To only see what attachments exist, use mail_imap_read."
+        )
+
+    async def execute(
+        self,
+        uid: str,
+        email: str | None = None,
+        mailbox: str = "INBOX",
+        save_dir: str | None = None,
+    ) -> dict[str, Any]:
+        from macbot.mail_imap import MailImapClient, NotLoggedInError
+
+        resolved = _resolve(email)
+        if isinstance(resolved, dict):
+            return resolved
+        client = MailImapClient(resolved)
+        try:
+            result = await asyncio.to_thread(
+                client.download_attachments, uid, mailbox, save_dir
+            )
+            return {"success": True, "email": resolved, **result}
+        except NotLoggedInError as e:
+            return {"success": False, "error": str(e), "needs_login": True}
+        except Exception as e:
+            return {"success": False, "error": f"Download failed: {e}"}
+
+
 def register_mail_imap_tasks(registry) -> None:  # type: ignore[no-untyped-def]
     """Register headless IMAP mail tasks with a registry."""
     registry.register(MailImapAccountsTask())
@@ -254,3 +373,6 @@ def register_mail_imap_tasks(registry) -> None:  # type: ignore[no-untyped-def]
     registry.register(MailImapSearchTask())
     registry.register(MailImapMarkReadTask())
     registry.register(MailImapMoveToTrashTask())
+    registry.register(MailImapArchiveTask())
+    registry.register(MailImapReadTask())
+    registry.register(MailImapDownloadAttachmentsTask())

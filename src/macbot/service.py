@@ -58,6 +58,8 @@ class AgentQueue:
         self._queue: asyncio.Queue[QueuedMessage | None] = asyncio.Queue()
         self._running = False
         self._usage_tracker = usage_tracker or UsageTracker()
+        self._current_task: asyncio.Task | None = None
+        self._cancel_requested = False
 
     async def submit(
         self,
@@ -103,7 +105,10 @@ class AgentQueue:
                     if "💭" in text:
                         logger.info("Agent thinking: %s", text.strip())
 
-                result = await self.agent.run(
+                # Run inside a tracked task so Escape (cancel_current) can stop
+                # the work itself, not just the caller's wait on the future.
+                self._cancel_requested = False
+                self._current_task = asyncio.ensure_future(self.agent.run(
                     msg.content,
                     stream=False,
                     continue_conversation=True,
@@ -111,18 +116,47 @@ class AgentQueue:
                     on_status=_on_status,
                     model_override=msg.model_override,
                     disable_routing=msg.disable_routing,
-                )
+                ))
+                result = await self._current_task
                 try:
                     self._usage_tracker.record(self.agent.get_interaction_cost())
                 except Exception:
                     logger.debug("Failed to record usage", exc_info=True)
                 if not msg.result_future.done():
                     msg.result_future.set_result(result)
+            except asyncio.CancelledError:
+                # Record whatever was spent before the interrupt.
+                try:
+                    self._usage_tracker.record(self.agent.get_interaction_cost())
+                except Exception:
+                    logger.debug("Failed to record usage", exc_info=True)
+                if not msg.result_future.done():
+                    msg.result_future.set_result(None)
+                if not self._cancel_requested:
+                    # The consumer itself is being torn down (shutdown), not a
+                    # per-run Escape — propagate so the loop exits.
+                    raise
+                logger.info("Agent run cancelled by user")
             except Exception as e:
                 if not msg.result_future.done():
                     msg.result_future.set_exception(e)
             finally:
+                self._current_task = None
+                self._cancel_requested = False
                 self._queue.task_done()
+
+    def cancel_current(self) -> bool:
+        """Cancel the in-flight agent run, if any.
+
+        Returns True if a run was actually cancelled. The consumer stays alive
+        and keeps processing the queue.
+        """
+        task = self._current_task
+        if task is not None and not task.done():
+            self._cancel_requested = True
+            task.cancel()
+            return True
+        return False
 
     def stop(self) -> None:
         """Signal the consumer to stop after current message completes."""
@@ -945,7 +979,8 @@ class MacbotService:
                     from macbot.utils.cancellable import run_with_escape_cancel
 
                     result, cancelled = await run_with_escape_cancel(
-                        queue.submit(user_input)
+                        queue.submit(user_input),
+                        on_cancel=queue.cancel_current,
                     )
 
                     if cancelled:

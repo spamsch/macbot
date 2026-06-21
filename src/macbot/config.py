@@ -65,6 +65,11 @@ class Settings(BaseSettings):
         default=100,
         description="Maximum iterations for the agent loop",
     )
+    show_reasoning: bool = Field(
+        default=True,
+        description="Show the model's reasoning (inline <thinking> blocks and "
+                    "native reasoning tokens from reasoning models) in agent output",
+    )
     agent_system_prompt: str = Field(
         default="""You are Son of Simon, a proactive macOS automation assistant. Your job is to help users accomplish tasks on their Mac.
 

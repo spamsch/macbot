@@ -990,6 +990,11 @@ def cmd_connect(args: argparse.Namespace) -> None:
                     console.print("[bold green]A:[/bold green]", end=" ")
                     console.print(Markdown(text))
 
+            elif evt_type == "thinking":
+                thinking = event.get("content", "")
+                if thinking:
+                    console.print(f"  [dim italic]💭 {thinking}[/dim italic]")
+
             elif evt_type == "tool_call":
                 name = event.get("name", "?")
                 console.print(f"  [dim]→ {name}[/dim]")

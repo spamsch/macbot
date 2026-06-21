@@ -1,13 +1,16 @@
 ---
 id: mail_assistant
 name: Mail Assistant
-description: Find and act on emails over IMAP with Mail.app closed. Discover which accounts are logged in, search, mark read/unread, and move to trash.
+description: Find and act on emails over IMAP with Mail.app closed. Discover which accounts are logged in, search, read contents, download attachments, mark read/unread, archive, and move to trash.
 apps: []
 tasks:
   - mail_imap_accounts
   - mail_imap_search
+  - mail_imap_read
+  - mail_imap_download_attachments
   - mail_imap_mark_read
   - mail_imap_move_to_trash
+  - mail_imap_archive
   - mail_imap_login
 essential_tasks:
   - mail_imap_accounts
@@ -19,11 +22,15 @@ examples:
   - "Find emails from UPS in the last week"
   - "Mark the newsletter from Microsoft as read"
   - "Move that Eventbrite email to trash"
+  - "Archive the shipping confirmation from UPS"
+  - "Read the latest invoice email and summarize it"
+  - "Download the attachments from the email from my accountant"
 safe_defaults:
   limit: 25
   since_days: 7
 confirm_before_write:
   - move to trash
+  - archive
 requires_permissions: []
 ---
 
@@ -77,11 +84,27 @@ Escalation ladder when a search returns nothing — change one dimension at a ti
 4. Widen time: `since_days` 7 → 30 → 90 → 365.
 5. Broaden scope: try another `mailbox` (Archive, Sent, Junk) via `list`-known names.
 
+### Reading contents and attachments
+`mail_imap_search` returns only headers + flags, never the body. To read an email,
+take its `uid` and call `mail_imap_read(uid=..., email=...)` — it returns the body
+as plain text (HTML is stripped) plus an attachment list (name, type, size) without
+downloading anything. Body is capped at `max_chars` (default 20000); `truncated`
+is true when it was cut — raise `max_chars` if you need the rest.
+
+To save attachments, call `mail_imap_download_attachments(uid=..., email=...)`. They
+land in `~/Downloads` by default (override with `save_dir`); names are sanitized and
+de-duplicated, so nothing is overwritten. Only download when the user asks for the
+files — to merely describe what's attached, `mail_imap_read` is enough.
+
 ### Actions are by uid, and confirm before trashing
 - Mark read/unread: `mail_imap_mark_read(uid=..., email=..., read=true|false)`.
 - Move to trash: `mail_imap_move_to_trash(uid=..., email=...)` — lands in the
   account's Deleted Items, recoverable, but still **confirm with the user first**
   and show what will be moved (sender + subject).
+- Archive: `mail_imap_archive(uid=..., email=...)` — moves it out of the inbox into
+  the account's archive (Outlook/iCloud `Archive`, Gmail `[Gmail]/All Mail`, i.e.
+  drop the inbox label). Use for processed mail worth keeping; trash is for
+  discarding. Confirm before archiving too (sender + subject).
 - For bulk actions, search first, show the count and a short preview, get one
   confirmation, then act on each uid.
 
