@@ -2815,19 +2815,23 @@ class ListThingsTagsTask(Task):
 # REGISTRATION HELPER
 # =============================================================================
 
-def register_macos_tasks(registry) -> None:
+def register_macos_tasks(registry, config=None) -> None:  # type: ignore[no-untyped-def]
     """Register all macOS automation tasks with a registry.
 
     Args:
         registry: TaskRegistry to register tasks with.
+        config: Optional Settings; gates the legacy Mail.app tasks.
     """
-    # Mail tasks
-    registry.register(GetUnreadEmailsTask())
-    registry.register(SearchEmailsTask())
-    registry.register(SendEmailTask())
-    registry.register(MoveEmailTask())
-    registry.register(DownloadAttachmentsTask())
-    registry.register(MarkEmailsReadTask())
+    # Mail.app (AppleScript) tasks — OFF by default. They require Mail.app running
+    # and are superseded by the headless IMAP tasks (mail_imap_*). Re-enable with
+    # MACBOT_ENABLE_MAILAPP_TASKS=true.
+    if config is not None and getattr(config, "enable_mailapp_tasks", False):
+        registry.register(GetUnreadEmailsTask())
+        registry.register(SearchEmailsTask())
+        registry.register(SendEmailTask())
+        registry.register(MoveEmailTask())
+        registry.register(DownloadAttachmentsTask())
+        registry.register(MarkEmailsReadTask())
 
     # Calendar tasks
     registry.register(GetTodayEventsTask())

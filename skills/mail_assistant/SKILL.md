@@ -1,130 +1,92 @@
 ---
 id: mail_assistant
 name: Mail Assistant
-description: Find, summarize, and act on emails safely with sensible defaults. Supports sending emails with file attachments.
-apps:
-  - Mail
+description: Find and act on emails over IMAP with Mail.app closed. Discover which accounts are logged in, search, mark read/unread, and move to trash.
+apps: []
 tasks:
-  - search_emails
-  - send_email
-  - move_email
-  - download_attachments
-  - get_unread_emails
-  - mark_emails_read
+  - mail_imap_accounts
+  - mail_imap_search
+  - mail_imap_mark_read
+  - mail_imap_move_to_trash
+  - mail_imap_login
 essential_tasks:
-  - search_emails
-  - get_unread_emails
-  - send_email
-keywords: ["e-mail", "e-mails", "mail", "mails", "posteingang", "nachricht", "anhang", "anhänge"]
+  - mail_imap_accounts
+  - mail_imap_search
+keywords: ["e-mail", "e-mails", "mail", "mails", "posteingang", "postfach", "nachricht", "konto", "account", "imap", "unread", "ungelesen"]
 examples:
-  - "Summarize unread emails from today"
-  - "Find emails from UPS and show tracking numbers"
-  - "Show me emails from the waas.rent account"
-  - "Archive all read newsletters"
-  - "Download attachments from the last email from Bob"
-  - "Reply to John's email about the meeting"
-  - "Send a draft to Frank with the invoice PDF attached"
+  - "Which mail accounts am I logged into?"
+  - "Show unread emails in my operayo account"
+  - "Find emails from UPS in the last week"
+  - "Mark the newsletter from Microsoft as read"
+  - "Move that Eventbrite email to trash"
 safe_defaults:
-  days: 7
-  limit: 20
-  with_content: false
+  limit: 25
+  since_days: 7
 confirm_before_write:
-  - send email
-  - delete email
   - move to trash
-requires_permissions:
-  - Automation:Mail
+requires_permissions: []
 ---
 
 ## Behavior Notes
 
-### Performance: Two-Phase Search Pattern
-Email metadata search (headers, sender, subject, date) is fast (~50ms via SQLite index).
-**The two-phase approach remains important for reading email content:**
+Mail runs **headless with Mail.app closed** — no AppleScript, no EWS. Each Microsoft
+account uses one of two transports, chosen at login and stored per account:
+**imap** (IMAP+XOAUTH2) where the tenant allows it, or **graph** (Microsoft Graph)
+where the tenant disables IMAP. The agent doesn't choose the transport — it's set
+once at login and is transparent afterwards. Only accounts that are *logged in* can
+be acted on. The legacy Mail.app tasks (search_emails, send_email, …) are disabled.
 
-1. **Phase 1 — Find (headers only):** Search with filters, `with_content=false` (default).
-   Returns in milliseconds via SQLite. Falls back to AppleScript if needed.
-2. **Phase 2 — Read (by message_id):** Fetch content with `message_id` + `with_content=true`.
-   Takes ~3-5s per email (AppleScript required for email body). Add `with_links=true` only when the user needs URLs from HTML emails (adds ~5s extra).
+### Always start with account discovery
+For anything mail-related, call `mail_imap_accounts` first. It returns, per account:
+`email`, `provider`, `configured`, `logged_in`, `supported`. The `logged_in` list
+is the set of accounts you can operate on right now.
 
-**Bad:** `search_emails(subject="Ferien", days=30, with_content=True)` → slow (30s+, fetches all bodies)
-**Good:** `search_emails(subject="Ferien", sender="mom", days=7, limit=5)` → fast headers → then `search_emails(message_id="<id>", with_content=True)` → ~3-5s
+- "Which accounts am I logged into?" → call `mail_imap_accounts`, report the
+  `logged_in` list. Do not shell out or guess from macOS files — this task is the
+  source of truth.
+- If the account the user wants is `supported` but not `logged_in`, it needs a
+  one-time login (see below). If it's not `supported`, say so (only Microsoft/
+  Exchange works headless today; Gmail/iCloud aren't wired up yet).
 
-### Search Optimization Rules
-- **Combine filters:** Use both `sender` + `subject` in one call instead of two separate searches
-- **Narrow date range:** Use `days=7` by default, only widen if nothing found
-- **Small limit:** Use `limit=5` for targeted searches (default 20 is too many for exploration)
-- **Specify account:** If the user context implies which account, use the `account` parameter to halve search time
-- **Never use `with_content=true` on broad searches** — it adds seconds per result
+### Login is a human step — do not call it autonomously
+Logging in runs an interactive device-code flow that **blocks** on the user opening
+a URL and entering a code. Never call `mail_imap_login` inside an autonomous run —
+it would hang. Instead, tell the user to run the dedicated CLI command in a real
+terminal (NOT via `son run`, which is itself an autonomous run and will loop):
 
-### Search Strategy: Escalation Ladder
-When a search returns nothing, systematically escalate through these steps before giving up:
+```
+son mail login <email>
+```
 
-1. **Start specific:** sender + subject + narrow days (e.g., days=7)
-2. **Vary the keyword:** try alternative spellings, partial names, or the domain (e.g., "huk24" → "huk24-service.de")
-3. **Change the search field:** try subject instead of sender, or vice versa
-4. **Widen the time range:** increase days (7 → 30 → 90 → 365)
-5. **Broaden mailbox scope:** use `all_mailboxes=True` — the email may be in Sent, Junk, a custom folder, or Gmail's All Mail
-6. **Remove filters one at a time:** drop subject, then sender, keeping only the date range
+For example: `son mail login simon@pamies.de`. They complete the browser prompt,
+then you re-run `mail_imap_accounts` to confirm `logged_in` and continue.
+`son mail accounts` lists accounts and login state without the agent.
 
-**Important:** Each retry should change something meaningful. Don't just repeat the same search with a synonym — vary the dimension (keyword → field → time → scope).
+### Searching
+Use `mail_imap_search`. If exactly one account is configured, `email` is optional;
+otherwise pass the target `email`. Returns headers + flags including the **`uid`**,
+which you need for mark-read and trash.
 
-Additional tips:
-- Use `today_only=true` for "today's emails" requests
-- Use the `account` parameter when user says "from X account" (not sender)
+Useful parameters: `mailbox` (default INBOX), `unread_only`, `since_days`,
+`sender`, `subject`, `limit`. Combine filters in one call.
 
-### Critical: Never Iterate Over Accounts
-- `search_emails` WITHOUT an `account` parameter already searches ALL accounts' Inbox + Archive in a single call
-- NEVER loop through individual accounts one by one — this is wasteful and slow
-- For "today's emails": `search_emails(today_only=true, limit=20)` — one call, all accounts
-- For "unread emails": `get_unread_emails` — one call, all accounts
-- Only use the `account` parameter when the user specifically asks about ONE account
+Escalation ladder when a search returns nothing — change one dimension at a time:
+1. Start specific: `sender` + `subject` + narrow `since_days` (e.g. 7).
+2. Vary the keyword: alternative spellings, partial names, the domain.
+3. Switch the field: try `subject` instead of `sender`, or vice versa.
+4. Widen time: `since_days` 7 → 30 → 90 → 365.
+5. Broaden scope: try another `mailbox` (Archive, Sent, Junk) via `list`-known names.
 
-### Email Actions
-- Always confirm before sending, deleting, or moving emails
-- Show a preview of what will be sent/changed before confirming
-- For bulk operations, show count and ask for confirmation
+### Actions are by uid, and confirm before trashing
+- Mark read/unread: `mail_imap_mark_read(uid=..., email=..., read=true|false)`.
+- Move to trash: `mail_imap_move_to_trash(uid=..., email=...)` — lands in the
+  account's Deleted Items, recoverable, but still **confirm with the user first**
+  and show what will be moved (sender + subject).
+- For bulk actions, search first, show the count and a short preview, get one
+  confirmation, then act on each uid.
 
-### Reading Email Content
-- **Never use `with_content=true` on the initial search** — search headers first, then read by message_id
-- For tracking numbers or specific content, use the two-phase pattern above
-- **Handling `unknown-*` Message-IDs:** If a search result returns a Message-ID starting with `unknown-` (e.g., `unknown-36784`), this is a placeholder — NOT a real RFC Message-ID. Do NOT pass it to `search_emails(message_id=...)` — it will always fail. Instead, retry the content lookup using sender/subject filters with `with_content=True` and a narrow date range or `limit=1`.
-
-### Follow up on the web when email isn't enough
-When an email doesn't contain the information the user needs (e.g., price, invoice, order status) but references a website or account page:
-- **Proactively offer to navigate there** and extract the information using browser automation
-- Check memory for a saved web recipe for that domain (`memory_list`)
-- If a recipe exists, follow it directly. If not, open the site and navigate using snapshots/JS
-- Don't just tell the user "go check Settings → Billing" — do it for them
-
-### Handling Multiple Accounts
-- "emails from X account" means emails RECEIVED BY that account (any sender)
-- "emails from X sender" means emails FROM that person/address
-- Always clarify if the user mentions an account name vs sender name
-
-### Common Request Patterns
-- **"today's emails"** → use today_only=true parameter
-- **"recent emails"** → use days parameter (e.g., days=7 for last week)
-- **"all emails" or "read and unread"** → the search includes both by default
-- **"read this email"** → search_emails with message_id AND with_content=True
-- **"archive this email"** → move_email with to="archive" and message_id
-- **"delete this email"** → move_email with to="trash" and message_id
-
-### Moving and Archiving Emails
-When processing emails and the user wants them archived or deleted:
-1. Use search_emails to find the email and get its Message-ID
-2. Use move_email with the message_id and to="archive" or to="trash"
-3. The email will be moved to the account's Archive/Trash mailbox
-
-### Sending Emails with Attachments
-When the user wants to send an email with file attachments:
-1. Find the file using `spotlight_search` or use the absolute path provided by the user
-2. Call `send_email` with `attachments=["/absolute/path/to/file"]` — paths must be absolute
-3. Multiple files: pass multiple paths in the list, e.g. `attachments=["/path/a.pdf", "/path/b.pdf"]`
-4. Always use `draft=True` or `draft_visible=True` when attachments are involved so the user can review before sending
-
-### Downloading Attachments
-When the user wants to download email attachments:
-1. Use search_emails to find the email and get its Message-ID
-2. Use download_attachments with the message_id and output folder path
-3. Attachments will be saved with their original filenames (duplicates auto-renamed)
+### Multiple accounts
+- "emails from X account" = received by that account → pass `email`.
+- "emails from X sender" = from that person → pass `sender`.
+- Clarify if it's ambiguous. Never loop blindly over every account; act on the
+  specific logged-in account the user means.

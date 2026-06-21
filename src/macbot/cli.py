@@ -2283,6 +2283,126 @@ def cmd_cron_disable(args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
+def cmd_mail_accounts(args: argparse.Namespace) -> None:
+    """List mail accounts and clearly show which can actually be used."""
+    from macbot.mail_imap import account_overview, probe_account
+
+    accounts = account_overview()
+    if not accounts:
+        console.print("[yellow]No mail accounts found.[/yellow]")
+        return
+
+    probe = not getattr(args, "no_probe", False)
+
+    table = Table(title="Mail accounts (headless, Mail.app closed)")
+    table.add_column("Email", style="cyan")
+    table.add_column("Provider", style="white")
+    table.add_column("Transport", style="magenta")
+    table.add_column("Status", style="white")
+    table.add_column("Working", style="green")
+
+    for a in accounts:
+        transport = a.get("transport") or "—"
+        if a.get("logged_in"):
+            if probe:
+                res = probe_account(a["email"])
+                working = "[green]yes[/green]" if res["ok"] else "[red]no[/red]"
+                status = res["detail"]
+                transport = res.get("transport") or transport
+            else:
+                working = "[green]logged in[/green]"
+                status = "logged in (not probed)"
+        elif a.get("configured"):
+            working = "[yellow]re-login[/yellow]"
+            status = "token expired / no token"
+        elif a.get("supported"):
+            working = "[yellow]no[/yellow]"
+            status = "available — needs login"
+        else:
+            working = "[dim]no[/dim]"
+            status = "unsupported (generic IMAP not wired up)"
+        table.add_row(a["email"], a.get("provider", "?"), transport, status, working)
+
+    console.print(table)
+    pending = [a["email"] for a in accounts if a.get("supported") and not a.get("logged_in")]
+    if pending:
+        console.print(
+            "\nNot logged in yet: " + ", ".join(pending) +
+            "\nLog one in with: [bold]son mail login <email>[/bold]"
+        )
+
+
+def cmd_mail_login(args: argparse.Namespace) -> None:
+    """Interactively log in a mailbox for headless IMAP (device-code OAuth).
+
+    Runs the blocking device-code flow directly (NOT through the agent) so the
+    code is visible and you can complete it in the browser.
+    """
+    import getpass
+    import os
+
+    from macbot.mail_imap import PROVIDERS, basic_login, detect_provider, login_account
+
+    provider = detect_provider(args.email)
+    use_basic = args.transport == "basic" or (
+        args.transport == "auto" and PROVIDERS.get(provider, None) is not None
+        and PROVIDERS[provider].oauth == "app_password"
+    )
+
+    # Gmail / iCloud: app-password over IMAP (OAuth for the Gmail full scope is a
+    # restricted scope with weekly-expiring testing tokens — not worth it).
+    if use_basic:
+        if provider not in PROVIDERS or PROVIDERS[provider].oauth != "app_password":
+            console.print(
+                f"[red]Account '{args.email}' (provider '{provider}') doesn't use "
+                f"app-password login.[/red]"
+            )
+            sys.exit(1)
+        console.print(
+            f"[bold]{provider}[/bold] app-password login for [cyan]{args.email}[/cyan].\n"
+            f"Create one at [underline]https://myaccount.google.com/apppasswords[/underline] "
+            f"(Gmail; 2-Step Verification required) and paste it below."
+            if provider == "google" else
+            f"[bold]{provider}[/bold] app-password login for [cyan]{args.email}[/cyan]. "
+            f"Create an app-specific password in your Apple ID settings and paste it below."
+        )
+        app_pw = getpass.getpass("App password: ").replace(" ", "")
+        if not app_pw:
+            console.print("[red]No password entered.[/red]")
+            sys.exit(1)
+        try:
+            chosen = basic_login(args.email, provider, app_pw)
+        except Exception as e:
+            console.print(f"[red]Login failed:[/red] {e}")
+            sys.exit(1)
+        console.print(f"[green]Logged in:[/green] {args.email} [dim](transport: {chosen})[/dim]")
+        return
+
+    # Microsoft: OAuth device-code.
+    client_id = (
+        args.client_id
+        or settings.ms_oauth_client_id
+        or os.environ.get("MACBOT_MS_OAUTH_CLIENT_ID")
+    )
+    if not client_id:
+        console.print(
+            "[red]No client_id.[/red] Set MACBOT_MS_OAUTH_CLIENT_ID in ~/.macbot/.env "
+            "or pass --client-id <azure app id>."
+        )
+        sys.exit(1)
+
+    def on_prompt(message: str) -> None:
+        console.print(f"\n[bold cyan]{message}[/bold cyan]\nSign in as: {args.email}\n")
+
+    oauth_transport = "auto" if args.transport in ("auto", "basic") else args.transport
+    try:
+        chosen = login_account(args.email, client_id, oauth_transport, on_prompt)
+    except Exception as e:
+        console.print(f"[red]Login failed:[/red] {e}")
+        sys.exit(1)
+    console.print(f"[green]Logged in:[/green] {args.email} [dim](transport: {chosen})[/dim]")
+
+
 def cmd_cron_import(args: argparse.Namespace) -> None:
     """Import jobs from a YAML configuration file.
 
@@ -3880,6 +4000,43 @@ Use [bold]son <command> --help[/bold] for command details.
     )
     cron_clear.set_defaults(func=cmd_cron_clear)
 
+    # Mail command group (headless IMAP over OAuth — Mail.app closed)
+    mail_parser = subparsers.add_parser(
+        "mail",
+        help="Headless IMAP mail accounts (list / log in)",
+        description="Manage headless IMAP mail accounts (search/mark/trash run "
+                    "with Mail.app closed). Login is an interactive device-code flow.",
+    )
+    mail_subparsers = mail_parser.add_subparsers(dest="mail_command", metavar="SUBCOMMAND")
+
+    # mail accounts
+    mail_accounts = mail_subparsers.add_parser(
+        "accounts", help="List mail accounts and show which are working"
+    )
+    mail_accounts.add_argument(
+        "--no-probe", action="store_true",
+        help="Skip the live mailbox check (faster, status from config only)"
+    )
+    mail_accounts.set_defaults(func=cmd_mail_accounts)
+
+    # mail login
+    mail_login = mail_subparsers.add_parser(
+        "login",
+        help="Interactively log in a mailbox (device-code OAuth)",
+        description="Run the interactive device-code login for a mailbox. Run this "
+                    "in a real terminal so the code is visible. transport=auto tries "
+                    "IMAP then falls back to Microsoft Graph.",
+    )
+    mail_login.add_argument("email", help="Mailbox / sign-in address")
+    mail_login.add_argument(
+        "--client-id", help="Azure app id (defaults to MACBOT_MS_OAUTH_CLIENT_ID)"
+    )
+    mail_login.add_argument(
+        "--transport", choices=["auto", "imap", "graph", "basic"], default="auto",
+        help="Transport (default: auto — Microsoft: IMAP→Graph; Gmail/iCloud: basic app-password)"
+    )
+    mail_login.set_defaults(func=cmd_mail_login)
+
     # Memory command group
     memory_parser = subparsers.add_parser(
         "memory",
@@ -4229,6 +4386,11 @@ Examples:
     # Handle memory subcommands
     if args.command == "memory" and args.memory_command is None:
         memory_parser.print_help()
+        sys.exit(0)
+
+    # Handle mail subcommands - default to accounts when no subcommand
+    if args.command == "mail" and args.mail_command is None:
+        cmd_mail_accounts(args)
         sys.exit(0)
 
     # Handle skills subcommands - default to list when no subcommand
