@@ -36,7 +36,7 @@ For a detailed comparison with OpenClaw, see [docs/COMPARISON.md](docs/COMPARISO
 
 | App | Capabilities |
 |---|---|
-| **Mail** | Search, read, send (with attachments), archive, download attachments — all accounts |
+| **Mail** | Search, read, mark read, move to trash — directly over IMAP / Microsoft Graph, no Mail.app required (all accounts). See [Mail accounts](#mail-accounts) |
 | **Calendar** | Create events, check your schedule, find conflicts |
 | **Reminders** | Set reminders, mark done, organize lists |
 | **Notes** | Create, search, organize into folders, move, delete |
@@ -106,6 +106,26 @@ First success (safe demo prompts):
   <img src="docs/images/dashboard.png" alt="Dashboard" width="500">
 </p>
 
+## Mail accounts
+
+Mail talks to your accounts directly — IMAP, or Microsoft Graph for Exchange tenants that have turned IMAP off. This is the default and the preferred path, and it works with **Mail.app closed**.
+
+The reason is plain: driving Mail.app over AppleScript is unreliable. Every lookup is an Apple Event that costs a tenth of a second or more, large mailboxes time out, results come back inconsistent, and the whole thing only works while Mail.app is running. Going straight to the account over its own protocol is faster, predictable, and doesn't depend on a GUI app being open.
+
+Set up each account once:
+
+```bash
+son mail login you@example.com   # one-time, interactive
+son mail accounts                # shows every account and whether it works
+```
+
+- **Microsoft / Exchange** — OAuth via device code (no password stored). Uses IMAP where the tenant allows it, and falls back to Microsoft Graph where the tenant has disabled IMAP. Needs an Azure app id in `MACBOT_MS_OAUTH_CLIENT_ID`.
+- **Gmail / iCloud** — an app password (2‑Step Verification required), stored in the macOS Keychain, never on disk. `son mail login` walks you through generating one.
+
+`son mail accounts` live-probes each mailbox and shows a Working column, so you can see at a glance which accounts are ready and which still need a login.
+
+The old AppleScript-via-Mail.app email tasks still exist but are **off by default**. Turn them back on only if you specifically need something the direct path doesn't cover yet (e.g. sending with attachments) by setting `MACBOT_ENABLE_MAILAPP_TASKS=true`.
+
 ## Skills
 
 Son of Simon comes with built-in skills for Mail, Calendar, Reminders, Notes, Safari, Contacts, Messages, Things3, System Controls, Scheduled Tasks, Browser Automation, Downloads Organizer, Image Generation, and Data App Creator. Skills use the [AgentSkills standard](https://agentskills.io) — community skills from [ClawHub](https://clawhub.ai) work out of the box. See [docs/SKILLS.md](docs/SKILLS.md) for custom skills, CLI commands, and ClawHub install instructions.
@@ -127,7 +147,7 @@ Son of Simon remembers context between conversations — preferences, habits, an
 
 ## Secure by default
 
-No stored passwords — macOS Keychain handles authentication. No local gateway required — AppleScript talks to your apps directly. Your prompts go to your chosen LLM provider; nothing else leaves your Mac. See [docs/SECURITY.md](docs/SECURITY.md) for the full security model and privacy details.
+Credentials stay in the macOS Keychain — provider API keys, plus OAuth tokens and app passwords for mail — never in plaintext. Mail goes straight to your accounts over IMAP/Graph; Calendar, Reminders, Notes and the other Apple apps are driven locally on your Mac. Your prompts go to your chosen LLM provider; nothing else leaves your Mac. See [docs/SECURITY.md](docs/SECURITY.md) for the full security model and privacy details.
 
 ## Scheduled tasks
 
