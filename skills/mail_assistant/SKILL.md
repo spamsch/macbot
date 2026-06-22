@@ -1,13 +1,14 @@
 ---
 id: mail_assistant
 name: Mail Assistant
-description: Find and act on emails over IMAP with Mail.app closed. Discover which accounts are logged in, search, read contents, download attachments, mark read/unread, archive, and move to trash.
+description: Find and act on emails over IMAP with Mail.app closed. Discover which accounts are logged in, search, read contents, download attachments, draft new mail, mark read/unread, archive, and move to trash.
 apps: []
 tasks:
   - mail_imap_accounts
   - mail_imap_search
   - mail_imap_read
   - mail_imap_download_attachments
+  - mail_imap_create_draft
   - mail_imap_mark_read
   - mail_imap_move_to_trash
   - mail_imap_archive
@@ -25,12 +26,15 @@ examples:
   - "Archive the shipping confirmation from UPS"
   - "Read the latest invoice email and summarize it"
   - "Download the attachments from the email from my accountant"
+  - "Draft a reply to the landlord with the signed contract attached"
+  - "Save a draft to billing@acme.com asking for a corrected invoice"
 safe_defaults:
   limit: 25
   since_days: 7
 confirm_before_write:
   - move to trash
   - archive
+  - create draft
 requires_permissions: []
 ---
 
@@ -95,6 +99,19 @@ To save attachments, call `mail_imap_download_attachments(uid=..., email=...)`. 
 land in `~/Downloads` by default (override with `save_dir`); names are sanitized and
 de-duplicated, so nothing is overwritten. Only download when the user asks for the
 files — to merely describe what's attached, `mail_imap_read` is enough.
+
+### Drafting new mail
+`mail_imap_create_draft(to=..., subject=..., body=..., email=...)` saves a new
+message into the account's Drafts folder. It is **saved, never sent** — the user
+opens their mail client to review and send. Body is plain text by default; pass
+`html=true` only when you genuinely have HTML markup. Add `cc`/`bcc` as needed, and
+`attachments=[...]` with absolute file paths (e.g. files pulled by
+`mail_imap_download_attachments` or located via `spotlight_search`). On
+Graph-transport accounts each attachment is capped at ~3 MB.
+
+Show the user the draft you're about to save (recipients + subject + a short body
+preview) and confirm before writing it. After saving, tell them it's in Drafts and
+not yet sent.
 
 ### Actions are by uid, and confirm before trashing
 - Mark read/unread: `mail_imap_mark_read(uid=..., email=..., read=true|false)`.

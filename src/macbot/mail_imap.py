@@ -22,12 +22,15 @@ import datetime
 import html as html_lib
 import imaplib
 import json
+import mimetypes
 import re
 import sqlite3
 from dataclasses import dataclass, field
 from email.header import decode_header, make_header
+from email.message import EmailMessage
 from email.parser import BytesParser
 from email.policy import default as default_policy
+from email.utils import formatdate, make_msgid
 from pathlib import Path
 from typing import Any
 
@@ -68,14 +71,15 @@ class Provider:
     imap_port: int = 993
     trash_folder: str = ""
     archive_folder: str = ""
+    drafts_folder: str = ""
 
 
 PROVIDERS: dict[str, Provider] = {
     # Gmail's "Archive" is removing the inbox label; moving to [Gmail]/All Mail
     # achieves exactly that over IMAP (the message already lives in All Mail).
-    "microsoft": Provider("msal", ["imap", "graph"], "outlook.office365.com", 993, "Deleted Items", "Archive"),
-    "google": Provider("app_password", ["basic"], "imap.gmail.com", 993, "[Gmail]/Trash", "[Gmail]/All Mail"),
-    "icloud": Provider("app_password", ["basic"], "imap.mail.me.com", 993, "Deleted Messages", "Archive"),
+    "microsoft": Provider("msal", ["imap", "graph"], "outlook.office365.com", 993, "Deleted Items", "Archive", "Drafts"),
+    "google": Provider("app_password", ["basic"], "imap.gmail.com", 993, "[Gmail]/Trash", "[Gmail]/All Mail", "[Gmail]/Drafts"),
+    "icloud": Provider("app_password", ["basic"], "imap.mail.me.com", 993, "Deleted Messages", "Archive", "Drafts"),
 }
 
 # Graph well-known folder ids keyed by names callers tend to pass.
@@ -193,6 +197,68 @@ def _save_attachments(msg: Any, save_dir: str | None, uid: str) -> dict[str, Any
             "content_type": att.get_content_type(),
         })
     return {"uid": uid, "count": len(saved), "saved": saved, "dir": str(dest)}
+
+
+def _addr_list(value: Any) -> list[str]:
+    """Normalize an address input (None / str / list) into a clean list of addresses.
+
+    A string may hold several addresses separated by commas or semicolons.
+    """
+    if value is None:
+        return []
+    if isinstance(value, str):
+        parts = re.split(r"[,;]", value)
+    else:
+        parts = [str(v) for v in value]
+    return [p.strip() for p in parts if p and p.strip()]
+
+
+def _build_draft_message(
+    from_addr: str,
+    to: Any,
+    subject: str,
+    body: str,
+    cc: Any = None,
+    bcc: Any = None,
+    attachments: list[str] | None = None,
+    html: bool = False,
+) -> EmailMessage:
+    """Assemble an RFC-822 message (with attachments) for use as a draft.
+
+    Raises FileNotFoundError if an attachment path does not point at a file.
+    """
+    msg = EmailMessage()
+    if from_addr:
+        msg["From"] = from_addr
+    to_list, cc_list, bcc_list = _addr_list(to), _addr_list(cc), _addr_list(bcc)
+    if to_list:
+        msg["To"] = ", ".join(to_list)
+    if cc_list:
+        msg["Cc"] = ", ".join(cc_list)
+    if bcc_list:
+        msg["Bcc"] = ", ".join(bcc_list)
+    msg["Subject"] = subject or ""
+    msg["Date"] = formatdate(localtime=True)
+    msg["Message-ID"] = make_msgid()
+    if html:
+        # Keep a plain-text alternative so the draft renders everywhere.
+        msg.set_content(_strip_html(body or ""))
+        msg.add_alternative(body or "", subtype="html")
+    else:
+        msg.set_content(body or "")
+    for raw_path in attachments or []:
+        path = Path(raw_path).expanduser()
+        if not path.is_file():
+            raise FileNotFoundError(f"Attachment not found: {raw_path}")
+        ctype, _ = mimetypes.guess_type(path.name)
+        maintype, _, subtype = (ctype or "application/octet-stream").partition("/")
+        msg.add_attachment(
+            path.read_bytes(),
+            maintype=maintype,
+            subtype=subtype or "octet-stream",
+            filename=path.name,
+        )
+    return msg
 
 
 def _kc_account(email: str) -> str:
@@ -501,6 +567,14 @@ class MailClient:
             return self._graph_download_attachments(uid, save_dir)
         return self._imap_download_attachments(uid, mailbox, save_dir)
 
+    def create_draft(self, to: Any = None, subject: str = "", body: str = "",
+                     cc: Any = None, bcc: Any = None,
+                     attachments: list[str] | None = None,
+                     html: bool = False) -> dict[str, Any]:
+        if self.transport == "graph":
+            return self._graph_create_draft(to, subject, body, cc, bcc, attachments, html)
+        return self._imap_create_draft(to, subject, body, cc, bcc, attachments, html)
+
     # --- IMAP transport (XOAUTH2 or app-password LOGIN) ----------------------
 
     def _imap_connect(self) -> imaplib.IMAP4_SSL:
@@ -671,6 +745,34 @@ class MailClient:
         msg = self._imap_fetch_message(uid, mailbox)
         return {**_save_attachments(msg, save_dir, uid), "transport": self.transport}
 
+    def _imap_create_draft(self, to: Any, subject: str, body: str, cc: Any,
+                           bcc: Any, attachments: list[str] | None,
+                           html: bool) -> dict[str, Any]:
+        dest = self.provider.drafts_folder
+        if not dest:
+            raise RuntimeError(f"No drafts folder configured for '{self.email}'.")
+        msg = _build_draft_message(self.email, to, subject, body, cc, bcc, attachments, html)
+        raw = msg.as_bytes()
+        imap = self._imap_connect()
+        try:
+            # APPEND into the Drafts folder, flagged \Draft (and \Seen so it isn't
+            # counted unread). imaplib stamps the internal date when date is None.
+            typ, data = imap.append(_quote(dest), r"(\Draft \Seen)", None, raw)
+            if typ != "OK":
+                raise RuntimeError(f"APPEND to {dest} failed: {data}")
+            return {
+                "ok": True,
+                "transport": self.transport,
+                "folder": dest,
+                "to": _addr_list(to),
+                "cc": _addr_list(cc),
+                "subject": subject or "",
+                "attachments": [Path(a).name for a in (attachments or [])],
+                "size": len(raw),
+            }
+        finally:
+            self._imap_logout(imap)
+
     @staticmethod
     def _imap_logout(imap: imaplib.IMAP4_SSL) -> None:
         try:
@@ -816,6 +918,63 @@ class MailClient:
                 })
         return {"uid": uid, "transport": "graph", "count": len(saved),
                 "saved": saved, "dir": str(dest)}
+
+    def _graph_create_draft(self, to: Any, subject: str, body: str, cc: Any,
+                            bcc: Any, attachments: list[str] | None,
+                            html: bool) -> dict[str, Any]:
+        def _recips(value: Any) -> list[dict[str, Any]]:
+            return [{"emailAddress": {"address": a}} for a in _addr_list(value)]
+
+        payload: dict[str, Any] = {
+            "subject": subject or "",
+            "body": {"contentType": "HTML" if html else "Text", "content": body or ""},
+            "toRecipients": _recips(to),
+        }
+        if _addr_list(cc):
+            payload["ccRecipients"] = _recips(cc)
+        if _addr_list(bcc):
+            payload["bccRecipients"] = _recips(bcc)
+        # Read attachments up front so a bad path fails before the draft is created.
+        files: list[tuple[str, bytes, str]] = []
+        for raw_path in attachments or []:
+            path = Path(raw_path).expanduser()
+            if not path.is_file():
+                raise FileNotFoundError(f"Attachment not found: {raw_path}")
+            data = path.read_bytes()
+            if len(data) > 3_000_000:
+                raise ValueError(
+                    f"Attachment '{path.name}' is {len(data) // 1_000_000} MB; the Graph "
+                    "draft path only supports attachments up to ~3 MB."
+                )
+            ctype, _ = mimetypes.guess_type(path.name)
+            files.append((path.name, data, ctype or "application/octet-stream"))
+        with self._graph() as c:
+            r = c.post("/me/messages", json=payload)
+            r.raise_for_status()
+            msg = r.json()
+            new_id = msg.get("id")
+            for name, data, ctype in files:
+                ar = c.post(
+                    f"/me/messages/{new_id}/attachments",
+                    json={
+                        "@odata.type": "#microsoft.graph.fileAttachment",
+                        "name": name,
+                        "contentType": ctype,
+                        "contentBytes": base64.b64encode(data).decode("ascii"),
+                    },
+                )
+                ar.raise_for_status()
+            return {
+                "ok": True,
+                "transport": "graph",
+                "uid": new_id,
+                "folder": "drafts",
+                "to": _addr_list(to),
+                "cc": _addr_list(cc),
+                "subject": subject or "",
+                "attachments": [f[0] for f in files],
+                "web_link": msg.get("webLink"),
+            }
 
 
 # Back-compat alias (old name).

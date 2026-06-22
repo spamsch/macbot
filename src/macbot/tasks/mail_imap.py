@@ -366,6 +366,57 @@ class MailImapDownloadAttachmentsTask(Task):
             return {"success": False, "error": f"Download failed: {e}"}
 
 
+class MailImapCreateDraftTask(Task):
+    """Create a draft email (text + optional attachments) over IMAP/Graph."""
+
+    @property
+    def name(self) -> str:
+        return "mail_imap_create_draft"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Create a draft email in the account's Drafts folder over IMAP (or "
+            "Microsoft Graph), with Mail.app closed. The draft is saved, NOT sent — "
+            "the user finishes and sends it from their mail client. Supply 'to' "
+            "(recipient address, or several comma-separated), 'subject', and 'body' "
+            "(plain text by default; set html=true to pass an HTML body). 'cc'/'bcc' "
+            "are optional. 'attachments' is a list of absolute file paths to attach "
+            "(e.g. from mail_imap_download_attachments or spotlight_search). If email "
+            "is omitted and exactly one account is configured, it is used. Graph-"
+            "transport accounts cap attachments at ~3 MB each."
+        )
+
+    async def execute(
+        self,
+        to: str,
+        subject: str = "",
+        body: str = "",
+        email: str | None = None,
+        cc: str | None = None,
+        bcc: str | None = None,
+        attachments: list[str] | None = None,
+        html: bool = False,
+    ) -> dict[str, Any]:
+        from macbot.mail_imap import MailImapClient, NotLoggedInError
+
+        resolved = _resolve(email)
+        if isinstance(resolved, dict):
+            return resolved
+        client = MailImapClient(resolved)
+        try:
+            result = await asyncio.to_thread(
+                client.create_draft, to, subject, body, cc, bcc, attachments, html
+            )
+            return {"success": result.get("ok", False), "email": resolved, **result}
+        except NotLoggedInError as e:
+            return {"success": False, "error": str(e), "needs_login": True}
+        except FileNotFoundError as e:
+            return {"success": False, "error": str(e)}
+        except Exception as e:
+            return {"success": False, "error": f"Create draft failed: {e}"}
+
+
 def register_mail_imap_tasks(registry) -> None:  # type: ignore[no-untyped-def]
     """Register headless IMAP mail tasks with a registry."""
     registry.register(MailImapAccountsTask())
@@ -376,3 +427,4 @@ def register_mail_imap_tasks(registry) -> None:  # type: ignore[no-untyped-def]
     registry.register(MailImapArchiveTask())
     registry.register(MailImapReadTask())
     registry.register(MailImapDownloadAttachmentsTask())
+    registry.register(MailImapCreateDraftTask())
