@@ -2881,6 +2881,76 @@ def cmd_memory_clear(args: argparse.Namespace) -> None:
     console.print(f"[green]Cleared all memory ({result['total']} records)[/green]")
 
 
+def cmd_memory_maintain(args: argparse.Namespace) -> None:
+    """Run the memory maintenance (sleep) pass now."""
+    import asyncio
+
+    from macbot.memory import run_maintenance
+
+    console.print("[dim]Running memory maintenance (distill → merge → expire → prune)…[/dim]")
+    report = asyncio.run(run_maintenance())
+    console.print("\n[bold green]Memory maintenance complete[/bold green]")
+    console.print(f"  Turns seen:      {report['turns_seen']}")
+    console.print(f"  Insights stored: {report['distilled']}")
+    console.print(f"  Duplicates merged: {report['merged']}")
+    console.print(f"  Stale expired:   {report['expired']}")
+    console.print(f"  Old turns pruned: {report['pruned']}")
+    if report["errors"]:
+        console.print(f"[yellow]  Errors: {', '.join(report['errors'])}[/yellow]")
+
+
+def cmd_memory_list(args: argparse.Namespace) -> None:
+    """List stored knowledge memory (lessons, preferences, facts)."""
+    from macbot.memory import KnowledgeMemory
+
+    knowledge = KnowledgeMemory()
+    data = knowledge.get_all()
+
+    def _meta(item: dict) -> str:
+        dom = ", ".join(item.get("domain") or []) or "general"
+        return f"[dim](#{dom}, imp {item.get('importance', 3)}, {item.get('source', 'auto')})[/dim]"
+
+    lessons = data.get("lessons_learned", [])
+    prefs = data.get("user_preferences", [])
+    facts = data.get("user_facts", [])
+
+    console.print(f"\n[bold]Knowledge Memory[/bold] [dim]({knowledge.path})[/dim]\n")
+    if lessons:
+        console.print("[bold]Lessons[/bold]")
+        for it in lessons:
+            console.print(f"  • {it.get('topic')}: {it.get('lesson')} {_meta(it)}")
+    if prefs:
+        console.print("\n[bold]Preferences[/bold]")
+        for it in prefs:
+            console.print(f"  • {it.get('category')}: {it.get('preference')} {_meta(it)}")
+    if facts:
+        console.print("\n[bold]Facts[/bold]")
+        for it in facts:
+            console.print(f"  • {it.get('fact')} {_meta(it)}")
+    if not (lessons or prefs or facts):
+        console.print("[dim]No knowledge stored yet.[/dim]")
+
+
+def cmd_memory_search(args: argparse.Namespace) -> None:
+    """Search knowledge memory by topic."""
+    from macbot.memory import KnowledgeMemory
+
+    knowledge = KnowledgeMemory()
+    results = knowledge.search(args.query, domain=args.domain, limit=args.limit)
+    console.print(f"\n[bold]Search:[/bold] {args.query} [dim]({len(results)} results)[/dim]\n")
+    if not results:
+        console.print("[dim]No matches.[/dim]")
+        return
+    for r in results:
+        dom = ", ".join(r.get("domain") or []) or "general"
+        label = r.get("topic") or r.get("category") or ""
+        prefix = f"{label}: " if label else ""
+        console.print(
+            f"  • {prefix}{r['text']} "
+            f"[dim](#{dom}, imp {r['importance']}, score {r['score']:.0f})[/dim]"
+        )
+
+
 # Skills commands
 def cmd_skills_list(args: argparse.Namespace) -> None:
     """List all registered skills."""
@@ -4156,6 +4226,39 @@ Example:
         help="Skip confirmation"
     )
     memory_clear.set_defaults(func=cmd_memory_clear)
+
+    # memory maintain
+    memory_maintain = memory_subparsers.add_parser(
+        "maintain",
+        help="Run the memory maintenance (sleep) pass now",
+        description="Distill recent turns into knowledge memory, merge duplicates, "
+                    "expire stale memories, and prune the old episodic log.",
+    )
+    memory_maintain.set_defaults(func=cmd_memory_maintain)
+
+    # memory list
+    memory_list = memory_subparsers.add_parser(
+        "list",
+        help="List stored knowledge (lessons, preferences, facts)",
+        description="Show all stored knowledge memory with domain and importance.",
+    )
+    memory_list.set_defaults(func=cmd_memory_list)
+
+    # memory search
+    memory_search = memory_subparsers.add_parser(
+        "search",
+        help="Search knowledge memory by topic",
+        description="Find stored memories relevant to a topic (e.g. 'finances').",
+    )
+    memory_search.add_argument("query", help="What to search for")
+    memory_search.add_argument(
+        "--domain", default=None,
+        help="Bias toward a domain (finances, mail, calendar, documents, health, travel, coding, contacts)",
+    )
+    memory_search.add_argument(
+        "--limit", type=int, default=10, help="Max results (default: 10)",
+    )
+    memory_search.set_defaults(func=cmd_memory_search)
 
     # Skills command group
     skills_parser = subparsers.add_parser(

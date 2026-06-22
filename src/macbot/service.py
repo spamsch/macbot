@@ -384,6 +384,27 @@ class MacbotService:
             True if cron has enabled jobs, False otherwise
         """
         self.cron_service = CronService(storage_path=settings.get_cron_storage_path())
+
+        # Seed the nightly memory maintenance ("sleep") job once. Done before the
+        # enabled-jobs check so the cron loop starts even when it's the only job.
+        self._seed_memory_maintenance_job()
+
+        # Register the memory maintenance handler regardless of other jobs.
+        async def memory_maintenance_handler(payload: CronPayload):
+            from macbot.cron.executor import ExecutionResult
+            from macbot.memory import run_maintenance
+            try:
+                timestamp = datetime.now().strftime("%H:%M:%S")
+                self._console.print(f"\n[{timestamp}] 🌙 Memory maintenance running…")
+                report = await run_maintenance(config=settings)
+                logger.info("Cron: memory maintenance done: %s", report)
+                return ExecutionResult(success=True, output=str(report))
+            except Exception as e:
+                logger.error(f"Cron: memory maintenance error - {e}")
+                return ExecutionResult(success=False, error=str(e))
+
+        self.cron_service.set_handler("memory_maintenance", memory_maintenance_handler)
+
         jobs = self.cron_service.list_jobs()
         enabled_jobs = [j for j in jobs if j.enabled]
 
@@ -410,6 +431,31 @@ class MacbotService:
 
         self.cron_service.set_agent_handler(agent_handler)
         return True
+
+    _MAINTENANCE_JOB_NAME = "Memory maintenance (sleep)"
+
+    def _seed_memory_maintenance_job(self) -> None:
+        """Create the nightly memory maintenance job if it doesn't exist yet."""
+        if not self.cron_service:
+            return
+        cron_expr = (settings.memory_maintenance_cron or "").strip()
+        if not cron_expr:
+            return  # explicitly disabled
+        existing = any(
+            j.name == self._MAINTENANCE_JOB_NAME for j in self.cron_service.list_jobs()
+        )
+        if existing:
+            return
+        try:
+            self.cron_service.schedule_cron(
+                name=self._MAINTENANCE_JOB_NAME,
+                cron_expr=cron_expr,
+                message="Consolidate recent turns into memory and tidy the store.",
+                kind="memory_maintenance",
+            )
+            logger.info("Seeded nightly memory maintenance job (%s)", cron_expr)
+        except Exception as e:  # noqa: BLE001 - never block service startup
+            logger.warning("Could not seed memory maintenance job: %s", e)
 
     def _setup_telegram(self) -> bool:
         """Set up the Telegram service.

@@ -265,18 +265,28 @@ class MemoryAddLessonTask(Task):
             "If a lesson with the same topic exists, it will be updated."
         )
 
-    async def execute(self, topic: str, lesson: str) -> dict[str, Any]:
+    async def execute(
+        self,
+        topic: str,
+        lesson: str,
+        domain: str = "",
+        importance: int = 3,
+    ) -> dict[str, Any]:
         """Add a lesson learned.
 
         Args:
             topic: Short topic identifier (e.g., "React inputs", "Booking.com automation")
             lesson: The lesson content describing what was learned
+            domain: Coarse area this belongs to (finances, mail, calendar, documents,
+                health, travel, coding, contacts, general). Helps scoped recall.
+            importance: 1-5; 5 = essential and permanent. Lower-importance auto
+                lessons may be expired during cleanup.
 
         Returns:
             Dictionary with result
         """
         knowledge = get_knowledge()
-        knowledge.add_lesson(topic, lesson)
+        knowledge.add_lesson(topic, lesson, domain=domain or None, importance=importance)
         return {
             "success": True,
             "topic": topic,
@@ -300,18 +310,29 @@ class MemorySetPreferenceTask(Task):
             "Replaces any existing preference in the same category."
         )
 
-    async def execute(self, category: str, preference: str) -> dict[str, Any]:
+    async def execute(
+        self,
+        category: str,
+        preference: str,
+        domain: str = "",
+        importance: int = 3,
+    ) -> dict[str, Any]:
         """Set a user preference.
 
         Args:
             category: Category of preference (e.g., "output", "hotels", "communication")
             preference: The preference description
+            domain: Coarse area this belongs to (finances, mail, calendar, documents,
+                health, travel, coding, contacts, general). Helps scoped recall.
+            importance: 1-5; 5 = essential and permanent.
 
         Returns:
             Dictionary with result
         """
         knowledge = get_knowledge()
-        knowledge.set_preference(category, preference)
+        knowledge.set_preference(
+            category, preference, domain=domain or None, importance=importance,
+        )
         return {
             "success": True,
             "category": category,
@@ -335,17 +356,25 @@ class MemoryAddFactTask(Task):
             "location, language, time zone, etc. Skips if the exact fact already exists."
         )
 
-    async def execute(self, fact: str) -> dict[str, Any]:
+    async def execute(
+        self,
+        fact: str,
+        domain: str = "",
+        importance: int = 3,
+    ) -> dict[str, Any]:
         """Add a user fact.
 
         Args:
             fact: The fact to remember (e.g., "Lives in Germany", "Prefers metric units")
+            domain: Coarse area this belongs to (finances, mail, calendar, documents,
+                health, travel, coding, contacts, general). Helps scoped recall.
+            importance: 1-5; 5 = essential and permanent.
 
         Returns:
             Dictionary with result
         """
         knowledge = get_knowledge()
-        knowledge.add_fact(fact)
+        knowledge.add_fact(fact, domain=domain or None, importance=importance)
         return {
             "success": True,
             "fact": fact,
@@ -457,6 +486,75 @@ class MemoryRemoveLessonTask(Task):
         }
 
 
+class MemorySearchTask(Task):
+    """Search knowledge memory for items relevant to a topic."""
+
+    @property
+    def name(self) -> str:
+        return "memory_search"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Search stored knowledge (lessons, preferences, facts) for items "
+            "relevant to a topic — e.g. 'finances', 'how the user likes email replies'. "
+            "Relevant memories are already injected each turn; use this when you need "
+            "to pull more on a specific subject."
+        )
+
+    async def execute(
+        self,
+        query: str,
+        domain: str = "",
+        limit: int = 10,
+    ) -> dict[str, Any]:
+        """Search knowledge memory.
+
+        Args:
+            query: What to look for (topic, keywords).
+            domain: Optional domain to bias toward (finances, mail, etc.).
+            limit: Maximum number of results.
+
+        Returns:
+            Dictionary with matching memory items.
+        """
+        knowledge = get_knowledge()
+        results = knowledge.search(query, domain=domain or None, limit=limit)
+        return {
+            "success": True,
+            "query": query,
+            "count": len(results),
+            "results": results,
+        }
+
+
+class RunMemoryMaintenanceTask(Task):
+    """Run memory consolidation/cleanup on demand."""
+
+    @property
+    def name(self) -> str:
+        return "run_memory_maintenance"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Run the memory maintenance (sleep) pass now: distill recent turns into "
+            "durable knowledge, merge duplicates, and expire stale memories. "
+            "Normally runs automatically overnight; use this to trigger it manually."
+        )
+
+    async def execute(self) -> dict[str, Any]:
+        """Run the maintenance pass.
+
+        Returns:
+            Dictionary with the maintenance report (counts).
+        """
+        from macbot.memory import run_maintenance
+
+        report = await run_maintenance()
+        return {"success": True, "report": report}
+
+
 def register_memory_tasks(registry) -> None:
     """Register all memory tasks with a registry.
 
@@ -477,3 +575,5 @@ def register_memory_tasks(registry) -> None:
     registry.register(MemoryAddFactTask())
     registry.register(MemoryListTask())
     registry.register(MemoryRemoveLessonTask())
+    registry.register(MemorySearchTask())
+    registry.register(RunMemoryMaintenanceTask())

@@ -81,7 +81,7 @@ class CronPayload(BaseModel):
         channel: Target channel for delivery.
     """
 
-    kind: Literal["system_event", "agent_turn"] = Field(
+    kind: Literal["system_event", "agent_turn", "memory_maintenance"] = Field(
         default="agent_turn",
         description="Type of payload"
     )

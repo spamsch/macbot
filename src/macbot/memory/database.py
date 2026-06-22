@@ -4,6 +4,7 @@ Tracks what the agent has done across sessions - processed emails,
 created reminders, and other actions.
 """
 
+import json
 import sqlite3
 from datetime import datetime
 from pathlib import Path
@@ -71,6 +72,24 @@ class AgentMemory:
                 );
                 CREATE INDEX IF NOT EXISTS idx_files_written_at ON files_written(written_at);
                 CREATE INDEX IF NOT EXISTS idx_files_filename ON files_written(filename);
+
+                -- Episodic log of agent turns (auto-captured). The nightly
+                -- maintenance job distills un-consolidated rows into knowledge
+                -- memory, then marks them consolidated.
+                CREATE TABLE IF NOT EXISTS turns (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    ts TEXT DEFAULT CURRENT_TIMESTAMP,
+                    goal TEXT,
+                    domain TEXT,
+                    tools_used TEXT,        -- JSON array of tool names
+                    outcome TEXT,           -- 'success' | 'error' | 'partial'
+                    summary TEXT,
+                    model TEXT,
+                    tokens INTEGER DEFAULT 0,
+                    consolidated INTEGER DEFAULT 0
+                );
+                CREATE INDEX IF NOT EXISTS idx_turns_ts ON turns(ts);
+                CREATE INDEX IF NOT EXISTS idx_turns_consolidated ON turns(consolidated);
             """)
 
     # =========================================================================
@@ -332,6 +351,114 @@ class AgentMemory:
         return self.search_files_written(limit=limit)
 
     # =========================================================================
+    # Turn log (episodic capture)
+    # =========================================================================
+
+    def record_turn(
+        self,
+        goal: str,
+        domain: str = "general",
+        tools_used: list[str] | None = None,
+        outcome: str = "success",
+        summary: str = "",
+        model: str = "",
+        tokens: int = 0,
+    ) -> int:
+        """Record a single agent turn for later consolidation.
+
+        Args:
+            goal: The user goal/message that started the turn.
+            domain: Coarse domain tag (see memory.tagging).
+            tools_used: Tool names invoked during the turn.
+            outcome: 'success', 'error', or 'partial'.
+            summary: Short summary of the result (truncated final response).
+            model: Model that handled the turn.
+            tokens: Total tokens (input + output) spent on the turn.
+
+        Returns:
+            ID of the created record.
+        """
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute(
+                """INSERT INTO turns
+                   (goal, domain, tools_used, outcome, summary, model, tokens)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    goal,
+                    domain,
+                    json.dumps(tools_used or []),
+                    outcome,
+                    summary,
+                    model,
+                    tokens,
+                ),
+            )
+            return cursor.lastrowid or 0
+
+    def get_unconsolidated_turns(self, limit: int = 200) -> list[dict[str, Any]]:
+        """Get turns not yet folded into knowledge memory (oldest first).
+
+        Args:
+            limit: Maximum number of rows to return.
+
+        Returns:
+            List of turn records with ``tools_used`` decoded to a list.
+        """
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.execute(
+                """SELECT * FROM turns WHERE consolidated = 0
+                   ORDER BY ts ASC LIMIT ?""",
+                (limit,),
+            )
+            return [self._decode_turn(row) for row in cursor.fetchall()]
+
+    def get_recent_turns(
+        self, limit: int = 20, days: int | None = None
+    ) -> list[dict[str, Any]]:
+        """Get the most recent turns (newest first), for inspection/CLI."""
+        query = "SELECT * FROM turns WHERE 1=1"
+        params: list[Any] = []
+        if days:
+            query += " AND ts >= datetime('now', ?)"
+            params.append(f"-{days} days")
+        query += " ORDER BY ts DESC LIMIT ?"
+        params.append(limit)
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.execute(query, params)
+            return [self._decode_turn(row) for row in cursor.fetchall()]
+
+    def mark_turns_consolidated(self, turn_ids: list[int]) -> int:
+        """Mark turns as consolidated so they aren't distilled again.
+
+        Args:
+            turn_ids: IDs of turns to mark.
+
+        Returns:
+            Number of rows updated.
+        """
+        if not turn_ids:
+            return 0
+        placeholders = ",".join("?" * len(turn_ids))
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute(
+                f"UPDATE turns SET consolidated = 1 WHERE id IN ({placeholders})",
+                turn_ids,
+            )
+            return cursor.rowcount
+
+    @staticmethod
+    def _decode_turn(row: sqlite3.Row) -> dict[str, Any]:
+        """Convert a turns row to a dict, decoding the tools_used JSON."""
+        rec = dict(row)
+        try:
+            rec["tools_used"] = json.loads(rec.get("tools_used") or "[]")
+        except (json.JSONDecodeError, TypeError):
+            rec["tools_used"] = []
+        return rec
+
+    # =========================================================================
     # Summary / Stats
     # =========================================================================
 
@@ -401,7 +528,16 @@ class AgentMemory:
             )
             reminders_deleted = cursor.rowcount
 
-            return emails_deleted + reminders_deleted
+            # Only prune turns already folded into knowledge memory, so an
+            # un-run maintenance job never silently loses raw turns.
+            cursor = conn.execute(
+                """DELETE FROM turns
+                   WHERE consolidated = 1 AND ts < datetime('now', ?)""",
+                (f"-{days} days",)
+            )
+            turns_deleted = cursor.rowcount
+
+            return emails_deleted + reminders_deleted + turns_deleted
 
     def clear_recent_records(self, hours: int = 0, minutes: int = 0) -> dict[str, int]:
         """Clear records newer than specified time ago.

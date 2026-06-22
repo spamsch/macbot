@@ -253,6 +253,28 @@ Before starting a task, check `get_agent_memory` to see recent context and avoid
         description="Whether the cron service is enabled",
     )
 
+    # Memory settings
+    memory_auto_capture: bool = Field(
+        default=True,
+        description="Auto-record every agent turn to the episodic log for later consolidation",
+    )
+    memory_maintenance_cron: str = Field(
+        default="0 3 * * *",
+        description="Cron expression for the nightly memory maintenance (sleep) run",
+    )
+    memory_retention_days: int = Field(
+        default=90,
+        description="Age (days) after which consolidated turns and stale low-value memories are pruned",
+    )
+    memory_recall_top_k: int = Field(
+        default=12,
+        description="Max number of relevant knowledge-memory items injected into the prompt per turn",
+    )
+    memory_default_importance: int = Field(
+        default=3,
+        description="Default importance (1-5) for memories saved without an explicit value",
+    )
+
     # Followup Queue settings
     followup_queue_mode: str = Field(
         default="collect",
@@ -283,6 +305,15 @@ Before starting a task, check `get_agent_memory` to see recent context and avoid
     telegram_allowed_users: list[str] = Field(
         default_factory=list,
         description="List of allowed Telegram user IDs (empty = allow all)",
+    )
+    telegram_summarize: bool = Field(
+        default=False,
+        description="Summarize long Telegram replies via the LLM instead of sending them in full. "
+                    "Off by default — full responses are sent, split across multiple messages when needed.",
+    )
+    telegram_summary_threshold: int = Field(
+        default=3500,
+        description="When telegram_summarize is on, only condense replies longer than this many characters.",
     )
 
     # Paperless-ngx settings

@@ -83,6 +83,10 @@ class Agent:
         self._interaction_input_tokens = 0
         self._interaction_output_tokens = 0
 
+        # Per-turn capture state (used by episodic memory)
+        self._current_goal_text: str = ""
+        self._turn_tool_names: list[str] = []
+
     def _create_provider(self) -> LLMProvider:
         """Create an LLM provider based on configuration.
 
@@ -106,7 +110,7 @@ class Agent:
                 engine = RoutingEngine(
                     skills_registry=self.skills_registry,
                 )
-                if engine.has_routes:
+                if engine.active:
                     logger.info("Hybrid routing enabled with %d route(s)", len(engine.config.routes))
                     return engine
         except Exception as e:
@@ -229,6 +233,8 @@ class Agent:
         # cap (OpenAI hard-rejects >128 tools); dropped skills stay reachable
         # via request_tools.
         goal_text = goal if isinstance(goal, str) else Message(role="user", content=goal).content_text
+        self._current_goal_text = goal_text or ""
+        self._turn_tool_names = []
         relevant = self.skills_registry.get_relevant_skills(goal_text or "")
         all_enabled = self.skills_registry.list_enabled_skills()
         fitted = self._fit_skills_to_tool_budget(relevant)
@@ -255,7 +261,7 @@ class Agent:
         # the whole turn (escalate-only afterwards) so the model never
         # flip-flops. decide() always considers the base model, so a previous
         # turn's escalation is reset here when this turn doesn't warrant it.
-        if not self._disable_routing and self._routing_engine is not None and self._routing_engine.has_routes:
+        if not self._disable_routing and self._routing_engine is not None and self._routing_engine.active:
             skill_ids = [s.id for s in relevant]
             decided = self._routing_engine.decide(goal_text or "", skill_ids, self.config.get_model())
             if decided and decided != self._current_model:
@@ -358,6 +364,7 @@ class Agent:
                                     console.print(f"{dim_prefix}{ts}[/dim]")
                                 else:
                                     console.print(f"[dim]          {ts}[/dim]")
+                self._turn_tool_names.extend(tc.name for tc in response.tool_calls)
                 await self._execute_tool_calls(
                     response, verbose, on_event=on_event, on_status=on_status,
                 )
@@ -369,11 +376,42 @@ class Agent:
                 final_content = self._strip_thinking(response.content) if response.content else response.content
                 # Store the final response so multi-turn conversations include it
                 self.messages.append(Message(role="assistant", content=final_content))
+                self._capture_turn("success", final_content)
                 self._restore_model()
                 return final_content or "Task completed."
 
+        self._capture_turn("partial", None)
         self._restore_model()
         return f"Reached maximum iterations ({self.config.max_iterations}) without completing the goal. Increase MACBOT_MAX_ITERATIONS to allow more steps."
+
+    def _capture_turn(self, outcome: str, final_text: str | None) -> None:
+        """Record this turn to the episodic log for later consolidation.
+
+        Best-effort and read-cheap: no LLM call here — distillation into
+        knowledge memory happens in the nightly maintenance job. Never lets a
+        capture failure break the turn.
+        """
+        if not self.config.memory_auto_capture:
+            return
+        goal = self._current_goal_text
+        if not goal:
+            return
+        try:
+            from macbot.memory.tagging import tag_domain
+            from macbot.tasks.memory import get_memory
+
+            tools = list(dict.fromkeys(self._turn_tool_names))  # dedupe, keep order
+            get_memory().record_turn(
+                goal=goal,
+                domain=tag_domain(goal),
+                tools_used=tools,
+                outcome=outcome,
+                summary=(final_text or "")[:300],
+                model=self._interaction_model,
+                tokens=self._interaction_input_tokens + self._interaction_output_tokens,
+            )
+        except Exception as e:  # noqa: BLE001 - capture must never break a turn
+            logger.debug("Turn capture failed: %s", e)
 
     def _restore_model(self) -> None:
         """Restore the original model/provider after a model_override run."""
@@ -453,7 +491,10 @@ class Agent:
         # Load knowledge memory if it exists
         from macbot.memory import KnowledgeMemory
         knowledge = KnowledgeMemory()
-        memory_text = knowledge.format_for_prompt()
+        memory_text = knowledge.format_for_prompt(
+            query=self._current_goal_text,
+            top_k=self.config.memory_recall_top_k,
+        )
         if memory_text:
             prompt_parts.append("\n" + memory_text)
 
@@ -488,7 +529,9 @@ class Agent:
 
         from macbot.memory import KnowledgeMemory
         knowledge = KnowledgeMemory()
-        memory_text = knowledge.format_for_prompt(max_items=10)
+        memory_text = knowledge.format_for_prompt(
+            query=self._current_goal_text, top_k=10, max_items=10,
+        )
         if memory_text:
             prompt_parts.append("\n" + memory_text)
 
@@ -511,7 +554,9 @@ class Agent:
 
         from macbot.memory import KnowledgeMemory
         knowledge = KnowledgeMemory()
-        memory_text = knowledge.format_for_prompt(max_items=3)
+        memory_text = knowledge.format_for_prompt(
+            query=self._current_goal_text, top_k=3, max_items=3,
+        )
         if memory_text:
             prompt_parts.append("\n" + memory_text)
 
@@ -548,11 +593,17 @@ You have a persistent memory to track what you've done. USE IT to avoid duplicat
 ## Knowledge Memory Management
 
 You can store and retrieve persistent knowledge:
-- `memory_add_lesson(topic, lesson)` - Remember a technique or important discovery
-- `memory_set_preference(category, preference)` - Store how the user likes things done
-- `memory_add_fact(fact)` - Remember personal information about the user
+- `memory_add_lesson(topic, lesson, domain, importance)` - Remember a technique or discovery
+- `memory_set_preference(category, preference, domain, importance)` - Store how the user likes things done
+- `memory_add_fact(fact, domain, importance)` - Remember personal information about the user
+- `memory_search(query, domain)` - Pull memories relevant to a topic (e.g. "finances")
 - `memory_list()` - See all stored knowledge
 - `memory_remove_lesson(topic)` - Remove an outdated lesson
+
+When saving, set `domain` (finances, mail, calendar, documents, health, travel,
+coding, contacts, or general) and `importance` (1-5; 5 = essential and permanent)
+so the memory surfaces at the right time and survives cleanup. Relevant memories
+are injected automatically each turn; use `memory_search` when you need more.
 
 Use these when:
 - The user explicitly asks you to remember something
@@ -613,6 +664,8 @@ When an email, document, or conversation implies that information is available o
         "memory_set_preference",
         "memory_add_fact",
         "memory_list",
+        "memory_search",
+        "run_memory_maintenance",
         "search_files_written",
         "memory_remove_lesson",
         # Internal plumbing

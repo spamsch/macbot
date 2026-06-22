@@ -382,6 +382,14 @@ class CronService:
         """
         self._executor.set_handler("agent_turn", handler)
 
+    def set_handler(
+        self,
+        payload_kind: str,
+        handler: Callable[[CronPayload], Awaitable[ExecutionResult]],
+    ) -> None:
+        """Register a handler for an arbitrary payload kind (e.g. memory_maintenance)."""
+        self._executor.set_handler(payload_kind, handler)
+
     # Convenience methods for quick job creation
 
     def schedule_at(
