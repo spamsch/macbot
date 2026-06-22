@@ -107,6 +107,69 @@ async def _resolve_tags(tags: list[int | str] | str) -> list[int]:
     return resolved
 
 
+def _blank_to_none(value: Any) -> Any:
+    """Treat empty/whitespace-only strings as 'unset' so they don't clobber metadata.
+
+    The LLM tends to fill unused optional parameters with empty placeholders
+    (title="", created=""). Those must mean "leave unchanged", never "set to empty".
+    """
+    if isinstance(value, str) and not value.strip():
+        return None
+    return value
+
+
+def _normalize_custom_fields(value: Any) -> list[dict[str, Any]] | None:
+    """Coerce assorted custom_fields shapes into Paperless's [{"field": id, "value": v}] list.
+
+    Accepts:
+      - a list of dicts (passed through, normalized)
+      - a list of JSON strings, e.g. ['{"field":1,"value":"EUR89.99"}']
+      - a single JSON string holding a list or one object
+      - a single dict
+
+    Returns None on unparseable input so the caller can surface an error.
+    """
+    import json
+
+    if value is None:
+        return None
+
+    # Whole value as JSON string: '[{...}]' or '{...}'
+    if isinstance(value, str):
+        stripped = value.strip()
+        if not stripped:
+            return []
+        try:
+            value = json.loads(stripped)
+        except (json.JSONDecodeError, ValueError):
+            return None
+
+    # Single dict → wrap
+    if isinstance(value, dict):
+        value = [value]
+
+    if not isinstance(value, list):
+        return None
+
+    normalized: list[dict[str, Any]] = []
+    for item in value:
+        # Element passed as a JSON string, e.g. '{"field":1,"value":"EUR89.99"}'
+        if isinstance(item, str):
+            try:
+                item = json.loads(item)
+            except (json.JSONDecodeError, ValueError):
+                return None
+        if not isinstance(item, dict) or "field" not in item:
+            return None
+        field = item["field"]
+        try:
+            field = int(field)
+        except (TypeError, ValueError):
+            return None
+        normalized.append({"field": field, "value": item.get("value")})
+    return normalized
+
+
 async def _resolve_resource(
     value: Any, endpoint: str
 ) -> int | None:
@@ -361,12 +424,14 @@ class PaperlessUpdateDocumentTask(Task):
     @property
     def description(self) -> str:
         return (
-            "Update a document's metadata in Paperless-ngx. "
-            "Can change title, created date, tags (list of tag IDs or names — replaces all tags), "
-            "correspondent, document type, and custom fields. "
-            "For custom_fields pass a list of dicts: [{\"field\": <field_id>, \"value\": <value>}]. "
-            "Pass an empty list [] to clear custom fields. "
-            "For created, use ISO format: '2023-07-12'."
+            "Update a document's metadata in Paperless-ngx. This is a partial update: "
+            "ONLY pass the fields you want to change. Omit (or leave empty) every field you "
+            "want to keep — empty values are ignored and never overwrite existing data. "
+            "Fields: title, created date ('2023-07-12'), tags (list of tag IDs or names — "
+            "replaces ALL tags), correspondent, document type, custom_fields. "
+            "For custom_fields pass a list of dicts: [{\"field\": <field_id>, \"value\": <value>}] "
+            "(monetary values look like \"EUR89.99\"). "
+            "To actually erase data, set clear_tags=true or clear_custom_fields=true."
         )
 
     async def execute(
@@ -378,17 +443,24 @@ class PaperlessUpdateDocumentTask(Task):
         correspondent: int | str | None = None,
         document_type: int | str | None = None,
         custom_fields: list[dict[str, Any]] | str | None = None,
+        clear_tags: bool = False,
+        clear_custom_fields: bool = False,
     ) -> dict[str, Any]:
-        """Update document metadata.
+        """Update document metadata (partial — only provided fields change).
+
+        Empty strings and empty lists are treated as "leave unchanged" so they can
+        never accidentally wipe existing metadata. Use the explicit clear_* flags to erase.
 
         Args:
             document_id: The document ID to update.
-            title: New title (unchanged if not provided).
-            created: New created date in ISO format, e.g. '2023-07-12' (unchanged if not provided).
-            tags: New list of tag IDs or names (replaces all tags; unchanged if not provided).
-            correspondent: New correspondent ID (unchanged if not provided).
-            document_type: New document type ID (unchanged if not provided).
-            custom_fields: List of custom field values, e.g. [{"field": 1, "value": "42.50"}].
+            title: New title (blank/None = unchanged).
+            created: New created date in ISO format, e.g. '2023-07-12' (blank/None = unchanged).
+            tags: New list of tag IDs or names (replaces all tags; empty/None = unchanged).
+            correspondent: New correspondent ID or name (blank/None = unchanged).
+            document_type: New document type ID or name (blank/None = unchanged).
+            custom_fields: List like [{"field": 1, "value": "EUR42.50"}] (empty/None = unchanged).
+            clear_tags: If True, remove all tags from the document.
+            clear_custom_fields: If True, remove all custom field values.
 
         Returns:
             Dictionary with updated document or error.
@@ -399,35 +471,47 @@ class PaperlessUpdateDocumentTask(Task):
                 "error": "Paperless-ngx not configured. Set MACBOT_PAPERLESS_URL and MACBOT_PAPERLESS_API_TOKEN in Settings or run 'son onboard'.",
             }
 
+        # Blank strings mean "unchanged", never "set to empty".
+        title = _blank_to_none(title)
+        created = _blank_to_none(created)
+
         # Resolve names to IDs and coerce string IDs to ints
         doc_id = await _resolve_resource(document_id, "/api/documents/")
         document_id = doc_id if doc_id is not None else document_id  # type: ignore[assignment]
-        if tags is not None:
-            tags = await _resolve_tags(tags)  # type: ignore[assignment]
         correspondent = await _resolve_resource(correspondent, "/api/correspondents/")
         document_type = await _resolve_resource(document_type, "/api/document_types/")
-
-        # Parse custom_fields if passed as JSON string
-        if isinstance(custom_fields, str):
-            import json
-            try:
-                custom_fields = json.loads(custom_fields)
-            except (json.JSONDecodeError, TypeError):
-                return {"success": False, "error": f"custom_fields must be a JSON list, got: {custom_fields[:100]}"}
 
         patch_data: dict[str, Any] = {}
         if title is not None:
             patch_data["title"] = title
         if created is not None:
             patch_data["created"] = created
-        if tags is not None:
-            patch_data["tags"] = tags
         if correspondent is not None:
             patch_data["correspondent"] = correspondent
         if document_type is not None:
             patch_data["document_type"] = document_type
-        if custom_fields is not None:
-            patch_data["custom_fields"] = custom_fields
+
+        # Tags: empty list/None is "unchanged"; clear only via explicit flag.
+        if clear_tags:
+            patch_data["tags"] = []
+        elif tags:
+            patch_data["tags"] = await _resolve_tags(tags)  # type: ignore[arg-type]
+
+        # Custom fields: empty/None is "unchanged"; clear only via explicit flag.
+        if clear_custom_fields:
+            patch_data["custom_fields"] = []
+        elif custom_fields is not None and custom_fields != "" and custom_fields != []:
+            normalized = _normalize_custom_fields(custom_fields)
+            if normalized is None:
+                return {
+                    "success": False,
+                    "error": (
+                        "custom_fields must be a list of dicts like "
+                        '[{"field": 1, "value": "EUR42.50"}]; got: '
+                        f"{str(custom_fields)[:150]}"
+                    ),
+                }
+            patch_data["custom_fields"] = normalized
 
         if not patch_data:
             return {"success": False, "error": "No fields to update."}
