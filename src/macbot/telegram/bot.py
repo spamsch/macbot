@@ -22,6 +22,60 @@ _WRITE_TIMEOUT = 10.0
 _POOL_TIMEOUT = 5.0
 
 
+# Telegram hard limit per message.
+TELEGRAM_MAX_CHARS = 4096
+
+
+def split_for_telegram(text: str, limit: int = TELEGRAM_MAX_CHARS) -> list[str]:
+    """Split text into <=limit chunks on natural boundaries.
+
+    Breaks on paragraph, then line, then sentence, then word boundaries (in that
+    order of preference) so messages don't snap mid-word. A code fence (```) that
+    would be split across chunks is closed at the end of one chunk and reopened
+    at the start of the next, so formatting survives the split.
+
+    Args:
+        text: The full message text.
+        limit: Maximum characters per chunk (Telegram's limit is 4096).
+
+    Returns:
+        A list of chunks, each <= limit characters.
+    """
+    if len(text) <= limit:
+        return [text]
+
+    chunks: list[str] = []
+    remaining = text
+    # Reserve room for fence-balancing markers we may add to a chunk.
+    budget = limit - 8
+    while len(remaining) > limit:
+        window = remaining[:budget]
+        split_at = budget
+        for sep in ("\n\n", "\n", ". ", " "):
+            idx = window.rfind(sep)
+            if idx > budget * 0.5:  # avoid tiny chunks
+                split_at = idx + len(sep)
+                break
+        chunks.append(remaining[:split_at].rstrip())
+        remaining = remaining[split_at:].lstrip()
+    if remaining:
+        chunks.append(remaining)
+
+    # Balance triple-backtick fences across chunk boundaries.
+    open_fence = False
+    for i, chunk in enumerate(chunks):
+        if open_fence:
+            chunk = "```\n" + chunk
+        if chunk.count("```") % 2:
+            chunk = chunk + "\n```"
+            open_fence = True
+        else:
+            open_fence = False
+        chunks[i] = chunk
+
+    return chunks
+
+
 def _make_bot(token: str) -> Bot:
     """Create a Bot instance with explicit HTTP timeouts."""
     request = HTTPXRequest(
@@ -86,10 +140,10 @@ class TelegramBot:
             TelegramError: If the API call fails
         """
         # Telegram has a 4096 character limit
-        if len(text) > 4096:
-            # Split into chunks; send each individually so that a
+        if len(text) > TELEGRAM_MAX_CHARS:
+            # Split on natural boundaries; send each chunk individually so a
             # markdown failure in one chunk doesn't lose the whole message.
-            chunks = [text[i:i + 4000] for i in range(0, len(text), 4000)]
+            chunks = split_for_telegram(text)
             for chunk in chunks:
                 try:
                     await self._bot.send_message(

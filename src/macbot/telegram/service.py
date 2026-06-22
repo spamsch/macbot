@@ -392,22 +392,30 @@ class TelegramService:
         return response.content or text[:200]
 
     async def _trim_for_telegram(self, text: str) -> str:
-        """Condense a long response for comfortable reading on mobile.
+        """Prepare an agent response for the Telegram chat window.
 
-        Short responses (≤500 chars) are returned as-is.  Longer ones are
-        summarized via the LLM into a concise Telegram-friendly message.
+        By default the full response is returned unchanged — long messages are
+        split across several Telegram messages by the sender, so no detail is
+        lost. Summarization is opt-in (``MACBOT_TELEGRAM_SUMMARIZE``) and, even
+        when enabled, only kicks in for very long replies and is told to keep
+        every detail rather than shrink to a blurb.
 
         Args:
             text: Full agent response text
 
         Returns:
-            Trimmed response suitable for a Telegram chat window
+            The response to send (full text, or a detail-preserving condense)
         """
-        if len(text) <= 500:
+        from macbot.config import settings
+
+        # Default: send everything. The sender splits >4096-char messages.
+        if not settings.telegram_summarize:
+            return text
+
+        if len(text) <= settings.telegram_summary_threshold:
             return text
 
         try:
-            from macbot.config import settings
             from macbot.providers.base import Message
             from macbot.providers.litellm_provider import LiteLLMProvider
 
@@ -419,20 +427,22 @@ class TelegramService:
             response = await provider.chat(
                 messages=[Message(role="user", content=text)],
                 system_prompt=(
-                    "Condense this assistant response for a Telegram chat. "
-                    "Keep the key information and outcome but make it short and "
-                    "scannable — ideally 2-4 sentences, max ~400 characters. "
-                    "Use a casual, direct tone. Preserve any important names, "
-                    "dates, numbers, or action items. Do not add commentary. "
-                    "IMPORTANT formatting rules: use *bold* (asterisks) not "
-                    "_italic_ (underscores) for emphasis. Never use underscores "
-                    "for formatting. Keep `code` backticks paired. Do not use "
-                    "markdown links [text](url) — just write the URL directly."
+                    "Reformat this assistant response for a Telegram chat. This is "
+                    "NOT a summary — keep ALL the substance. Preserve every item in "
+                    "lists, every name, date, number, amount, link, and action item. "
+                    "Only remove genuine filler (greetings, restated questions, "
+                    "redundant hedging) and tighten verbose phrasing. When in doubt, "
+                    "keep it. Prefer bullet lists for multiple items so nothing is "
+                    "buried. There is no length limit — being complete matters more "
+                    "than being short. "
+                    "Formatting: use *bold* (asterisks) not _italic_ (underscores) "
+                    "for emphasis; never use underscores for formatting; keep `code` "
+                    "backticks paired; write URLs directly, not as [text](url) links."
                 ),
             )
-            return response.content or text[:500]
+            return response.content or text
         except Exception as e:
-            logger.warning(f"Text trimming failed (non-fatal): {e}")
+            logger.warning(f"Telegram reply formatting failed (non-fatal): {e}")
             return text
 
     async def _text_to_voice(self, text: str) -> bytes:
