@@ -110,6 +110,9 @@ class RoutingConfig(BaseModel):
     default_tier: str | None = None
     complexity: ComplexityConfig = Field(default_factory=ComplexityConfig)
     routes: list[Route] = Field(default_factory=list)
+    # Magic words that force the strongest tier for a turn, overriding every
+    # other signal. Whole-word, case-insensitive. Set to [] to disable.
+    magic_words: list[str] = Field(default_factory=lambda: ["ultrathink"])
 
 
 class RoutingEngine:
@@ -160,6 +163,16 @@ class RoutingEngine:
     @property
     def has_routes(self) -> bool:
         return len(self._config.routes) > 0
+
+    @property
+    def active(self) -> bool:
+        """True if the engine can do anything for a turn.
+
+        Beyond explicit routes, the engine is useful whenever tiers are defined:
+        complexity escalation and the magic word both need a strongest tier to
+        escalate to. So a tiers-only config (no routes) still routes.
+        """
+        return self.has_routes or bool(self._ordered_models())
 
     @property
     def config(self) -> RoutingConfig:
@@ -237,6 +250,15 @@ class RoutingEngine:
         ordered = self._ordered_models()
         return ordered[-1] if ordered else None
 
+    def _strongest_model(self) -> str | None:
+        """The strongest configured model (last tier in `order`), or None."""
+        ordered = self._ordered_models()
+        return ordered[-1] if ordered else None
+
+    def _has_magic_word(self, text_lower: str) -> bool:
+        """True if any configured magic word appears as a whole word."""
+        return any(self._word_in(w, text_lower) for w in self._config.magic_words)
+
     # ------------------------------------------------------------- decisions
 
     def decide(
@@ -263,10 +285,22 @@ class RoutingEngine:
         if cfg.default_tier and cfg.default_tier in cfg.tiers:
             base = cfg.tiers[cfg.default_tier]
 
+        text = (message or "").lower()
+
+        # Magic word ("ultrathink"): force the strongest model, overriding every
+        # other signal. Works wherever a turn runs — CLI, chat, Telegram, cron.
+        if self._has_magic_word(text):
+            strongest = self._strongest_model()
+            if strongest:
+                logger.info("Magic word matched → strongest model %s", strongest)
+                return strongest
+            logger.warning(
+                "Magic word matched but no tiers are configured; staying on %s", base
+            )
+
         if not cfg.routes and not cfg.complexity.enabled:
             return base
 
-        text = (message or "").lower()
         skills = set(skill_ids or [])
         candidates = [base]
 

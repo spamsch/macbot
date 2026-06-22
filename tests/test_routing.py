@@ -483,3 +483,95 @@ class TestTieredDecide:
         base = "chatgpt/gpt-5.4-mini"
         assert eng.decide("send an email", [], base) == "anthropic/claude-sonnet-4-5"
         assert eng.decide("what time is it", [], base) == base
+
+
+class TestMagicWord:
+    """The magic word ('ultrathink') forces the strongest model."""
+
+    FAST = "chatgpt/gpt-5.4-mini"
+    SMART = "chatgpt/gpt-5.5"
+
+    def _engine(self, tmp_path: Path, extra: dict | None = None) -> RoutingEngine:
+        config: dict = {
+            "tiers": {"fast": self.FAST, "smart": self.SMART},
+            "order": ["fast", "smart"],
+            "default_tier": "fast",
+            "complexity": {"enabled": True, "hard_verbs": []},
+            "routes": [
+                {
+                    "name": "mail", "tier": "smart", "skills": ["mail_assistant"],
+                    "exclude_keywords": ["paperless"],
+                    "keywords": ["email"],
+                },
+            ],
+        }
+        if extra:
+            config.update(extra)
+        path = tmp_path / "routing.json"
+        path.write_text(json.dumps(config))
+        return RoutingEngine(config_path=path)
+
+    def test_default_magic_word_is_ultrathink(self) -> None:
+        assert RoutingConfig().magic_words == ["ultrathink"]
+
+    def test_magic_word_forces_strongest(self, tmp_path: Path) -> None:
+        eng = self._engine(tmp_path)
+        assert eng.decide("ultrathink what's the weather", [], self.FAST) == self.SMART
+
+    def test_magic_word_case_insensitive(self, tmp_path: Path) -> None:
+        eng = self._engine(tmp_path)
+        assert eng.decide("ULTRATHINK this please", [], self.FAST) == self.SMART
+        assert eng.decide("Ultrathink!", [], self.FAST) == self.SMART
+
+    def test_magic_word_overrides_exclude_keywords(self, tmp_path: Path) -> None:
+        # "paperless" would normally block the mail route; magic word wins anyway.
+        eng = self._engine(tmp_path)
+        assert eng.decide("ultrathink the paperless thing", [], self.FAST) == self.SMART
+
+    def test_no_magic_word_stays_on_base(self, tmp_path: Path) -> None:
+        eng = self._engine(tmp_path)
+        assert eng.decide("what's the weather", [], self.FAST) == self.FAST
+
+    def test_substring_does_not_trigger(self, tmp_path: Path) -> None:
+        # Word-boundary matched: "ultrathinking" must not fire.
+        eng = self._engine(tmp_path)
+        assert eng.decide("ultrathinking about it", [], self.FAST) == self.FAST
+
+    def test_custom_magic_words(self, tmp_path: Path) -> None:
+        eng = self._engine(tmp_path, extra={"magic_words": ["maxbrain", "denkmal"]})
+        assert eng.decide("maxbrain go", [], self.FAST) == self.SMART
+        assert eng.decide("denkmal bitte", [], self.FAST) == self.SMART
+        # The old default no longer applies once overridden.
+        assert eng.decide("ultrathink please", [], self.FAST) == self.FAST
+
+    def test_magic_words_can_be_disabled(self, tmp_path: Path) -> None:
+        eng = self._engine(tmp_path, extra={"magic_words": []})
+        assert eng.decide("ultrathink please", [], self.FAST) == self.FAST
+
+    def test_works_with_tiers_only_no_routes(self, tmp_path: Path) -> None:
+        # No routes, just tiers — engine is still active and magic word works.
+        path = tmp_path / "routing.json"
+        path.write_text(json.dumps({
+            "tiers": {"fast": self.FAST, "smart": self.SMART},
+            "order": ["fast", "smart"],
+            "default_tier": "fast",
+            "complexity": {"enabled": False},
+            "routes": [],
+        }))
+        eng = RoutingEngine(config_path=path)
+        assert eng.active is True
+        assert eng.decide("ultrathink this", [], self.FAST) == self.SMART
+        assert eng.decide("normal request", [], self.FAST) == self.FAST
+
+    def test_no_tiers_magic_word_cannot_escalate(self, tmp_path: Path) -> None:
+        # No tiers configured → nothing stronger to go to; stays on base.
+        path = tmp_path / "routing.json"
+        path.write_text(json.dumps({
+            "complexity": {"enabled": False},
+            "routes": [
+                {"name": "mail", "skills": ["m"], "model": "x/y", "keywords": ["email"]},
+            ],
+        }))
+        eng = RoutingEngine(config_path=path)
+        base = self.FAST
+        assert eng.decide("ultrathink please", [], base) == base
