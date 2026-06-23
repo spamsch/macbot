@@ -14,6 +14,7 @@ import platform
 import re
 import time
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 from rich.console import Console
@@ -86,6 +87,9 @@ class Agent:
         # Per-turn capture state (used by episodic memory)
         self._current_goal_text: str = ""
         self._turn_tool_names: list[str] = []
+
+        # Working directory bound to this agent (set via TUI directory picker)
+        self.working_directory: Path | None = None
 
     def _create_provider(self) -> LLMProvider:
         """Create an LLM provider based on configuration.
@@ -566,13 +570,16 @@ class Agent:
         """Build the system context section with platform info and current time."""
         from datetime import datetime
         now = datetime.now()
-        return f"""
+        ctx = f"""
 ## System Context
 - Current date and time: {now.strftime("%A, %B %d, %Y at %I:%M %p")}
 - Platform: macOS ({platform.mac_ver()[0]})
 - Architecture: {platform.machine()}
 - Hostname: {platform.node()}
 """
+        if self.working_directory is not None:
+            ctx += f"- Working directory: {self.working_directory}\n"
+        return ctx
 
     def _build_memory_guidance(self) -> str:
         """Build guidance for agent memory tools."""

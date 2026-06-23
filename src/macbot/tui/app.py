@@ -9,6 +9,8 @@ from __future__ import annotations
 import asyncio
 import base64
 from datetime import datetime
+import json
+import os
 from pathlib import Path
 import re
 from typing import Any
@@ -20,7 +22,8 @@ from textual.command import Hit, Hits, Provider
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.message import Message as TMessage
 from textual.reactive import reactive
-from textual.widgets import Footer, Markdown, Static, TextArea
+from textual.screen import ModalScreen
+from textual.widgets import Footer, Input, Label, Markdown, Static, TextArea
 
 from macbot import __version__
 from macbot.config import settings
@@ -29,6 +32,210 @@ from macbot.core.channel import ChannelRegistry
 from macbot.providers.base import Message
 from macbot.tasks import create_default_registry
 from macbot.tui import history
+
+
+# ---------------------------------------------------------------------------
+# Recent directories persistence
+# ---------------------------------------------------------------------------
+
+_RECENT_DIRS_FILE = Path.home() / ".macbot" / "recent_dirs.json"
+_MAX_RECENT_DIRS = 20
+
+
+def _load_recent_dirs() -> list[Path]:
+    try:
+        if _RECENT_DIRS_FILE.exists():
+            data = json.loads(_RECENT_DIRS_FILE.read_text())
+            return [Path(p) for p in data if Path(p).is_dir()]
+    except Exception:
+        pass
+    return []
+
+
+def _save_recent_dirs(dirs: list[Path]) -> None:
+    try:
+        _RECENT_DIRS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        _RECENT_DIRS_FILE.write_text(json.dumps([str(d) for d in dirs[:_MAX_RECENT_DIRS]]))
+    except Exception:
+        pass
+
+
+def _add_recent_dir(path: Path) -> None:
+    dirs = _load_recent_dirs()
+    dirs = [d for d in dirs if d != path]
+    dirs.insert(0, path)
+    _save_recent_dirs(dirs)
+
+
+def _display_dir(path: Path) -> str:
+    """Return a human-readable path, replacing home with ~."""
+    try:
+        return "~/" + str(path.relative_to(Path.home()))
+    except ValueError:
+        return str(path)
+
+
+# ---------------------------------------------------------------------------
+# Directory picker modal
+# ---------------------------------------------------------------------------
+
+class DirectoryPickerScreen(ModalScreen):
+    """Modal for setting the agent's working directory.
+
+    Tab completes the typed path. Recent directories are listed below.
+    """
+
+    DEFAULT_CSS = """
+    DirectoryPickerScreen {
+        align: center middle;
+    }
+    #dir-picker-dialog {
+        width: 72;
+        height: auto;
+        max-height: 30;
+        border: double $accent;
+        background: $surface;
+        padding: 1 2;
+    }
+    #dir-picker-title {
+        text-style: bold;
+        color: $accent;
+        margin-bottom: 1;
+    }
+    #dir-input {
+        margin-bottom: 0;
+    }
+    #dir-completions {
+        color: $text-muted;
+        padding: 0 1;
+        margin: 0 0 1 0;
+        height: auto;
+    }
+    #recent-label {
+        color: $text-muted;
+        margin: 0 0 0 0;
+    }
+    .recent-dir {
+        padding: 0 1;
+        color: $text;
+    }
+    .recent-dir:hover {
+        background: $accent-darken-2;
+        color: $accent;
+    }
+    """
+
+    BINDINGS = [
+        Binding("escape", "cancel", "Cancel"),
+    ]
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="dir-picker-dialog"):
+            yield Static("Set working directory", id="dir-picker-title")
+            yield Input(
+                placeholder="~/path/to/dir  — Tab to complete, Enter to confirm",
+                id="dir-input",
+            )
+            yield Static("", id="dir-completions")
+            recent = _load_recent_dirs()
+            if recent:
+                yield Label("Recent:", id="recent-label")
+                for i, d in enumerate(recent[:10]):
+                    yield Static(
+                        _display_dir(d),
+                        classes="recent-dir",
+                        id=f"recent-{i}",
+                    )
+
+    def on_mount(self) -> None:
+        self.query_one("#dir-input", Input).focus()
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+    def on_key(self, event: Any) -> None:
+        if event.key == "tab":
+            event.stop()
+            event.prevent_default()
+            self._tab_complete()
+
+    def _tab_complete(self) -> None:
+        inp = self.query_one("#dir-input", Input)
+        raw = inp.value
+        expanded = os.path.expanduser(raw)
+
+        if raw.endswith("/"):
+            base = Path(expanded)
+            prefix = ""
+        else:
+            p = Path(expanded)
+            base = p.parent
+            prefix = p.name
+
+        if not base.is_dir():
+            return
+
+        show_hidden = prefix.startswith(".")
+        try:
+            matches = sorted(
+                d for d in base.iterdir()
+                if d.is_dir()
+                and d.name.startswith(prefix)
+                and (show_hidden or not d.name.startswith("."))
+            )
+        except PermissionError:
+            return
+
+        completions = self.query_one("#dir-completions", Static)
+
+        if not matches:
+            completions.update("")
+            return
+
+        if len(matches) == 1:
+            completed = _display_dir(matches[0]) + "/"
+            inp.value = completed
+            inp.cursor_position = len(completed)
+            completions.update("")
+            return
+
+        # Multiple matches: complete to the longest common prefix
+        names = [m.name for m in matches]
+        common = os.path.commonprefix(names)
+        if common and common != prefix:
+            completed = _display_dir(base / common)
+            inp.value = completed
+            inp.cursor_position = len(completed)
+
+        # Show options
+        shown = "  ".join(m.name + "/" for m in matches[:12])
+        if len(matches) > 12:
+            shown += f"  … ({len(matches) - 12} more)"
+        completions.update(shown)
+
+    @on(Input.Changed, "#dir-input")
+    def _on_input_changed(self, event: Input.Changed) -> None:
+        self.query_one("#dir-completions", Static).update("")
+
+    @on(Input.Submitted, "#dir-input")
+    def _on_input_submitted(self, event: Input.Submitted) -> None:
+        raw = event.value.strip()
+        if not raw:
+            self.dismiss(None)
+            return
+        path = Path(raw).expanduser().resolve()
+        if path.is_dir():
+            self.dismiss(path)
+        else:
+            self.notify(f"Not a directory: {raw}", severity="error", timeout=3)
+
+    def on_click(self, event: Any) -> None:
+        widget = event.widget
+        if widget.has_class("recent-dir"):
+            label = str(widget.renderable)
+            path = Path(label).expanduser().resolve()
+            if path.is_dir():
+                self.dismiss(path)
 
 
 # ---------------------------------------------------------------------------
@@ -69,6 +276,7 @@ class StatusBar(Static):
     skills_info: reactive[str] = reactive("")
     token_info: reactive[str] = reactive("")
     task_count: reactive[int] = reactive(0)
+    working_dir: reactive[str] = reactive("")
 
     def render(self) -> str:
         parts = [f"Son of Simon v{__version__}"]
@@ -76,6 +284,8 @@ class StatusBar(Static):
             parts.append(f"Model: {self.model_name}")
         if self.profile_name:
             parts.append(f"Profile: {self.profile_name}")
+        if self.working_dir:
+            parts.append(f"Dir: {self.working_dir}")
         if self.skills_info:
             parts.append(self.skills_info)
         elif self.task_count:
@@ -271,6 +481,27 @@ class ChatCommands(Provider):
                 help=f"Switch context profile to {p}",
             )
 
+        # Working directory navigation
+        yield Hit(
+            0.88,
+            "Change directory...",
+            app._action_change_directory,
+            help="Set the agent's working directory (opens picker)",
+        )
+        recent_dirs = _load_recent_dirs()
+        for d in recent_dirs[:8]:
+            label = _display_dir(d)
+
+            def _make_dir_setter(_d: Path = d) -> None:
+                app._set_working_directory(_d)
+
+            yield Hit(
+                0.85,
+                f"Dir: {label}",
+                _make_dir_setter,
+                help=f"Bind agent to {d}",
+            )
+
         # List channels as switchable items
         if app._channels is not None:
             for ch in app._channels.list_channels():
@@ -456,6 +687,11 @@ class ChatApp(App[None]):
         bar.task_count = len(self._agent.task_registry)
         bar.profile_name = self._get_active_profile()
 
+        # Show current working directory and bind it to the agent
+        cwd = Path.cwd()
+        self._agent.working_directory = cwd
+        bar.working_dir = _display_dir(cwd)
+
         # Start a fresh session
         self._session_id = history.create_session()
 
@@ -491,7 +727,8 @@ class ChatApp(App[None]):
             self._add_md(
                 "**Commands:** quit, clear, stats, help, tasks, debug, profile [name], "
                 "sessions, load &lt;id&gt;, "
-                "channels, ch &lt;id&gt;, channel new &lt;name&gt;, channel close &lt;id&gt;\n\n"
+                "channels, ch &lt;id&gt;, channel new &lt;name&gt;, channel close &lt;id&gt;, "
+                "cd &lt;path&gt;\n\n"
                 "**Keys:** Enter=send, Shift+Enter=newline, Escape=cancel, "
                 "Ctrl+P=command palette, Ctrl+L=clear, Ctrl+T=stats"
             )
@@ -531,6 +768,14 @@ class ChatApp(App[None]):
             cid = text[len("channel close "):].strip()
             if cid:
                 self._close_channel(cid)
+            return
+        if cmd.startswith("cd ") or cmd == "cd":
+            target = text[3:].strip() if cmd.startswith("cd ") else ""
+            if target:
+                path = Path(target).expanduser().resolve()
+                self._set_working_directory(path)
+            else:
+                self._action_change_directory()
             return
 
         # Detect image file paths and build multimodal content
@@ -959,6 +1204,42 @@ class ChatApp(App[None]):
                 self._switch_channel("main")
         else:
             self._add_text(f"Cannot close '{channel_id}' (not found or not a custom channel).", "msg-error")
+
+    # ----- Directory navigation -----
+
+    def _action_change_directory(self) -> None:
+        """Open the directory picker modal."""
+        def _on_picked(path: Path | None) -> None:
+            if path is not None:
+                self._set_working_directory(path)
+
+        self.push_screen(DirectoryPickerScreen(), _on_picked)
+
+    def _set_working_directory(self, path: Path) -> None:
+        """Bind the active channel's agent to a working directory."""
+        path = path.expanduser().resolve()
+        if not path.is_dir():
+            self._add_text(f"Not a directory: {path}", "msg-error")
+            return
+        try:
+            os.chdir(path)
+        except OSError as e:
+            self._add_text(f"Cannot cd: {e}", "msg-error")
+            return
+
+        if self._agent:
+            self._agent.working_directory = path
+
+        if self._channels is not None:
+            ch = self._channels.active
+            ch.metadata["working_dir"] = str(path)
+
+        _add_recent_dir(path)
+
+        label = _display_dir(path)
+        bar = self.query_one("#status-bar", StatusBar)
+        bar.working_dir = label
+        self._add_text(f"Working directory: {path}", "msg-status")
 
     # ----- Actions -----
 
