@@ -7,6 +7,7 @@ through the agent, and sends back responses.
 import asyncio
 import base64
 import logging
+import os
 import signal
 import tempfile
 import time
@@ -17,7 +18,7 @@ from typing import Any
 from telegram import Update
 from telegram.error import TelegramError
 
-from macbot.telegram.bot import TelegramBot
+from macbot.telegram.bot import TelegramBot, content_fingerprint
 
 logger = logging.getLogger(__name__)
 
@@ -186,6 +187,11 @@ class TelegramService:
             logger.error("No chat_id provided and no default configured")
             return False
 
+        logger.info(
+            "[tg-trace] pid=%s send chat=%s mode=%s %s",
+            os.getpid(), target_chat, parse_mode, content_fingerprint(text),
+        )
+
         try:
             return await self.bot.send_message(target_chat, text, parse_mode)
         except TelegramError as e:
@@ -227,6 +233,11 @@ class TelegramService:
         target_chat = chat_id or self.default_chat_id
         if not target_chat:
             return None
+
+        logger.debug(
+            "[tg-trace] pid=%s send-track chat=%s %s",
+            os.getpid(), target_chat, content_fingerprint(text),
+        )
 
         try:
             msg = await self.bot._bot.send_message(
@@ -495,6 +506,13 @@ class TelegramService:
         user_id = message.from_user.id if message.from_user else None
         chat_id = str(message.chat_id)
 
+        # Duplicate-send tracing: same update_id logged under two PIDs means two
+        # pollers; same message_id processed twice means a redelivery.
+        logger.info(
+            "[tg-trace] pid=%s recv update_id=%s chat=%s msg_id=%s",
+            os.getpid(), update.update_id, chat_id, message.message_id,
+        )
+
         # Track whether original message was voice/audio
         is_voice = bool(message.voice or message.audio)
 
@@ -594,13 +612,16 @@ class TelegramService:
         if write_pid:
             PID_FILE.parent.mkdir(parents=True, exist_ok=True)
             PID_FILE.write_text(str(asyncio.current_task().get_coro().__self__))
-            import os
             PID_FILE.write_text(str(os.getpid()))
 
         # Get bot info
         try:
             info = await self.bot.get_me()
-            logger.info(f"Started Telegram service as @{info['username']}")
+            logger.info(
+                "Started Telegram service as @%s (poller pid=%s) — "
+                "if you see two pids polling the same bot, that is a duplicate-reply source",
+                info["username"], os.getpid(),
+            )
         except TelegramError as e:
             logger.error(f"Failed to connect to Telegram: {e}")
             raise

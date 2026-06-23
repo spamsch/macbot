@@ -3,10 +3,14 @@
 Provides tasks for the agent to send messages via Telegram.
 """
 
+import logging
+import os
 from typing import Any
 
 from macbot.config import settings
 from macbot.tasks.base import Task
+
+logger = logging.getLogger(__name__)
 
 
 class TelegramSendTask(Task):
@@ -60,6 +64,12 @@ class TelegramSendTask(Task):
             }
 
         try:
+            from macbot.telegram.bot import content_fingerprint
+
+            logger.info(
+                "[tg-trace] pid=%s telegram_send TOOL chat=%s %s",
+                os.getpid(), target_chat, content_fingerprint(message),
+            )
             bot = TelegramBot(token)
             await bot.send_message(target_chat, message)
             await bot.close()

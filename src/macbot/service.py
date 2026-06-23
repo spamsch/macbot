@@ -578,7 +578,11 @@ class MacbotService:
                     padding=(0, 1),
                 ))
 
-                logger.info(f"Telegram: Response sent, length: {len(result)}, tools: {len(tools_called)}")
+                from macbot.telegram.bot import content_fingerprint
+                logger.info(
+                    "[tg-trace] pid=%s handler-result chat=%s tools=%d %s",
+                    os.getpid(), chat_id, len(tools_called), content_fingerprint(result),
+                )
                 return result
             except Exception as e:
                 logger.error(f"Telegram: Error - {e}")

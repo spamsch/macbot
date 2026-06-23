@@ -4,6 +4,7 @@ Provides a simple async interface for sending and receiving messages
 via the Telegram Bot API.
 """
 
+import hashlib
 import logging
 from typing import Any
 
@@ -24,6 +25,19 @@ _POOL_TIMEOUT = 5.0
 
 # Telegram hard limit per message.
 TELEGRAM_MAX_CHARS = 4096
+
+
+def content_fingerprint(text: str | None) -> str:
+    """Short, greppable fingerprint of message text for duplicate-send tracing.
+
+    Returns ``len=<n> sha=<8 hex>`` so two log lines emitting the *same* text
+    show the same ``sha`` — a reliable signal that an answer was delivered twice,
+    independent of which code path sent it.
+    """
+    if not text:
+        return "len=0 sha=-"
+    digest = hashlib.sha1(text.encode("utf-8", "replace")).hexdigest()[:8]
+    return f"len={len(text)} sha={digest}"
 
 
 def split_for_telegram(text: str, limit: int = TELEGRAM_MAX_CHARS) -> list[str]:
@@ -144,6 +158,10 @@ class TelegramBot:
             # Split on natural boundaries; send each chunk individually so a
             # markdown failure in one chunk doesn't lose the whole message.
             chunks = split_for_telegram(text)
+            logger.info(
+                "[tg-trace] split chat=%s into %d chunks (%s)",
+                chat_id, len(chunks), content_fingerprint(text),
+            )
             for chunk in chunks:
                 try:
                     await self._bot.send_message(
