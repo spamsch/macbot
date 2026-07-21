@@ -1,3 +1,5 @@
+> **⚠️ Archived — no longer maintained.** This project no longer receives updates. Development has moved to [Letta Code](https://github.com/letta-ai/letta-code), and the skills from this project have been migrated to [letta-skills](https://github.com/spamsch/letta-skills).
+
 <p align="center">
   <img src="assets/logo-observer.svg" alt="Son of Simon" width="200" height="200">
 </p>
