@@ -12,6 +12,7 @@ A collection of shell scripts for automating Apple's native productivity apps (M
 
 ```
 macos-automation/
+├── privacy-bridge/        # "Letta Privacy Bridge.app" — owns the TCC grants (see its README)
 ├── lib/
 │   └── common.sh          # Shared utilities and helper functions
 ├── mail/
@@ -40,6 +41,28 @@ macos-automation/
     ├── extract-links.sh        # Extract page links
     └── list-tabs.sh            # List open tabs
 ```
+
+## Permissions: Letta Privacy Bridge
+
+The scripts here run under whatever process launches them, so macOS records their
+privacy grants against Terminal, iTerm, or the agent host — an identity that is
+both too broad and too unstable. `privacy-bridge/` builds
+`~/Applications/Letta Privacy Bridge.app`, a signed helper with a fixed bundle ID
+(`ai.letta.privacybridge`) and real usage descriptions that owns those grants
+instead.
+
+```bash
+bash privacy-bridge/build-install.sh
+"$HOME/Applications/Letta Privacy Bridge.app/Contents/MacOS/letta-privacy-bridge" status
+"$HOME/Applications/Letta Privacy Bridge.app/Contents/MacOS/letta-privacy-bridge" request all
+```
+
+It handles Calendar and Reminders access end to end (EventKit full access), the
+Apple Events grant for Notes.app and Mail.app, and it detects Full Disk Access —
+which macOS never lets an app request; that one is always a manual grant. See
+[privacy-bridge/README.md](privacy-bridge/README.md).
+
+---
 
 ## Quick Start
 

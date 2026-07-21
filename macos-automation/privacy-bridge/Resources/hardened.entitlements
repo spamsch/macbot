@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+	  Used ONLY when signing with a real Developer ID plus the hardened runtime
+	  (build-install.sh enables the hardened runtime in that case). Ad-hoc builds
+	  are signed without the hardened runtime and need no entitlements at all.
+
+	  Deliberately NOT present: com.apple.security.app-sandbox. Sandboxing would
+	  put this helper in a container, block ~/Library/Mail and ~/Library reads
+	  used for Full Disk Access detection, and require per-target temporary
+	  exceptions for every Apple Event. It would break the intended local helper
+	  role, so the app ships unsandboxed. See README.md ("Sandboxing").
+	-->
+	<key>com.apple.security.automation.apple-events</key>
+	<true/>
+</dict>
+</plist>

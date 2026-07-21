@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleName</key>
+	<string>Letta Privacy Bridge</string>
+	<key>CFBundleDisplayName</key>
+	<string>Letta Privacy Bridge</string>
+	<key>CFBundleIdentifier</key>
+	<string>ai.letta.privacybridge</string>
+	<key>CFBundleExecutable</key>
+	<string>letta-privacy-bridge</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleSignature</key>
+	<string>????</string>
+	<key>CFBundleShortVersionString</key>
+	<string>__VERSION__</string>
+	<key>CFBundleVersion</key>
+	<string>__VERSION__</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>14.0</string>
+	<!-- Agent app: no Dock icon, no menu bar. TCC dialogs are presented by the
+	     system, so a UI-less helper can still show grantable prompts. -->
+	<key>LSUIElement</key>
+	<true/>
+	<key>NSHumanReadableCopyright</key>
+	<string>Local helper for Letta agent skills. No network access, no telemetry.</string>
+
+	<!-- Privacy usage descriptions. macOS refuses to show a prompt (and kills the
+	     process) when the matching key is missing. -->
+	<key>NSCalendarsFullAccessUsageDescription</key>
+	<string>Letta Privacy Bridge reads and creates events in your calendars so your local Letta agent can answer scheduling questions and add events you ask for. Calendar data stays on this Mac.</string>
+	<key>NSRemindersFullAccessUsageDescription</key>
+	<string>Letta Privacy Bridge reads, creates, and completes reminders so your local Letta agent can manage your to-dos. Reminder data stays on this Mac.</string>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>Letta Privacy Bridge controls Notes and Mail on your behalf so your local Letta agent can check their status and read the items you ask about. Nothing is sent off this Mac.</string>
+	<!-- Legacy keys, still consulted on some upgrade paths from older systems. -->
+	<key>NSCalendarsUsageDescription</key>
+	<string>Letta Privacy Bridge reads and creates events in your calendars for your local Letta agent.</string>
+	<key>NSRemindersUsageDescription</key>
+	<string>Letta Privacy Bridge reads and manages reminders for your local Letta agent.</string>
+</dict>
+</plist>
