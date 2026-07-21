@@ -25,6 +25,7 @@ usage descriptions, one entry per pane in System Settings.
 macos-automation/privacy-bridge/
 ├── Sources/
 │   ├── main.swift               # CLI dispatch, status, request, FDA, help
+│   ├── AppHost.swift            # transparent LaunchServices relay for permission-bound commands
 │   ├── Args.swift               # argument + date parsing
 │   ├── Output.swift             # JSON stdout / stderr diagnostics contract
 │   ├── Permissions.swift        # EventKit, Apple Events, FDA detection, Settings links
@@ -108,11 +109,57 @@ Error objects carry `code`, `message`, usually `hint`, and sometimes `recovery`
 (a list of commands to run). Callers should branch on `error.code`, never on
 message text.
 
+## App hosting — one binary, correct attribution
+
+Callers always run the same binary. There is no second entry point and no
+"run it this way for permissions" mode.
+
+Under the hood, TCC does not authorize a binary, it authorizes the process
+*responsible* for the request. Run the executable straight from a shell and
+launchd never launched an application: the terminal — or whatever agent spawned
+it — stays responsible, so EventKit answers with the *caller's* Calendar grant.
+That is how `request calendar` could report `authorized` while the very next
+`calendar events` still saw `not_determined`. One binary, two TCC subjects.
+
+So every command that reaches Calendar, Reminders, or Apple Events is
+transparently hosted: the CLI relaunches the installed bundle through
+LaunchServices with an internal marker and a private result path, the app
+executes the command as its own responsible process, writes its JSON verdict,
+and exits. The waiting CLI prints exactly that JSON and exits with the child's
+status. Round trip is ~0.2s.
+
+Hosted: `status`, `calendar …`, `reminders …`, `notes …`, `mail …`,
+`automation …`, `request …`.
+Direct: `help`, `version`, `fda status`, `fda open-settings`, `open-settings …`,
+and the `<group> help` reference pages — none of them read a TCC-protected
+resource.
+
+Properties worth relying on:
+
+- **One hop.** The child carries the marker and never relays again.
+- **No focus theft.** Reads launch with `open -g` — no activation, no window,
+  no Dock icon. Only request flows, which must present a dialog, come forward.
+- **Same contract.** One JSON object on stdout, `0`/`1` exit, `error.code`
+  unchanged. Diagnostics on stderr name the command, never the temporary path.
+- **Argument safety.** Marker options arriving from outside are stripped before
+  the child's argv is built, so a caller cannot inject a result path. Arguments
+  carrying control characters, or exceeding 128 args / 8192 bytes each, are
+  rejected with `invalid_argument`, `too_many_arguments`, or
+  `argument_too_long` — before anything is launched.
+- **Timeouts.** 120s by default for hosted commands, `--timeout` to change it;
+  `host_timeout` if the app never answers.
+
+If the binary is run from outside an app bundle, hosting is impossible. The
+command still executes, and a stderr line says the result describes the calling
+process rather than the bridge.
+
 ## How `request` works
 
 `request [calendar|reminders|notes|mail|all]` does **not** ask in-process by
-default. It relaunches the installed bundle through LaunchServices
-(`open -n -a … --args request … --in-process --result-file <tmp>`), so macOS
+default. It uses the same relay as every other permission-bound command (see
+*App hosting*), differing only in that its child must come to the foreground and
+in how strictly its verdict is read. It relaunches the installed bundle through
+LaunchServices (`open -n -a … --args request … --in-process --result-file <tmp>`), so macOS
 treats the bridge — not the calling terminal or agent process — as the process
 responsible for the prompt. The parent polls the result file (default 180s,
 `--timeout`) and prints the child's JSON verbatim.
@@ -159,8 +206,9 @@ Manual steps, in order:
   — and never titles, bodies, senders, subjects, or addresses. Content reads
   remain in the per-app automation scripts, which now run behind a grant that
   belongs to this app.
-- The only file the app writes is the `--result-file` handoff in `TMPDIR`, which
-  it deletes after reading.
+- The only file the app writes is the hosted-result handoff in `TMPDIR` — mode
+  `0600`, deleted by the parent as soon as it is read (also on timeout). Its
+  path is never printed.
 - No network access. No telemetry.
 
 ## Known limitations

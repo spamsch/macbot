@@ -24,6 +24,9 @@
 #   --no-install       Build only; leave the bundle in ./build
 #   --no-snapshot      Skip copying the source snapshot
 #   --request          After install, run `request all` to show permission dialogs
+#   --hardened         Enable the hardened runtime. Only correct if you also
+#                      notarize: unnotarized + hardened suppresses the
+#                      Calendar/Reminders TCC dialog entirely.
 #   -h, --help         Show this help
 #
 # Output:
@@ -44,6 +47,7 @@ IDENTITY=""
 DO_INSTALL=true
 DO_SNAPSHOT=true
 DO_REQUEST=false
+DO_HARDENED=false
 SNAPSHOT_DIR="$HOME/Library/Application Support/LettaPrivacyBridge/src"
 
 log() { printf '[build-install] %s\n' "$*" >&2; }
@@ -59,6 +63,7 @@ while [[ $# -gt 0 ]]; do
         --no-install) DO_INSTALL=false; shift ;;
         --no-snapshot) DO_SNAPSHOT=false; shift ;;
         --request) DO_REQUEST=true; shift ;;
+        --hardened) DO_HARDENED=true; shift ;;
         -h|--help) sed -n '2,32p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 0 ;;
         *) die "unknown_option" "Unknown option: $1" ;;
     esac
@@ -93,6 +98,7 @@ swiftc \
     -swift-version 5 \
     -target "$TARGET" \
     -O \
+    -framework AppKit \
     -framework EventKit \
     -framework Foundation \
     -framework CoreServices \
@@ -112,7 +118,31 @@ done
 /usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$CONTENTS/Info.plist" | grep -qx "$BUNDLE_ID" \
     || die "bundle_id_mismatch" "Info.plist bundle id does not match $BUNDLE_ID"
 
+# LSUIElement must stay absent. As an agent app the bundle gets .accessory
+# activation policy, cannot own a foreground window, and EventKit's
+# authorization dialog is never presented — the exact bug this build guards
+# against. See Resources/Info.plist and README, "Activation policy".
+if /usr/libexec/PlistBuddy -c "Print :LSUIElement" "$CONTENTS/Info.plist" >/dev/null 2>&1; then
+    die "lsuielement_present" \
+        "Info.plist sets LSUIElement; that suppresses the Calendar/Reminders TCC dialog. Remove it."
+fi
+
 # ---- signing -----------------------------------------------------------------
+#
+# The hardened runtime is OFF by default, and that is deliberate.
+#
+# Measured on macOS 26: an app signed with a Developer ID *and* `--options
+# runtime` but never notarized gets no Calendar/Reminders TCC dialog at all.
+# `requestFullAccessToEvents` calls back immediately with `granted == false`,
+# `error == nil`, and the status stays `notDetermined`. The same bundle, same
+# identity, same entitlements, signed without `--options runtime`, prompts and
+# grants normally. Ad-hoc also prompts normally. The runtime flag is the only
+# variable. Both variants are `spctl`-rejected as "Unnotarized Developer ID",
+# so notarization state alone does not explain it — the hardened runtime does.
+#
+# For a local, never-distributed helper the hardened runtime buys nothing and
+# costs the entire permission flow, so it is opt-in via `--hardened` (use it
+# only if you also notarize). See README, "Signing and the hardened runtime".
 SIGN_MODE="adhoc"
 if [[ -z "$IDENTITY" ]]; then
     IDENTITY="${LETTA_BRIDGE_SIGN_IDENTITY:-}"
@@ -123,11 +153,20 @@ if [[ -z "$IDENTITY" ]]; then
 fi
 
 if [[ -n "$IDENTITY" ]]; then
-    SIGN_MODE="developer-id"
-    log "signing with Developer ID: $IDENTITY (hardened runtime)"
-    codesign --force --deep --timestamp --options runtime \
-        --entitlements "$SCRIPT_DIR/Resources/hardened.entitlements" \
-        --sign "$IDENTITY" "$APP_BUNDLE" >&2 \
+    CODESIGN_ARGS=(--force --deep --timestamp
+                   --entitlements "$SCRIPT_DIR/Resources/hardened.entitlements")
+    if [[ "$DO_HARDENED" == true ]]; then
+        SIGN_MODE="developer-id-hardened"
+        log "signing with Developer ID: $IDENTITY (hardened runtime, opt-in)"
+        log "WARNING: unless you notarize this bundle, macOS will not show the"
+        log "         Calendar/Reminders permission dialog. Re-run without --hardened"
+        log "         if \`request\` reports authorization_not_presented."
+        CODESIGN_ARGS+=(--options runtime)
+    else
+        SIGN_MODE="developer-id"
+        log "signing with Developer ID: $IDENTITY (no hardened runtime — see README)"
+    fi
+    codesign "${CODESIGN_ARGS[@]}" --sign "$IDENTITY" "$APP_BUNDLE" >&2 \
         || die "codesign_failed" "Developer ID signing failed"
 else
     log "no Developer ID found; signing ad-hoc"
@@ -137,6 +176,15 @@ else
 fi
 
 codesign --verify --strict "$APP_BUNDLE" >&2 || die "codesign_verify_failed" "Signature verification failed"
+
+# Guard the regression that motivated all of this: a hardened-runtime bundle
+# that Gatekeeper rejects as unnotarized cannot show a TCC prompt.
+if codesign -dv "$APP_BUNDLE" 2>&1 | grep -q 'flags=.*runtime'; then
+    if spctl -a -t exec "$APP_BUNDLE" 2>&1 | grep -qi 'unnotarized\|rejected'; then
+        log "WARNING: hardened runtime + unnotarized. \`request\` will report"
+        log "         authorization_not_presented for calendar/reminders."
+    fi
+fi
 
 # ---- smoke test --------------------------------------------------------------
 log "smoke-testing the built binary"

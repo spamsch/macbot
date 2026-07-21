@@ -22,10 +22,16 @@
 	<string>6.0</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>14.0</string>
-	<!-- Agent app: no Dock icon, no menu bar. TCC dialogs are presented by the
-	     system, so a UI-less helper can still show grantable prompts. -->
-	<key>LSUIElement</key>
-	<true/>
+	<!-- Deliberately NO LSUIElement.
+	     LSUIElement=true launches the bundle as an agent (NSApplicationActivationPolicy
+	     .accessory), which cannot own a foreground window. EventKit then files the
+	     authorization request against a process that can never present the sheet:
+	     the status stays notDetermined, no dialog appears, and the app never gets an
+	     entry in Privacy & Security > Calendars. As a regular app, `request` can
+	     activate itself and macOS presents a grantable dialog. Only the `request`
+	     command builds an NSApplication at all; every other command runs as a plain
+	     CLI process, which never shows a Dock icon regardless of this key.
+	     See README, "Activation policy". -->
 	<key>NSHumanReadableCopyright</key>
 	<string>Local helper for Letta agent skills. No network access, no telemetry.</string>
 

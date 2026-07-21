@@ -76,39 +76,51 @@ enum EventKitPermissions {
     }
 
     /// Triggers the system dialog when the status is `not_determined`.
-    /// Returns the resulting status name. Blocks until the user answers.
-    @discardableResult
-    static func requestFullAccess(_ entity: EKEntityType) -> (granted: Bool, status: String, error: String?) {
+    ///
+    /// Asynchronous by construction: EventKit needs the caller's main run loop
+    /// free while TCC presents the sheet, so this never blocks and never uses a
+    /// semaphore. `completion` is always delivered on the main queue.
+    ///
+    /// The returned store must be kept alive by the caller — EventKit drops the
+    /// pending request (and never calls back) once the store is deallocated.
+    /// Only `RequestApp` calls this; it runs inside an NSApplication that can
+    /// actually own the dialog.
+    static func requestFullAccess(
+        _ entity: EKEntityType,
+        completion: @escaping (_ granted: Bool, _ status: String, _ error: String?) -> Void
+    ) -> EKEventStore {
         let store = EKEventStore()
-        let box = ResultBox()
-        let semaphore = DispatchSemaphore(value: 0)
 
         let handler: (Bool, Error?) -> Void = { granted, error in
-            box.granted = granted
-            box.error = error?.localizedDescription
-            semaphore.signal()
+            let message = error?.localizedDescription
+            DispatchQueue.main.async {
+                completion(granted, statusName(for: entity), message)
+            }
         }
 
         if #available(macOS 14.0, *) {
             switch entity {
             case .event: store.requestFullAccessToEvents(completion: handler)
             case .reminder: store.requestFullAccessToReminders(completion: handler)
-            @unknown default: return (false, "unknown", "Unsupported entity type")
+            @unknown default:
+                DispatchQueue.main.async { completion(false, "unknown", "Unsupported entity type") }
             }
         } else {
             store.requestAccess(to: entity, completion: handler)
         }
 
-        semaphore.wait()
-        return (box.granted, statusName(for: entity), box.error)
+        return store
     }
 
     /// Returns a store that already holds full access, or fails with an
     /// actionable error describing exactly how to grant it.
+    ///
+    /// Deliberately does **not** request access. Data commands are
+    /// noninteractive and deterministic: they either have the grant and answer,
+    /// or they fail immediately and tell the caller to run `request`. Prompting
+    /// from here would make `calendar events` hang on a dialog that a plain CLI
+    /// process cannot present anyway.
     static func authorizedStore(_ entity: EKEntityType, command: String) -> EKEventStore {
-        if !hasFullAccess(entity) {
-            _ = requestFullAccess(entity)
-        }
         guard hasFullAccess(entity) else {
             let subject = entity == .event ? "Calendars" : "Reminders"
             let pane: SettingsPane = entity == .event ? .calendars : .reminders
@@ -116,7 +128,11 @@ enum EventKitPermissions {
                 code: entity == .event ? "calendar_access_denied" : "reminders_access_denied",
                 message: "Letta Privacy Bridge does not have full access to \(subject) " +
                          "(status: \(statusName(for: entity)))",
-                hint: "Grant access in System Settings > \(pane.label), then retry.",
+                hint: statusName(for: entity) == "not_determined"
+                    ? "Nobody has been asked yet. Run `request` — it launches the app in the "
+                      + "foreground so macOS can show a grantable dialog — or grant access "
+                      + "manually in System Settings > \(pane.label)."
+                    : "Grant access in System Settings > \(pane.label), then retry.",
                 recovery: [
                     "letta-privacy-bridge request \(entity == .event ? "calendar" : "reminders")",
                     "letta-privacy-bridge open-settings \(pane.rawValue)",
@@ -125,12 +141,6 @@ enum EventKitPermissions {
         }
         return EKEventStore()
     }
-}
-
-/// Mutable box so escaping completion handlers stay concurrency-safe.
-final class ResultBox: @unchecked Sendable {
-    var granted = false
-    var error: String?
 }
 
 // MARK: - Apple Events / Automation

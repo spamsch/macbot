@@ -8,9 +8,18 @@
 import EventKit
 import Foundation
 
-let arguments = Array(CommandLine.arguments.dropFirst())
+// LaunchServices appends `-psn_0_…` on some launch paths. It is not ours and it
+// would otherwise be parsed as a positional argument.
+let arguments = Array(CommandLine.arguments.dropFirst()).filter { !$0.hasPrefix("-psn_") }
 let parsed = Args(arguments)
 let command = parsed.positional(0) ?? "help"
+
+// Permission-bound commands cannot answer truthfully from a shell-launched
+// process: TCC would report the *caller's* grants. Anything that touches
+// Calendar, Reminders, or Apple Events is transparently relaunched inside the
+// installed app and its JSON relayed back. Non-sensitive commands (help,
+// version, fda, open-settings) stay direct. See AppHost.swift.
+AppHost.interceptOrPrepare(command: command, arguments: arguments, args: parsed)
 
 switch command {
 case "help", "--help", "-h":
@@ -135,66 +144,25 @@ enum RequestCommand {
             ))
         }
 
+        let timeout = TimeInterval(args.int("timeout") ?? 180)
+
         if args.bool("in-process") {
-            inProcess(Array(subjects), resultFile: args.string("result-file"))
+            // Becomes a foreground AppKit app and never returns; see RequestApp.swift.
+            RequestApp.run(
+                subjects: Array(subjects),
+                resultFile: args.string("result-file"),
+                timeout: max(30, timeout)
+            )
         }
-        relaunchThroughLaunchServices(Array(subjects), timeout: TimeInterval(args.int("timeout") ?? 180))
-    }
-
-    /// Performs the actual TCC requests. Blocks on each system dialog.
-    private static func inProcess(_ subjects: [String], resultFile: String?) -> Never {
-        var results: [String: Any] = [:]
-
-        for subject in subjects {
-            switch subject {
-            case "calendar":
-                let outcome = EventKitPermissions.requestFullAccess(.event)
-                results["calendar"] = compact([
-                    "granted": outcome.granted,
-                    "authorization": outcome.status,
-                    "error": outcome.error,
-                ])
-            case "reminders":
-                let outcome = EventKitPermissions.requestFullAccess(.reminder)
-                results["reminders"] = compact([
-                    "granted": outcome.granted,
-                    "authorization": outcome.status,
-                    "error": outcome.error,
-                ])
-            case "notes", "mail":
-                guard let target = AutomationTarget.named(subject) else { continue }
-                let outcome = AutomationPermissions.request(target, launch: true)
-                results[subject] = [
-                    "granted": outcome.status == "authorized",
-                    "authorization": outcome.status,
-                    "os_status": Int(outcome.osStatus),
-                    "detail": outcome.detail,
-                ]
-            default:
-                continue
-            }
-        }
-
-        let pending = results.filter { ($0.value as? [String: Any])?["granted"] as? Bool != true }.keys.sorted()
-        Out.success("request", [
-            "requested": subjects,
-            "results": results,
-            "all_granted": pending.isEmpty,
-            "pending": pending,
-            "manual_steps": pending.isEmpty ? [] : pending.map { subject in
-                switch subject {
-                case "calendar": return "Enable Letta Privacy Bridge in \(SettingsPane.calendars.label)."
-                case "reminders": return "Enable Letta Privacy Bridge in \(SettingsPane.reminders.label)."
-                default: return "Enable \(subject.capitalized) under Letta Privacy Bridge in " +
-                                "\(SettingsPane.automation.label)."
-                }
-            },
-        ], resultFile: resultFile)
+        relaunchThroughLaunchServices(Array(subjects), timeout: timeout)
     }
 
     /// Relaunches this app through LaunchServices so macOS treats the bridge —
     /// not the calling terminal — as the process responsible for the prompt.
-    /// That is what makes the dialog visible and grantable to this app.
+    /// That is what makes the dialog visible and grantable to this app. Same
+    /// hosting mechanism every permission-bound command uses (AppHost.swift);
+    /// `request` differs only in that its child must come to the foreground and
+    /// in how strictly the returned verdict is read.
     private static func relaunchThroughLaunchServices(_ subjects: [String], timeout: TimeInterval) -> Never {
         guard Bundle.main.bundleIdentifier != nil else {
             Out.failure("request", BridgeError(
@@ -206,55 +174,52 @@ enum RequestCommand {
             ))
         }
 
-        let resultPath = NSTemporaryDirectory() + "letta-privacy-bridge-\(UUID().uuidString).json"
-        let task = Process()
-        task.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-        task.arguments = ["-n", "-a", Bundle.main.bundleURL.path, "--args", "request"]
-            + subjects + ["--in-process", "--result-file", resultPath]
-
-        do {
-            try task.run()
-            task.waitUntilExit()
-        } catch {
-            Out.failure("request", BridgeError(
-                code: "launch_failed",
-                message: "Could not relaunch the app through LaunchServices: \(error.localizedDescription)",
-                hint: "Try `--in-process`, but note the dialog may then be attributed to the caller."
-            ))
-        }
-        guard task.terminationStatus == 0 else {
-            Out.failure("request", BridgeError(
-                code: "launch_failed",
-                message: "`open` exited with status \(task.terminationStatus)",
-                hint: "Confirm the app exists at \(Bundle.main.bundleURL.path)."
-            ))
-        }
-
-        Diag.log("waiting for the permission dialog to be answered (up to \(Int(timeout))s)…")
-        let deadline = Date().addingTimeInterval(timeout)
-        while Date() < deadline {
-            if let data = FileManager.default.contents(atPath: resultPath),
-               let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                try? FileManager.default.removeItem(atPath: resultPath)
-                print(Out.render(object))
-                exit((object["ok"] as? Bool) == true ? 0 : 1)
-            }
-            Thread.sleep(forTimeInterval: 0.25)
-        }
-
-        Out.failure("request", BridgeError(
-            code: "request_timeout",
-            message: "No answer within \(Int(timeout))s",
-            hint: "A system dialog is probably still open, or it was dismissed. " +
-                  "Answer it and rerun, or grant access manually.",
-            recovery: ["letta-privacy-bridge open-settings calendars",
-                       "letta-privacy-bridge open-settings reminders",
-                       "letta-privacy-bridge open-settings automation"]
-        ))
+        // The child gives up slightly earlier so the parent reads a real result
+        // file rather than timing out on its own with nothing to report.
+        let childTimeout = Int(max(30, timeout - 10))
+        let verdict = AppHost.launchAndAwait(
+            childArguments: ["request"] + subjects
+                + ["--in-process", "--timeout", String(childTimeout)],
+            resultOption: "result-file",
+            foreground: true,
+            timeout: timeout,
+            command: "request",
+            timeoutError: BridgeError(
+                code: "request_timeout",
+                message: "No answer within \(Int(timeout))s",
+                hint: "A system dialog is probably still open, or it was dismissed. " +
+                      "Answer it and rerun, or grant access manually.",
+                recovery: ["letta-privacy-bridge open-settings calendars",
+                           "letta-privacy-bridge open-settings reminders",
+                           "letta-privacy-bridge open-settings automation"]
+            )
+        )
+        relay(verdict)
     }
 
-    private static func compact(_ dictionary: [String: Any?]) -> [String: Any] {
-        dictionary.compactMapValues { $0 }
+    /// Prints the child's verdict verbatim — but never upgrades it. If any
+    /// subject came back ungranted while its authorization is still
+    /// `not_determined`, no dialog was ever presented, and that is a failure
+    /// regardless of what the child wrote.
+    private static func relay(_ object: [String: Any]) -> Never {
+        let results = object["results"] as? [String: Any] ?? [:]
+        let notPresented = RequestVerdict.notPresented(in: results)
+
+        guard notPresented.isEmpty else {
+            Out.failure("request", BridgeError(
+                code: "authorization_not_presented",
+                message: "No authorization dialog was presented for " +
+                         "\(notPresented.joined(separator: ", ")): the request returned " +
+                         "\"not granted\" and the status is still not determined.",
+                hint: "The bridge must run as an installed, LaunchServices-launched foreground " +
+                      "app for macOS to show the dialog. Reinstall with build-install.sh and " +
+                      "rerun from ~/Applications, or grant access manually in System Settings.",
+                recovery: RequestVerdict.recoveryCommands(for: notPresented)
+            ), payload: object.filter { $0.key != "ok" && $0.key != "error" && $0.key != "command" })
+        }
+
+        print(Out.render(object))
+        exit((object["ok"] as? Bool) == true ? 0 : 1)
     }
 }
 

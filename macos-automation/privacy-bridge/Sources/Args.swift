@@ -19,6 +19,8 @@ struct Args {
     static let booleanFlags: Set<String> = [
         "all-day", "with-counts", "include-completed", "completed-only",
         "in-process", "launch", "no-launch", "help", "confirmed",
+        // Internal: set by AppHost when relaunching through LaunchServices.
+        "letta-hosted",
         "html", "title-only", "preview", "force", "dry-run",
     ]
 
